@@ -1,0 +1,290 @@
+// Rabbit-hole careers. Each shift fires one event; `check` is (skill, difficulty 0-10).
+// Event text may use {name}. Spy track text gets random [REDACTED] words.
+[
+    (
+        id: "culinary", name: "Culinary", desc: "From the dish pit to the Michelin-ish stars.",
+        levels: [
+            (title: "Dishwasher", pay: 14, start_hour: 16, hours: 6, days: [0, 1, 2, 3, 4]),
+            (title: "Line Cook", pay: 20, start_hour: 15, hours: 7, days: [0, 1, 2, 3, 4], skills: {Cooking: 2.0}),
+            (title: "Sous Chef", pay: 30, start_hour: 14, hours: 8, days: [1, 2, 3, 4, 5], skills: {Cooking: 4.0}),
+            (title: "Head Chef", pay: 45, start_hour: 14, hours: 8, days: [1, 2, 3, 4, 5], skills: {Cooking: 6.0, Charisma: 2.0}),
+            (title: "Celebrity Chef Who Yells", pay: 80, start_hour: 12, hours: 6, days: [2, 3, 4, 5], skills: {Cooking: 8.0, Charisma: 5.0}),
+        ],
+        events: [
+            (text: "A food critic orders 'whatever the chef recommends.' The chef recommends {name} figure it out.",
+             choices: [
+                (label: "Improvise a masterpiece", check: (Cooking, 4.0),
+                 success: [Performance(15.0), Moodlet("good_day_at_work")], failure: [Performance(-10.0), Log("The critic described the dish as 'brave.'")]),
+                (label: "Serve a very nice sandwich", success: [Performance(2.0)]),
+             ]),
+            (text: "The walk-in freezer door is stuck and {name} is on the inside.",
+             choices: [
+                (label: "Wait patiently", success: [Performance(-5.0), Log("{name} was rescued four hours later, holding a frozen fish for warmth.")]),
+                (label: "MacGyver the latch", check: (Handiness, 3.0), success: [Performance(5.0), Skill(Handiness, 0.5)], failure: [Moodlet("embarrassed")]),
+             ]),
+            (text: "A customer sends back their water for being 'too wet.'",
+             choices: [
+                (label: "Pour it into a fancier glass", check: (Charisma, 2.0), success: [Performance(8.0), Log("The customer declared it 'much better.'")], failure: [Performance(-4.0)]),
+                (label: "Explain water", success: [Performance(-8.0), Moodlet("bad_day_at_work")]),
+             ]),
+        ],
+    ),
+    (
+        id: "medical", name: "Medical", desc: "Save lives. Mostly fill out forms about saving lives.",
+        levels: [
+            (title: "Hospital Volunteer", pay: 12, start_hour: 8, hours: 6, days: [0, 1, 2, 3, 4]),
+            (title: "Nurse", pay: 28, start_hour: 7, hours: 8, days: [0, 1, 2, 3, 4], skills: {Logic: 2.0}),
+            (title: "Resident", pay: 35, start_hour: 6, hours: 10, days: [0, 1, 2, 3, 4, 5], skills: {Logic: 4.0}),
+            (title: "Surgeon", pay: 70, start_hour: 7, hours: 9, days: [0, 1, 2, 3, 4], skills: {Logic: 6.0, Fitness: 2.0}),
+            (title: "Chief of Medicine (Dramatic Hallway Walker)", pay: 110, start_hour: 9, hours: 8, days: [0, 1, 2, 3], skills: {Logic: 8.0, Charisma: 5.0}),
+        ],
+        events: [
+            (text: "A patient insists their symptoms match a disease from a TV show.",
+             choices: [
+                (label: "Gently correct them", check: (Charisma, 3.0), success: [Performance(10.0)], failure: [Performance(-5.0), Log("The patient now believes {name} is the one who's sick.")]),
+                (label: "Prescribe rest and fluids", success: [Performance(4.0)]),
+             ]),
+            (text: "{name} is asked to scrub in on a surgery they read about once. In a magazine. At a dentist.",
+             choices: [
+                (label: "Confidently scrub in", check: (Logic, 5.0), success: [Performance(20.0), Moodlet("good_day_at_work")], failure: [Performance(-15.0), Moodlet("embarrassed")]),
+                (label: "Discover an urgent need to restock gauze", success: [Performance(-2.0)]),
+             ]),
+            (text: "The vending machine has eaten {name}'s last dollar. Again.",
+             choices: [
+                (label: "Shake it", check: (Fitness, 3.0), success: [Money(2), Log("Two bags of chips fell out. Justice.")], failure: [Log("The vending machine won this round."), Moodlet("embarrassed")]),
+                (label: "Let it go", success: [Performance(1.0)]),
+             ]),
+        ],
+    ),
+    (
+        id: "business", name: "Business", desc: "Synergize the paradigms. Circle back on the bandwidth.",
+        levels: [
+            (title: "Mailroom Associate", pay: 15, start_hour: 9, hours: 8, days: [0, 1, 2, 3, 4]),
+            (title: "Junior Synergist", pay: 24, start_hour: 9, hours: 8, days: [0, 1, 2, 3, 4], skills: {Charisma: 2.0}),
+            (title: "Middle Manager", pay: 36, start_hour: 9, hours: 9, days: [0, 1, 2, 3, 4], skills: {Charisma: 3.0, Logic: 2.0}),
+            (title: "Vice President of Vibes", pay: 60, start_hour: 10, hours: 7, days: [0, 1, 2, 3, 4], skills: {Charisma: 5.0, Logic: 4.0}),
+            (title: "CEO (Mostly Golf)", pay: 140, start_hour: 11, hours: 5, days: [1, 2, 3], skills: {Charisma: 8.0, Logic: 6.0}),
+        ],
+        events: [
+            (text: "The meeting could have been an email. The meeting is now in its third hour.",
+             choices: [
+                (label: "Pretend to take notes", check: (Creativity, 2.0), success: [Performance(5.0), Log("{name}'s 'notes' were an extremely detailed drawing of a horse.")], failure: [Performance(-3.0)]),
+                (label: "Suggest 'taking this offline'", check: (Charisma, 3.0), success: [Performance(12.0), Moodlet("good_day_at_work")], failure: [Performance(-6.0)]),
+             ]),
+            (text: "Someone microwaved fish in the break room. Everyone is looking at {name}.",
+             choices: [
+                (label: "Deny everything", check: (Charisma, 4.0), success: [Performance(3.0)], failure: [Performance(-10.0), Moodlet("embarrassed")]),
+                (label: "Own it proudly", success: [Performance(-2.0), Log("{name} is now known as 'Fish' around the office.")]),
+             ]),
+            (text: "The boss asks {name} for 'a quick favor' that is clearly a full weekend project.",
+             choices: [
+                (label: "Accept", success: [Performance(15.0), Moodlet("bad_day_at_work")]),
+                (label: "Decline politely", check: (Charisma, 3.0), success: [Performance(0.0)], failure: [Performance(-8.0)]),
+             ]),
+        ],
+    ),
+    (
+        id: "science", name: "Science", desc: "Ask questions. Ignore safety goggles at your peril.",
+        levels: [
+            (title: "Test Subject", pay: 13, start_hour: 9, hours: 6, days: [0, 1, 2, 3, 4]),
+            (title: "Lab Assistant", pay: 22, start_hour: 9, hours: 8, days: [0, 1, 2, 3, 4], skills: {Logic: 2.0}),
+            (title: "Researcher", pay: 34, start_hour: 10, hours: 8, days: [0, 1, 2, 3, 4], skills: {Logic: 4.0}),
+            (title: "Lead Scientist", pay: 55, start_hour: 10, hours: 8, days: [0, 1, 2, 3, 4], skills: {Logic: 6.0, Handiness: 3.0}),
+            (title: "Mad Scientist (Licensed)", pay: 95, start_hour: 20, hours: 6, days: [0, 2, 4, 6], skills: {Logic: 8.0, Handiness: 6.0}),
+        ],
+        events: [
+            (text: "The experiment is bubbling. It was not supposed to bubble.",
+             choices: [
+                (label: "Take careful notes", check: (Logic, 3.0), success: [Performance(15.0), Skill(Logic, 0.5)], failure: [Performance(-5.0), Log("{name}'s eyebrows are now a theory.")]),
+                (label: "Run", success: [Performance(-3.0), Moodlet("embarrassed")]),
+             ]),
+            (text: "The lab mice have unionized.",
+             choices: [
+                (label: "Negotiate", check: (Charisma, 4.0), success: [Performance(10.0), Log("The mice accepted a cheese-based benefits package.")], failure: [Performance(-8.0)]),
+                (label: "Join them", success: [Performance(-5.0), Moodlet("good_day_at_work"), Log("Solidarity, small friends.")]),
+             ]),
+        ],
+    ),
+    (
+        id: "supervillain", name: "Supervillain", desc: "Climb the ladder of evil. The ladder is also evil.",
+        levels: [
+            (title: "Henchperson", pay: 16, start_hour: 20, hours: 6, days: [0, 1, 3, 4, 5]),
+            (title: "Lair Middle-Manager", pay: 28, start_hour: 20, hours: 7, days: [0, 1, 3, 4, 5], skills: {Mischief: 2.0}),
+            (title: "Doomsday Device QA", pay: 42, start_hour: 21, hours: 7, days: [0, 2, 3, 5], skills: {Mischief: 4.0, Handiness: 3.0}),
+            (title: "Archnemesis-in-Training", pay: 65, start_hour: 21, hours: 6, days: [0, 2, 4, 6], skills: {Mischief: 6.0, Charisma: 4.0}),
+            (title: "Overlord of the Tri-County Area", pay: 150, start_hour: 22, hours: 5, days: [1, 4, 6], skills: {Mischief: 9.0, Charisma: 6.0, Logic: 5.0}),
+        ],
+        events: [
+            (text: "The Overlord's monologue is running long and the hero is visibly about to escape.",
+             choices: [
+                (label: "Discreetly hand the Overlord a note: 'wrap it up'", check: (Charisma, 3.0), success: [Performance(15.0), Moodlet("evil_triumph")], failure: [Performance(-10.0), Log("{name} was fed to the decorative sharks. They were vegetarian. {name} is fine.")]),
+                (label: "Let it play out", success: [Performance(-5.0)]),
+             ]),
+            (text: "The doomsday device has a 'Do Not Press' button. {name}'s hand is twitching.",
+             choices: [
+                (label: "Press it", check: (Mischief, 5.0), success: [Performance(20.0), Moodlet("evil_triumph"), Log("It turned all the lair's bananas slightly blue. Terrifying.")], failure: [Performance(-15.0), Moodlet("embarrassed")]),
+                (label: "Write a QA report about the button", check: (Logic, 2.0), success: [Performance(8.0)], failure: [Performance(-2.0)]),
+             ]),
+            (text: "Lair HR wants to discuss {name}'s 'excessive cackling.'",
+             choices: [
+                (label: "Cackle defiantly", success: [Performance(5.0), Moodlet("evil_triumph")]),
+                (label: "Promise to cackle in moderation", success: [Performance(2.0), Moodlet("bad_day_at_work")]),
+             ]),
+            (text: "The hero offers {name} a better dental plan to switch sides.", min_level: 2,
+             choices: [
+                (label: "Stay loyal to evil", success: [Performance(12.0)]),
+                (label: "Ask about vision coverage", check: (Charisma, 5.0), success: [Money(500), Performance(-5.0)], failure: [Fired]),
+             ]),
+        ],
+    ),
+    (
+        id: "mime", name: "Mime & Clown", desc: "Silence is golden. Floppy shoes are mandatory.",
+        levels: [
+            (title: "Street Mime", pay: 9, start_hour: 11, hours: 6, days: [0, 2, 4, 5, 6]),
+            (title: "Balloon Animal Apprentice", pay: 15, start_hour: 12, hours: 6, days: [0, 2, 4, 5, 6], skills: {Creativity: 2.0}),
+            (title: "Invisible Box Specialist", pay: 26, start_hour: 12, hours: 6, days: [1, 3, 5, 6], skills: {Creativity: 4.0, Fitness: 2.0}),
+            (title: "Rodeo Clown", pay: 45, start_hour: 14, hours: 6, days: [4, 5, 6], skills: {Fitness: 5.0, Charisma: 3.0}),
+            (title: "Circus Executive (Tiny Car Fleet)", pay: 90, start_hour: 10, hours: 6, days: [0, 1, 2, 3], skills: {Creativity: 7.0, Charisma: 6.0}),
+        ],
+        events: [
+            (text: "A child asks {name} to escape the invisible box. {name} has never escaped the box. Nobody has.",
+             choices: [
+                (label: "Attempt the escape", check: (Creativity, 4.0), success: [Performance(18.0), Moodlet("standing_ovation")], failure: [Performance(-5.0), Log("{name} remains, philosophically, in the box.")]),
+                (label: "Discover a second box inside the box", check: (Creativity, 2.0), success: [Performance(10.0)], failure: [Performance(-3.0)]),
+             ]),
+            (text: "A heckler is shouting. {name} cannot shout back. Professional ethics.",
+             choices: [
+                (label: "Mime an enormous rope and 'pull' them offstage", check: (Fitness, 3.0), success: [Performance(15.0), Moodlet("standing_ovation")], failure: [Moodlet("embarrassed")]),
+                (label: "Break character and speak", success: [Fired, Log("{name} said 'excuse me.' The Mime Guild was notified within minutes.")]),
+             ]),
+            (text: "The tiny car will not start. Eighteen clowns are inside.",
+             choices: [
+                (label: "Push it", check: (Fitness, 4.0), success: [Performance(10.0)], failure: [Performance(-5.0)]),
+                (label: "Make it part of the act", check: (Charisma, 3.0), success: [Performance(15.0), Moodlet("good_day_at_work")], failure: [Performance(-8.0)]),
+             ]),
+        ],
+    ),
+    (
+        id: "cryptid", name: "Cryptid Hunter", desc: "The truth is out there. It's blurry.",
+        levels: [
+            (title: "Blurry Photo Taker", pay: 10, start_hour: 21, hours: 5, days: [0, 2, 4, 5]),
+            (title: "Footprint Caster", pay: 18, start_hour: 21, hours: 6, days: [0, 2, 4, 5], skills: {Logic: 2.0}),
+            (title: "Podcast Host", pay: 30, start_hour: 19, hours: 6, days: [0, 2, 4, 5], skills: {Logic: 3.0, Charisma: 3.0}),
+            (title: "Bigfoot Liaison", pay: 50, start_hour: 22, hours: 6, days: [1, 3, 5], skills: {Logic: 5.0, Charisma: 5.0}),
+            (title: "Minister of Unexplained Phenomena", pay: 100, start_hour: 23, hours: 5, days: [1, 5], skills: {Logic: 8.0, Charisma: 6.0}),
+        ],
+        events: [
+            (text: "Something large is moving in the treeline. {name}'s camera battery is at 2%.",
+             choices: [
+                (label: "Take ONE perfect photo", check: (Logic, 3.0), success: [Performance(20.0), Moodlet("saw_cryptid"), Log("The photo is perfect. It is also completely blurry. Somehow.")], failure: [Performance(-3.0)]),
+                (label: "Approach and say hello", check: (Charisma, 4.0), success: [Performance(25.0), Moodlet("saw_cryptid"), Log("{name} and the creature shared a granola bar.")], failure: [Moodlet("embarrassed"), Log("It was a very tall man named Doug.")]),
+             ]),
+            (text: "The Mothman's lawyer has sent a cease and desist.",
+             choices: [
+                (label: "Comply", success: [Performance(-2.0)]),
+                (label: "Countersue", check: (Logic, 5.0), success: [Money(300), Performance(15.0)], failure: [Money(-200), Moodlet("bad_day_at_work")]),
+             ]),
+            (text: "A listener calls in claiming their toaster is a cryptid.",
+             choices: [
+                (label: "Take it seriously", success: [Performance(5.0), Log("It was, in fact, just a toaster. Probably.")]),
+                (label: "Make it a two-part episode", check: (Creativity, 3.0), success: [Performance(12.0)], failure: [Performance(-4.0)]),
+             ]),
+        ],
+    ),
+    (
+        id: "influencer", name: "Influencer", desc: "Like, subscribe, and achieve inner peace for 9.99/month.",
+        levels: [
+            (title: "Reply Guy", pay: 6, start_hour: 13, hours: 5, days: [0, 1, 2, 3, 4, 5, 6]),
+            (title: "Micro-Influencer", pay: 18, start_hour: 13, hours: 5, days: [0, 1, 2, 3, 4, 5], skills: {Charisma: 2.0}),
+            (title: "Brand Ambassador for Questionable Gummies", pay: 32, start_hour: 12, hours: 5, days: [0, 1, 2, 3, 4], skills: {Charisma: 4.0, Creativity: 2.0}),
+            (title: "Lifestyle Guru", pay: 60, start_hour: 11, hours: 5, days: [0, 1, 2, 3], skills: {Charisma: 6.0, Creativity: 4.0}),
+            (title: "Cult-Adjacent Wellness Mogul", pay: 130, start_hour: 10, hours: 4, days: [0, 2, 4], skills: {Charisma: 9.0, Creativity: 5.0}),
+        ],
+        events: [
+            (text: "{name}'s sponsored post for 'Hydration Rocks' is getting comments asking what a hydration rock is.",
+             choices: [
+                (label: "Double down", check: (Charisma, 3.0), success: [Performance(15.0), Moodlet("went_viral")], failure: [Performance(-10.0), Moodlet("ratioed")]),
+                (label: "Post an apology video while crying", check: (Creativity, 2.0), success: [Performance(10.0)], failure: [Moodlet("ratioed")]),
+             ]),
+            (text: "A fan asks {name} for life advice.",
+             choices: [
+                (label: "Say something vague and serene", check: (Charisma, 2.0), success: [Performance(8.0), Log("'Be the ocean,' said {name}. The fan wept.")], failure: [Performance(-2.0)]),
+                (label: "Give genuinely good advice", success: [Performance(-3.0), Log("Engagement dropped. Sincerity does not trend.")]),
+             ]),
+            (text: "A rival guru challenges {name} to a 'mindfulness-off.'", min_level: 2,
+             choices: [
+                (label: "Accept and be extremely calm", check: (Charisma, 5.0), success: [Performance(20.0), Moodlet("went_viral")], failure: [Performance(-10.0), Moodlet("ratioed")]),
+                (label: "Block them", success: [Performance(0.0)]),
+             ]),
+        ],
+    ),
+    (
+        id: "spy", name: "Spy", desc: "This career description has been [REDACTED].", redact: true,
+        levels: [
+            (title: "Paper Shredder Technician", pay: 16, start_hour: 9, hours: 7, days: [0, 1, 2, 3, 4]),
+            (title: "Field Agent (Probationary)", pay: 28, start_hour: 18, hours: 7, days: [0, 2, 4, 5], skills: {Charisma: 2.0, Fitness: 2.0}),
+            (title: "Double Agent", pay: 45, start_hour: 18, hours: 7, days: [0, 2, 4, 5], skills: {Charisma: 4.0, Mischief: 3.0}),
+            (title: "Triple Agent (Confused)", pay: 70, start_hour: 20, hours: 6, days: [1, 3, 5], skills: {Charisma: 6.0, Logic: 4.0, Mischief: 4.0}),
+            (title: "Director of [REDACTED]", pay: 125, start_hour: 9, hours: 6, days: [0, 1, 2, 3], skills: {Charisma: 7.0, Logic: 6.0, Mischief: 6.0}),
+        ],
+        events: [
+            (text: "{name} must retrieve the microfilm from the embassy party without being noticed by the ambassador's very observant poodle.",
+             choices: [
+                (label: "Distract the poodle with a canapé", check: (Mischief, 3.0), success: [Performance(18.0), Moodlet("covert_success")], failure: [Performance(-8.0), Log("The poodle has filed a report.")]),
+                (label: "Seduce the ambassador", check: (Charisma, 5.0), success: [Performance(22.0), Moodlet("covert_success")], failure: [Performance(-12.0), Moodlet("embarrassed")]),
+             ]),
+            (text: "Headquarters sends {name} a message. It is entirely redacted, including the sender.",
+             choices: [
+                (label: "Follow the instructions anyway", check: (Logic, 4.0), success: [Performance(15.0)], failure: [Performance(-5.0), Log("{name} delivered a fruit basket to the wrong secret base.")]),
+                (label: "Reply with 'k'", success: [Performance(-3.0)]),
+             ]),
+            (text: "{name}'s cover identity, a dentist named Ken, has been booked for an actual root canal.",
+             choices: [
+                (label: "Perform the root canal", check: (Handiness, 5.0), success: [Performance(10.0), Money(200)], failure: [Performance(-10.0), Moodlet("embarrassed")]),
+                (label: "Fake a sudden emergency", check: (Charisma, 3.0), success: [Performance(5.0)], failure: [Performance(-5.0)]),
+             ]),
+        ],
+    ),
+    (
+        id: "criminal", name: "Criminal", desc: "Crime doesn't pay. Except on Tuesdays.",
+        levels: [
+            (title: "Pickpocket", pay: 12, start_hour: 12, hours: 6, days: [0, 1, 3, 4, 5]),
+            (title: "Getaway Driver (Learner's Permit)", pay: 22, start_hour: 18, hours: 6, days: [0, 1, 3, 4, 5], skills: {Mischief: 2.0}),
+            (title: "Cat Burglar", pay: 38, start_hour: 22, hours: 6, days: [1, 3, 5], skills: {Mischief: 4.0, Fitness: 3.0}),
+            (title: "Con Artist", pay: 60, start_hour: 14, hours: 6, days: [0, 2, 4], skills: {Mischief: 6.0, Charisma: 5.0}),
+            (title: "Mafia Boss (Mostly Pasta Dinners)", pay: 140, start_hour: 18, hours: 5, days: [0, 3, 6], skills: {Mischief: 8.0, Charisma: 7.0}),
+        ],
+        events: [
+            (text: "{name}'s mark is a little old lady. She is looking right at {name}. She is cracking her knuckles.",
+             choices: [
+                (label: "Proceed with the lift", check: (Mischief, 3.0), success: [Performance(12.0), Money(60)], failure: [Performance(-10.0), Log("{name} was beaten soundly with a handbag.")]),
+                (label: "Help her cross the street instead", success: [Performance(-5.0), Moodlet("good_chat")]),
+             ]),
+            (text: "The getaway car is a 1997 minivan. It does not 'get away' so much as 'leave eventually.'",
+             choices: [
+                (label: "Floor it", check: (Fitness, 3.0), success: [Performance(15.0)], failure: [Performance(-10.0), Log("The police followed at a polite walking pace.")]),
+                (label: "Blend into traffic", check: (Mischief, 4.0), success: [Performance(18.0)], failure: [Fired, Log("{name} has been arrested. They'll be home for dinner, but unemployed.")]),
+             ]),
+            (text: "The Family is having a sit-down dinner and {name} has been asked to make the pasta.", min_level: 2,
+             choices: [
+                (label: "Cook the family recipe", check: (Cooking, 5.0), success: [Performance(25.0), Moodlet("good_day_at_work")], failure: [Performance(-15.0), Log("The Don put down his fork. Nobody breathed.")]),
+                (label: "Bring store-bought sauce and pray", check: (Charisma, 6.0), success: [Performance(10.0)], failure: [Fired]),
+             ]),
+        ],
+    ),
+    (
+        id: "fast_food", name: "Fast Food (Part-Time)", desc: "Would you like fries with your existential dread?", min_stage: Teen,
+        levels: [
+            (title: "Fry Cook", pay: 10, start_hour: 16, hours: 4, days: [0, 2, 4]),
+            (title: "Drive-Thru Voice", pay: 13, start_hour: 16, hours: 4, days: [0, 2, 4, 5], skills: {Charisma: 1.0}),
+            (title: "Shift Lead", pay: 17, start_hour: 15, hours: 5, days: [0, 2, 4, 5], skills: {Charisma: 2.0, Cooking: 2.0}),
+        ],
+        events: [
+            (text: "The ice cream machine is broken. As is tradition.",
+             choices: [
+                (label: "Try to fix it", check: (Handiness, 3.0), success: [Performance(25.0), Log("{name} fixed the ice cream machine. Scientists are baffled.")], failure: [Performance(-2.0)]),
+                (label: "Tell customers it's 'being cleaned'", success: [Performance(3.0)]),
+             ]),
+        ],
+    ),
+]

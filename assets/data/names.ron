@@ -1,0 +1,19 @@
+(
+    first: [
+        "Brenda", "Gus", "Marjorie", "Dex", "Tilly", "Otto", "Priya", "Bartholomew", "Wren", "Sal",
+        "Yuki", "Desmond", "Fern", "Kofi", "Agnes", "Rudy", "Lena", "Mateo", "Hortense", "Jules",
+        "Nadia", "Barnaby", "Ivy", "Chuck", "Rosalind", "Ezra", "Mabel", "Tobias", "Ingrid", "Ravi",
+        "Petunia", "Linus", "Greta", "Dmitri", "Opal", "Clancy", "Saoirse", "Wendell", "Zara", "Murray",
+        "Beatrix", "Nils", "Consuela", "Ferdinand", "Pip", "Lorna", "Amadou", "Delphine", "Gideon", "Hattie",
+    ],
+    last: [
+        "Bumbleton", "Crumpet", "Fizzwick", "Gubbins", "Hallowell", "Kettleby", "Lumpkin", "Moodswing", "Nibbles",
+        "Overbrook", "Pickleworth", "Quill", "Rumbleford", "Snodgrass", "Thistlewood", "Underfoot", "Vexley",
+        "Wobblesworth", "Yarrow", "Zoomby", "Applegate", "Bramblecrust", "Chumley", "Dingwall", "Ellsworth-Pratt",
+        "Fumbleton", "Gristle", "Honeycutt", "Inkpen", "Jollyfax",
+    ],
+    syllables: [
+        "bla", "mu", "zor", "fi", "nuk", "sa", "lo", "pim", "gra", "ve", "wib", "doo", "ka", "ree", "spo",
+        "nib", "tal", "oo", "fle", "gom", "zi", "pa", "rum", "shu", "mek", "lu", "bo", "wa", "yip", "dra",
+    ],
+)

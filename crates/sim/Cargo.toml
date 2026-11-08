@@ -1,0 +1,13 @@
+[package]
+name = "sim"
+description = "Life-sim simulation: pure logic on hearth_ecs, deterministic and headless"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+hearth_ecs.workspace = true
+glam.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ron.workspace = true
+log.workspace = true

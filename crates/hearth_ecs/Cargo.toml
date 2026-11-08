@@ -1,0 +1,12 @@
+[package]
+name = "hearth_ecs"
+description = "Hearth: a small, fit-to-purpose archetype ECS"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde = { workspace = true, optional = true }
+
+[features]
+default = ["serde"]
+serde = ["dep:serde"]

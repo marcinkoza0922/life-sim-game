@@ -1,0 +1,23 @@
+// Every peon gets exactly one quirk: a small comedic behaviour hook.
+[
+    (id: "afraid_of_chairs", name: "Afraid of Chairs", desc: "Will not sit. Will not explain.",
+     tags: {"chair": 0.0}, mutters: ["chair?!", "no.", "not today, chair"]),
+    (id: "talks_to_plants", name: "Talks to Plants", desc: "Has a closer relationship with the fern than with their siblings.",
+     tags: {"plants": 5.0}, mutters: ["leaf", "hi ferngus"]),
+    (id: "hums_constantly", name: "Hums Constantly", desc: "Nobody knows the song. Including them.",
+     mutters: ["hmm-hmm", "la la", "♪"]),
+    (id: "collects_spoons", name: "Collects Spoons", desc: "The drawer is full. The other drawer is also full.",
+     tags: {"food": 1.2}, mutters: ["spoon", "spoon!"]),
+    (id: "suspicious_of_birds", name: "Suspicious of Birds", desc: "Keeps a ledger of every pigeon's misdeeds.",
+     tags: {"paranoid": 1.5}, mutters: ["bird", "they're watching"]),
+    (id: "narrates_weather", name: "Narrates the Weather", desc: "Provides hourly forecasts nobody requested.",
+     mutters: ["sunny!", "cloud", "rain?"]),
+    (id: "dramatic_sneezer", name: "Dramatic Sneezer", desc: "Each sneeze is a three-act play.",
+     tags: {"drama": 1.3}, mutters: ["ah...", "AAH-", "CHOO"]),
+    (id: "competitive_napper", name: "Competitive Napper", desc: "Treats naps as an Olympic event.",
+     tags: {"rest": 1.5}, mutters: ["zz", "gold medal"]),
+    (id: "snack_hoarder", name: "Snack Hoarder", desc: "Every pocket contains crackers. Every one.",
+     tags: {"food": 1.5}, mutters: ["snack", "crunch"]),
+    (id: "conspiracy_curious", name: "Conspiracy Curious", desc: "Just asking questions. So many questions.",
+     tags: {"learning": 1.3}, mutters: ["?!", "wake up", "moth people"]),
+]

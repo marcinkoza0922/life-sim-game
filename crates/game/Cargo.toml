@@ -1,0 +1,28 @@
+[package]
+name = "game"
+description = "The playable life sim: window, camera, scene building, UI and tools"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "lifesim"
+path = "src/main.rs"
+
+[dependencies]
+sim.workspace = true
+hearth_ecs.workspace = true
+hearth_render.workspace = true
+glam.workspace = true
+winit.workspace = true
+egui.workspace = true
+egui-wgpu.workspace = true
+egui-winit.workspace = true
+pollster.workspace = true
+log.workspace = true
+env_logger.workspace = true
+anyhow.workspace = true
+image.workspace = true
+serde_json.workspace = true

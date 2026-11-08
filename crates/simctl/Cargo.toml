@@ -1,0 +1,13 @@
+[package]
+name = "simctl"
+description = "Headless life-sim runner: fast-forward, stats, scenario checks, offscreen renders"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+sim.workspace = true
+hearth_ecs.workspace = true
+serde_json.workspace = true
+glam.workspace = true
+game = { path = "../game" }
+hearth_render.workspace = true
