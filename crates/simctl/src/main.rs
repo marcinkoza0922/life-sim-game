@@ -110,9 +110,9 @@ impl TimeBudget {
             *self.per_peon.entry(e).or_default().entry(label).or_default() += 1;
             let n = w.get::<Needs>(e).unwrap();
             let m = self.min_need.entry(e).or_insert([100.0; Need::COUNT]);
-            for i in 0..Need::COUNT {
+            for (i, slot) in m.iter_mut().enumerate() {
                 if n.active[i] {
-                    m[i] = m[i].min(n.v[i]);
+                    *slot = slot.min(n.v[i]);
                 }
             }
         }
@@ -190,11 +190,10 @@ fn check_invariants(sim: &Sim, tb: &TimeBudget) -> Vec<String> {
     let mut fails = Vec::new();
     for e in sim.peons() {
         let name = sim.name(e);
-        if let Some(d) = sim.world.get::<Dead>(e) {
-            if d.cause != "old age" {
+        if let Some(d) = sim.world.get::<Dead>(e)
+            && d.cause != "old age" {
                 fails.push(format!("{name} died of {}", d.cause));
             }
-        }
         if let Some(m) = tb.per_peon.get(&e) {
             let total: u32 = m.values().sum();
             let idle = m.get("Idle").copied().unwrap_or(0) + m.get("(nothing)").copied().unwrap_or(0);
@@ -291,7 +290,11 @@ fn render(a: &Args) {
     cam.dist = ra.dist;
     cam.snap();
     let camera = cam.camera(ra.level, w as f32 / h as f32);
+    let mut meshes = game::lotmesh::LotMeshes::default();
+    meshes.sync(&mut r, &sim.world.res::<sim::lot::Lot>());
     let opts = SceneOptions {
+        terrain_mesh: meshes.terrain,
+        roof_meshes: meshes.roofs.clone(),
         active_level: ra.level,
         wall_mode: match ra.mode.as_str() {
             "up" => WallMode::Up,

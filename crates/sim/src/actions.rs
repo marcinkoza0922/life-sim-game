@@ -46,6 +46,7 @@ pub fn label_for(world: &World, data: &GameData, kind: &ActionKind) -> String {
         ActionKind::Respond { initiator, .. } => format!("Talking with {}", name_of(world, *initiator)),
         ActionKind::GoTo { .. } => "Go Here".into(),
         ActionKind::GoToWork => "Go to Work".into(),
+        ActionKind::GoToSchool => "Catch the School Bus".into(),
         ActionKind::PassOut => "Pass Out".into(),
         ActionKind::Idle { .. } => "Idle".into(),
     }
@@ -158,7 +159,7 @@ fn stand_up(world: &World, e: Entity, obj: Entity, slot: usize) {
     if let Some(mut tf) = world.get_mut::<Transform>(e) {
         let lot = world.res::<Lot>();
         if lot.walkable(level, t) {
-            tf.pos = Lot::tile_center(level, t);
+            tf.pos = lot.ground_center(level, t);
         } else {
             tf.pos.y = level as f32 * crate::lot::LEVEL_HEIGHT;
         }
@@ -224,24 +225,21 @@ pub fn player_order(world: &mut World, e: Entity, kind: ActionKind) -> Result<()
         return Err(r);
     }
     push_back(world, e, kind, Source::Player, label);
-    if let Some(mut q) = world.get_mut::<ActionQueue>(e) {
-        if let Some(c) = q.current.as_mut() {
-            if c.action.source == Source::Autonomy {
+    if let Some(mut q) = world.get_mut::<ActionQueue>(e)
+        && let Some(c) = q.current.as_mut()
+            && c.action.source == Source::Autonomy {
                 c.cancel = true;
             }
-        }
-    }
     Ok(())
 }
 
 pub fn cancel(world: &mut World, e: Entity, id: u64) {
     if let Some(mut q) = world.get_mut::<ActionQueue>(e) {
-        if let Some(c) = q.current.as_mut() {
-            if c.action.id == id {
+        if let Some(c) = q.current.as_mut()
+            && c.action.id == id {
                 c.cancel = true;
                 return;
             }
-        }
         q.queue.retain(|a| a.id != id);
     }
 }
@@ -326,7 +324,14 @@ fn step(world: &mut World, e: Entity, data: &GameData, tick: u64) {
                 && matches!(cur.phase, Phase::Performing { .. })
                 && !matches!(cur.action.kind, ActionKind::Respond { .. })
         };
-        if player_waiting || critical {
+        // a critical need nothing could fix earlier (the fridge was taken): check back now and then
+        let fixable_again = !critical
+            && tick.is_multiple_of(15)
+            && matches!(cur.phase, Phase::Performing { .. })
+            && world.get::<Brain>(e).and_then(|b| b.unfixable).is_some_and(|n| {
+                world.get::<Needs>(e).is_some_and(|nd| nd.get(n) < 15.0) && autonomy::candidates(world, e, data).iter().any(|c| c.helps.contains(&n))
+            });
+        if player_waiting || critical || fixable_again {
             cur.cancel = true;
         }
     }
@@ -337,14 +342,43 @@ fn step(world: &mut World, e: Entity, data: &GameData, tick: u64) {
             Err(why) => StepResult::Failed(why),
         },
         Phase::Walking { .. } if cur.cancel => StepResult::Done(false),
-        Phase::Walking { mut path, mut idx, slot, retries } => {
+        Phase::Walking { mut path, mut idx, slot, retries, mut blocked } => {
             let stage = world.get::<Age>(e).unwrap().stage;
-            let arrived = {
+            // crowding: wait for, route around, or sidestep other peons
+            let ignore = match &cur.action.kind {
+                ActionKind::Social { target, .. } => Some(*target),
+                _ => None,
+            };
+            let mut wait = false;
+            let speed = walk_speed(stage);
+            match crowd_ahead(world, e, &path, idx, ignore, speed) {
+                Some(Crowd::Standing(other)) => {
+                    blocked = blocked.saturating_add(1);
+                    if (blocked == 2 || blocked == 8)
+                        && let Some(p) = reroute_around(world, e, &path, idx, other) {
+                            path = p;
+                            idx = 0;
+                        }
+                    // after a while, just squeeze past ("excuse me, sorry, excuse me")
+                    wait = blocked < 15 && crowd_ahead(world, e, &path, idx, ignore, speed).is_some();
+                    if blocked == 6 {
+                        set_bubble(world, e, Some("...".into()), Some("'Scuse me".into()), 5);
+                    }
+                }
+                Some(Crowd::Oncoming) => {
+                    sidestep(world, e, &mut path, idx);
+                    blocked = 0;
+                }
+                None => blocked = 0,
+            }
+            let arrived = if wait {
+                false
+            } else {
                 let mut tf = world.get_mut::<Transform>(e).unwrap();
                 advance_along(&mut tf, &path, &mut idx, walk_speed(stage))
             };
             if let Some(mut p) = world.get_mut::<Posture>(e) {
-                p.walking = !arrived;
+                p.walking = !arrived && !wait;
                 p.pose = Pose::Stand;
             }
             if arrived {
@@ -354,8 +388,7 @@ fn step(world: &mut World, e: Entity, data: &GameData, tick: u64) {
                     Err(why) => StepResult::Failed(why),
                 }
             } else {
-                path.truncate(path.len());
-                cur.phase = Phase::Walking { path, idx, slot, retries };
+                cur.phase = Phase::Walking { path, idx, slot, retries, blocked };
                 StepResult::Continue
             }
         }
@@ -410,6 +443,120 @@ enum StepResult {
     Continue,
     Done(bool),
     Failed(String),
+}
+
+enum Crowd {
+    /// Someone standing still in the way.
+    Standing(Entity),
+    /// Someone walking toward us.
+    Oncoming,
+}
+
+/// How close (sideways) someone may be to our line of travel before they're "in the way".
+const PERSONAL_SPACE: f32 = 0.55;
+
+/// Is another peon in front of us, within this tick's stride (plus a margin)?
+fn crowd_ahead(world: &World, e: Entity, path: &[Vec3], idx: usize, ignore: Option<Entity>, speed: f32) -> Option<Crowd> {
+    let tf = *world.get::<Transform>(e)?;
+    let next = *path.get(idx)?;
+    let dir = next - tf.pos;
+    let dir = Vec3::new(dir.x, 0.0, dir.z);
+    if dir.length() < 1e-3 {
+        return None;
+    }
+    let dir = dir.normalize();
+    let goal = *path.last()?;
+    let mut found: Option<(f32, Entity, Crowd)> = None;
+    for (o, otf, posture) in world
+        .query_filtered::<(Entity, &Transform, &Posture), (hearth_ecs::Without<Dead>, hearth_ecs::Without<AtWork>)>()
+        .iter()
+    {
+        if o == e || Some(o) == ignore || (otf.pos.y - tf.pos.y).abs() > 1.0 {
+            continue;
+        }
+        let to = otf.pos - tf.pos;
+        let to = Vec3::new(to.x, 0.0, to.z);
+        let along = to.dot(dir);
+        let lateral = (to - dir * along).length();
+        let reach = if posture.walking { speed * 2.0 + 0.6 } else { speed + 0.6 };
+        if along <= 0.05 || along > reach || lateral > PERSONAL_SPACE {
+            continue;
+        }
+        // nobody gets out of the way of someone standing on the spot we're walking to
+        if (otf.pos - goal).length() < 0.4 && !posture.walking {
+            continue;
+        }
+        let hit = if posture.walking {
+            let theirs = Vec3::new(otf.yaw.sin(), 0.0, otf.yaw.cos());
+            if theirs.dot(dir) >= -0.3 {
+                continue;
+            }
+            Crowd::Oncoming
+        } else {
+            Crowd::Standing(o)
+        };
+        // nearest first; entity order breaks ties so storage order never matters
+        if found.as_ref().is_none_or(|f| along < f.0 || (along == f.0 && o < f.1)) {
+            found = Some((along, o, hit));
+        }
+    }
+    found.map(|f| f.2)
+}
+
+/// Replans the rest of the path treating `other`'s tile as blocked. Accepts small detours only.
+fn reroute_around(world: &World, e: Entity, path: &[Vec3], idx: usize, other: Entity) -> Option<Vec<Vec3>> {
+    let tf = *world.get::<Transform>(e)?;
+    let otf = *world.get::<Transform>(other)?;
+    let goal = *path.last()?;
+    let goal_node = NavNode::new(Lot::level_of(goal), Lot::tile_of(goal));
+    let avoid = NavNode::new(otf.level(), otf.tile());
+    if avoid == goal_node || avoid == NavNode::new(tf.level(), tf.tile()) {
+        return None;
+    }
+    let remaining: f32 = std::iter::once(tf.pos).chain(path[idx..].iter().copied()).collect::<Vec<_>>().windows(2).map(|w| (w[1] - w[0]).length()).sum();
+    let lot = world.res::<Lot>();
+    let field = NavField::flood_avoiding(&lot, NavNode::new(tf.level(), tf.tile()), remaining + 8.0, &[avoid]);
+    let d = field.distance(goal_node)?;
+    if d > remaining + 6.0 {
+        return None;
+    }
+    let nodes = field.path_to(goal_node)?;
+    let mut wp = waypoints(&lot, &nodes);
+    if nodes.len() > 1 {
+        wp.remove(0);
+    }
+    // keep the exact final position (slot approach points may be off-center)
+    if let Some(last) = wp.last_mut() {
+        *last = goal;
+    }
+    Some(wp)
+}
+
+/// Keep to the right when passing someone: shift our position and the next couple of waypoints
+/// sideways, staying well inside each tile so walls are never crossed.
+fn sidestep(world: &World, e: Entity, path: &mut [Vec3], idx: usize) {
+    let Some(next) = path.get(idx).copied() else { return };
+    let Some(mut tf) = world.get_mut::<Transform>(e) else { return };
+    let dir = Vec3::new(next.x - tf.pos.x, 0.0, next.z - tf.pos.z);
+    if dir.length() < 1e-3 {
+        return;
+    }
+    let right = Vec3::new(-dir.z, 0.0, dir.x).normalize() * 0.3;
+    let shift = |p: Vec3| {
+        let t = Lot::tile_of(p);
+        let q = p + right;
+        Vec3::new(q.x.clamp(t.x as f32 + 0.2, t.x as f32 + 0.8), p.y, q.z.clamp(t.y as f32 + 0.2, t.y as f32 + 0.8))
+    };
+    tf.pos = shift(tf.pos);
+    let last = path.len().saturating_sub(1);
+    let y = tf.pos.y;
+    let end = (idx + 3).min(last).max(idx);
+    for wp in &mut path[idx..end] {
+        // leave stair waypoints and the final destination alone
+        if (wp.y - y).abs() < 0.05 {
+            *wp = shift(*wp);
+        }
+    }
 }
 
 /// Moves along waypoints; returns true when the end is reached.
@@ -478,7 +625,7 @@ fn begin(world: &World, e: Entity, data: &GameData, cur: &mut CurrentAction) -> 
                 path.remove(0);
             }
             inst.slot_users[slot] = Some(e);
-            cur.phase = Phase::Walking { path, idx: 0, slot: Some(slot), retries: 0 };
+            cur.phase = Phase::Walking { path, idx: 0, slot: Some(slot), retries: 0, blocked: 0 };
             Ok(())
         }
         ActionKind::Social { target, .. } => {
@@ -486,7 +633,7 @@ fn begin(world: &World, e: Entity, data: &GameData, cur: &mut CurrentAction) -> 
                 return Err("they're not around".into());
             }
             let path = path_next_to(world, e, target).ok_or("can't reach them")?;
-            cur.phase = Phase::Walking { path, idx: 0, slot: None, retries: 0 };
+            cur.phase = Phase::Walking { path, idx: 0, slot: None, retries: 0, blocked: 0 };
             Ok(())
         }
         ActionKind::Respond { .. } | ActionKind::PassOut => {
@@ -499,14 +646,15 @@ fn begin(world: &World, e: Entity, data: &GameData, cur: &mut CurrentAction) -> 
         }
         ActionKind::GoTo { level, tile } => {
             let path = path_to(world, e, NavNode::new(level, tile)).ok_or("can't get there")?;
-            cur.phase = Phase::Walking { path, idx: 0, slot: None, retries: 0 };
+            cur.phase = Phase::Walking { path, idx: 0, slot: None, retries: 0, blocked: 0 };
             Ok(())
         }
-        ActionKind::GoToWork => {
+        ActionKind::GoToWork | ActionKind::GoToSchool => {
             let exit = exit_tile(&world.res::<Lot>());
             let path = path_to(world, e, NavNode::new(0, exit)).unwrap_or_default();
-            cur.phase = Phase::Walking { path, idx: 0, slot: None, retries: 0 };
-            set_bubble(world, e, Some("work".into()), None, 30);
+            cur.phase = Phase::Walking { path, idx: 0, slot: None, retries: 0, blocked: 0 };
+            let icon = if matches!(cur.action.kind, ActionKind::GoToWork) { "work" } else { "school" };
+            set_bubble(world, e, Some(icon.into()), None, 30);
             Ok(())
         }
         ActionKind::Idle { .. } => {
@@ -518,7 +666,7 @@ fn begin(world: &World, e: Entity, data: &GameData, cur: &mut CurrentAction) -> 
             let wander = world.res_mut::<SimRng>().chance(0.6);
             let goal = if wander { world.res_mut::<SimRng>().pick(&opts).copied() } else { None };
             let path = goal.and_then(|g| path_to(world, e, g)).unwrap_or_default();
-            cur.phase = Phase::Walking { path, idx: 0, slot: None, retries: 0 };
+            cur.phase = Phase::Walking { path, idx: 0, slot: None, retries: 0, blocked: 0 };
             Ok(())
         }
     }
@@ -547,11 +695,10 @@ fn path_next_to(world: &World, e: Entity, target: Entity) -> Option<Vec<Vec3>> {
             if !lot.can_step(tl, n.tile, tt) && lot.walkable(tl, tt) {
                 continue;
             }
-            if let Some(d) = field.distance(n) {
-                if best.is_none_or(|b| d < b.0) {
+            if let Some(d) = field.distance(n)
+                && best.is_none_or(|b| d < b.0) {
                     best = Some((d, n));
                 }
-            }
         }
     }
     let (_, goal) = best?;
@@ -611,7 +758,7 @@ fn arrive(world: &World, e: Entity, data: &GameData, cur: &mut CurrentAction, sl
                     return Err("they keep wandering off".into());
                 }
                 let path = path_next_to(world, e, target).ok_or("can't reach them")?;
-                cur.phase = Phase::Walking { path, idx: 0, slot: None, retries: retries + 1 };
+                cur.phase = Phase::Walking { path, idx: 0, slot: None, retries: retries + 1, blocked: 0 };
                 return Ok(true);
             }
             face(world, e, target);
@@ -619,7 +766,7 @@ fn arrive(world: &World, e: Entity, data: &GameData, cur: &mut CurrentAction, sl
             let target_busy = world.get::<ActionQueue>(target).is_some_and(|q| {
                 q.current.as_ref().is_some_and(|c| {
                     c.action.source == Source::Player
-                        || matches!(c.action.kind, ActionKind::Respond { .. } | ActionKind::Social { .. } | ActionKind::GoToWork | ActionKind::PassOut)
+                        || matches!(c.action.kind, ActionKind::Respond { .. } | ActionKind::Social { .. } | ActionKind::GoToWork | ActionKind::GoToSchool | ActionKind::PassOut)
                         || (!sd.care && autonomy::is_sleeping(world, data, c))
                 })
             }) || world.has::<AtWork>(target);
@@ -661,6 +808,10 @@ fn arrive(world: &World, e: Entity, data: &GameData, cur: &mut CurrentAction, sl
         }
         ActionKind::GoToWork => {
             crate::career::begin_shift(world, e);
+            Ok(false)
+        }
+        ActionKind::GoToSchool => {
+            crate::school::begin_school(world, e);
             Ok(false)
         }
         ActionKind::Idle { .. } => {
@@ -727,11 +878,11 @@ fn perform(world: &World, e: Entity, data: &GameData, cur: &CurrentAction, slot:
                     }
                 }
             }
-            if elapsed % 8 == 0 {
-                let who = if (elapsed / 8) % 2 == 0 { *target } else { e };
+            if elapsed.is_multiple_of(8) {
+                let who = if (elapsed / 8).is_multiple_of(2) { *target } else { e };
                 say(world, who, sd.bubble.as_deref(), 6);
             }
-            if sd.tags.iter().any(|t| t == "playful" || t == "social") && elapsed % 30 == 0 {
+            if sd.tags.iter().any(|t| t == "playful" || t == "social") && elapsed.is_multiple_of(30) {
                 world.get_mut::<Skills>(e).unwrap().add(crate::data::Skill::Charisma, 0.05);
             }
             Ok(elapsed >= sd.minutes)
@@ -845,6 +996,9 @@ fn finish(world: &World, e: Entity, data: &GameData, cur: &CurrentAction, comple
             if inter.repairs {
                 log(world, LogKind::Info, Some(e), format!("{} fixed the {}.", name_of(world, e), def.name));
             }
+            if inter.has_tag("homework") {
+                crate::school::homework_done(world, e);
+            }
         }
         ActionKind::Social { target, social } if completed => {
             let sd = &data.socials[*social];
@@ -864,11 +1018,14 @@ fn finish(world: &World, e: Entity, data: &GameData, cur: &CurrentAction, comple
                     add_moodlet(world, *target, "insulted");
                     log(world, LogKind::Social, Some(e), format!("{} insulted {}. It was about their shoes.", name_of(world, e), name_of(world, *target)));
                 }
-                "chat" | "deep_talk" | "joke" => {
-                    if world.res_mut::<SimRng>().chance(0.3) {
+                "try_for_baby" => {
+                    let (a, b) = (e, *target);
+                    world.defer(move |w| crate::family::try_for_baby(w, a, b));
+                }
+                "chat" | "deep_talk" | "joke"
+                    if world.res_mut::<SimRng>().chance(0.3) => {
                         add_moodlet(world, e, "good_chat");
                     }
-                }
                 _ => {}
             }
             if before != after {

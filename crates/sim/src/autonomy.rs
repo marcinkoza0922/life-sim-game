@@ -64,11 +64,10 @@ pub fn interaction_check(
     if !inter.allowed_stage(stage) {
         return Err(format!("not for {}s", stage.label().to_lowercase()));
     }
-    if let Some(t) = &inter.requires_trait {
-        if !pers.has(t) {
+    if let Some(t) = &inter.requires_trait
+        && !pers.has(t) {
             return Err(format!("requires {}", data.trait_def(t).map(|d| d.name.as_str()).unwrap_or(t)));
         }
-    }
     if inst.broken && !inter.when_broken {
         return Err("it's broken".into());
     }
@@ -150,12 +149,18 @@ pub fn candidates(world: &World, e: Entity, data: &GameData) -> Vec<Candidate> {
         0.45f32.powi(n as i32)
     };
     let mut out = Vec::new();
+    let homework_due = world.get::<Student>(e).is_some_and(|s| !s.homework_done);
+    let grade = world.get::<Student>(e).map(|s| s.grade).unwrap_or(0.0);
+    let grieving = world.get::<Mood>(e).is_some_and(|m| m.moodlets.iter().any(|x| x.id == "grieving"));
 
     // objects
     for (oe, inst) in world.query::<(Entity, &ObjectInstance)>().iter() {
         let def = data.object(inst.def);
         for (ii, inter) in def.interactions.iter().enumerate() {
             if !inter.autonomous || interaction_check(data, inter, inst, stage, &pers, funds).is_err() {
+                continue;
+            }
+            if inter.has_tag("homework") && !homework_due {
                 continue;
             }
             let dist = free_slots(def, inter, inst, e)
@@ -184,6 +189,18 @@ pub fn candidates(world: &World, e: Entity, data: &GameData) -> Vec<Candidate> {
             }
             if inst.dirt > 0.5 && !inter.cleans {
                 s *= if pers.has("neat") { 0.5 } else { 0.85 };
+            }
+            if inter.has_tag("homework") {
+                // school-night guilt, scaled by conscientiousness; stronger after school
+                let after_school = (15..21).contains(&clock.hour());
+                let slipping = if grade < 0.0 { 4.0 } else { 0.0 };
+                s = s.max(0.0)
+                    + (9.0 + pers.axes.neat as f32 * 0.6 + slipping)
+                        * if after_school { 1.4 } else { 0.6 }
+                        * tag_multiplier(data, &pers, &inter.tags).max(0.4);
+            }
+            if inter.has_tag("grief") {
+                s = if grieving { s.max(0.0) + 8.0 } else { s * 0.3 };
             }
             if inter.cleans {
                 // chores matter more when things are bad
@@ -228,7 +245,7 @@ pub fn candidates(world: &World, e: Entity, data: &GameData) -> Vec<Candidate> {
         }
         // don't bother sleeping or already-engaged peons
         let busy = taq.current.as_ref().is_some_and(|c| {
-            matches!(c.action.kind, ActionKind::Respond { .. } | ActionKind::PassOut | ActionKind::GoToWork)
+            matches!(c.action.kind, ActionKind::Respond { .. } | ActionKind::PassOut | ActionKind::GoToWork | ActionKind::GoToSchool)
                 || c.action.source == Source::Player
         });
         if busy {
@@ -281,7 +298,13 @@ pub fn candidates(world: &World, e: Entity, data: &GameData) -> Vec<Candidate> {
             }
         }
     }
-    out.sort_by(|a, b| b.score.total_cmp(&a.score));
+    // ties are broken by label and target so the choice never depends on ECS storage order
+    let key = |k: &ActionKind| match k {
+        ActionKind::Object { obj, interaction } => (obj.to_bits(), *interaction),
+        ActionKind::Social { target, social } => (target.to_bits(), *social),
+        _ => (0, 0),
+    };
+    out.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.label.cmp(&b.label)).then_with(|| key(&a.kind).cmp(&key(&b.kind))));
     out
 }
 

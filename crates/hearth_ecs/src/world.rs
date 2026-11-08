@@ -141,6 +141,18 @@ impl World {
         self.spawn(())
     }
 
+    /// Spawns an empty entity with exactly this handle (index and generation), so saved worlds
+    /// can be restored without remapping references. Returns false if the index is in use.
+    pub fn spawn_empty_at(&mut self, e: Entity) -> bool {
+        let a = self.archetype_for(&[]);
+        let row = self.archetypes[a as usize].entities.len() as u32;
+        if !self.entities.alloc_at(e, Location { archetype: a, row }) {
+            return false;
+        }
+        self.archetypes[a as usize].entities.push(e);
+        true
+    }
+
     pub fn despawn(&mut self, e: Entity) -> bool {
         let Some(loc) = self.entities.location(e) else { return false };
         let row = loc.row as usize;

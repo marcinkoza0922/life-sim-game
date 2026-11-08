@@ -39,7 +39,7 @@ pub struct MeshData {
 impl MeshData {
     /// Makes every triangle counter-clockwise when seen from the side its vertex normals face.
     pub fn fix_winding(&mut self) {
-        for t in self.indices.chunks_exact_mut(3) {
+        for t in self.indices.as_chunks_mut::<3>().0 {
             let p = |i: u32| Vec3::from(self.vertices[i as usize].pos);
             let n = |i: u32| Vec3::from(self.vertices[i as usize].normal);
             let face = (p(t[1]) - p(t[0])).cross(p(t[2]) - p(t[0]));
@@ -749,7 +749,7 @@ impl Renderer {
         let mut out = Vec::with_capacity((width * height * 4) as usize);
         for y in 0..height {
             let r = &data[(y * row) as usize..(y * row + width * 4) as usize];
-            for p in r.chunks_exact(4) {
+            for p in r.as_chunks::<4>().0 {
                 if bgra {
                     out.extend_from_slice(&[p[2], p[1], p[0], 255]);
                 } else {

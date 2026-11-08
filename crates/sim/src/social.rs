@@ -107,11 +107,10 @@ pub fn social_allowed(world: &World, def: &SocialDef, a: Entity, b: Entity) -> R
     if !def.target_ok(ab.stage) {
         return Err("not appropriate for target");
     }
-    if let Some(t) = &def.requires_trait {
-        if !world.get::<Personality>(a).is_some_and(|p| p.has(t)) {
+    if let Some(t) = &def.requires_trait
+        && !world.get::<Personality>(a).is_some_and(|p| p.has(t)) {
             return Err("missing trait");
         }
-    }
     let rel = world.res::<Relationships>().get(a, b);
     if rel.friendship < def.min_friendship {
         return Err("not close enough");

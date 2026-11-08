@@ -20,7 +20,8 @@ pub fn aging(world: &mut World) {
     let step = 1.0 / TICKS_PER_DAY as f32;
     let mut grow = Vec::new();
     let mut elders_due = Vec::new();
-    for (e, age) in world.query_filtered::<(Entity, &mut Age), Without<Dead>>().iter() {
+    // townies live in their own (frozen) time; only the household ages
+    for (e, age) in world.query_filtered::<(Entity, &mut Age), (Without<Dead>, hearth_ecs::Without<crate::townies::Townie>)>().iter() {
         age.days_in_stage += step;
         age.total_days += step;
         if age.days_in_stage >= age.stage_len {
@@ -31,6 +32,8 @@ pub fn aging(world: &mut World) {
             }
         }
     }
+    grow.sort();
+    elders_due.sort();
     for e in grow {
         grow_up(world, e);
     }
@@ -81,8 +84,9 @@ pub fn grow_up(world: &mut World, e: Entity) {
         }
     }
     if new_stage == LifeStage::Elder {
-        world.get_mut::<Appearance>(e).unwrap().hair = [0.82, 0.82, 0.84];
+        world.get_mut::<Appearance>(e).unwrap().hair = crate::genetics::ELDER_HAIR;
     }
+    crate::school::on_stage_change(world, e, new_stage);
     add_moodlet(world, e, "birthday");
     let name = name_of(world, e);
     let line = match new_stage {
@@ -137,13 +141,16 @@ pub fn die(world: &mut World, e: Entity, cause: &str) {
     // grief
     let rels = world.res::<Relationships>().of(e);
     for (other, rel) in rels {
-        if rel.friendship > 20.0 || rel.romance > 20.0 {
-            if !world.has::<Dead>(other) {
+        if (rel.friendship > 20.0 || rel.romance > 20.0)
+            && !world.has::<Dead>(other) {
                 add_moodlet(world, other, "grieving");
             }
-        }
     }
     world.res_mut::<Household>().members.retain(|m| *m != e);
+    world.remove::<Student>(e);
+    if world.has::<Member>(e) {
+        crate::ghosts::bury(world, e);
+    }
 }
 
 /// Takes a peon off the lot entirely (e.g. social services).

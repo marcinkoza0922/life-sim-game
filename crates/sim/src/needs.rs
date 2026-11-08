@@ -54,7 +54,7 @@ pub fn update_rooms(world: &mut World) {
         world.res_mut::<Lot>().recompute_rooms();
     }
     // re-score rooms every 30 minutes or after changes
-    if !(dirty || tick % 30 == 0) {
+    if !(dirty || tick.is_multiple_of(30)) {
         return;
     }
     let data = data(world);
@@ -63,7 +63,10 @@ pub fn update_rooms(world: &mut World) {
         r.beauty = 0.0;
         r.dirt = 0.0;
     }
-    for o in world.query::<&ObjectInstance>().iter() {
+    // sorted so float sums don't depend on storage order (saves restore entities in a different layout)
+    let mut objs: Vec<(Entity, ObjectInstance)> = world.query::<(Entity, &ObjectInstance)>().iter().map(|(e, o)| (e, o.clone())).collect();
+    objs.sort_by_key(|(e, _)| *e);
+    for (_, o) in &objs {
         let def = data.object(o.def);
         let t = o.tile;
         if let Some(&rid) = lot.room_of.get(&(o.level, t.x, t.y)) {
@@ -123,7 +126,7 @@ pub fn decay_needs(world: &mut World) {
 
 pub fn update_mood(world: &mut World) {
     let tick = now(world);
-    let hourly = tick % 60 == 0;
+    let hourly = tick.is_multiple_of(60);
     let mut low: Vec<(Entity, &'static str)> = Vec::new();
     for (e, needs, mood) in world.query_filtered::<(Entity, &Needs, &mut Mood), Without<Dead>>().iter() {
         mood.moodlets.retain(|m| m.until > tick);
@@ -157,7 +160,7 @@ pub fn update_mood(world: &mut World) {
 }
 
 /// Off-screen nanny who looks after babies when no teen/adult is home. Costs money, saves lives.
-#[derive(Default)]
+#[derive(Default, Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Nanny {
     pub present: bool,
     pub name: String,
@@ -165,7 +168,7 @@ pub struct Nanny {
 
 fn nanny(world: &mut World) {
     let tick = now(world);
-    if tick % 15 != 0 {
+    if !tick.is_multiple_of(15) {
         return;
     }
     let mut babies = Vec::new();
@@ -207,7 +210,8 @@ fn nanny(world: &mut World) {
 pub fn consequences(world: &mut World) {
     nanny(world);
     let tick = now(world);
-    let peons: Vec<Entity> = world.query_filtered::<Entity, (With<Needs>, Without<Dead>, Without<AtWork>)>().iter().collect();
+    let mut peons: Vec<Entity> = world.query_filtered::<Entity, (With<Needs>, Without<Dead>, Without<AtWork>)>().iter().collect();
+    peons.sort();
     for e in peons {
         let (bladder, energy, hunger, stage) = {
             let n = world.get::<Needs>(e).unwrap();
@@ -272,7 +276,7 @@ pub fn consequences(world: &mut World) {
         }
 
         // babies cry when something is wrong, and crying wakes the grown-ups
-        if small && tick % 20 == 0 {
+        if small && tick.is_multiple_of(20) {
             let (low_need, v) = world.get::<Needs>(e).unwrap().lowest_core();
             if v < 30.0 {
                 set_bubble(world, e, Some(format!("cry:{}", low_need.label())), Some("WAAAH!".into()), 15);
@@ -291,17 +295,16 @@ fn dirty_room_of(world: &World, e: Entity, amount: f32) {
     for (oe, o) in world.query::<(Entity, &ObjectInstance)>().iter() {
         if lot.room_of.get(&(o.level, o.tile.x, o.tile.y)) == Some(&room) {
             let d = (o.tile.as_vec2() - tf.tile().as_vec2()).length();
-            if best.is_none_or(|b| d < b.0) {
+            if best.is_none_or(|b| d < b.0 || (d == b.0 && oe < b.1)) {
                 best = Some((d, oe));
             }
         }
     }
     drop(lot);
-    if let Some((_, oe)) = best {
-        if let Some(mut o) = world.get_mut::<ObjectInstance>(oe) {
+    if let Some((_, oe)) = best
+        && let Some(mut o) = world.get_mut::<ObjectInstance>(oe) {
             o.dirt = (o.dirt + amount).min(1.0);
         }
-    }
     let _ = world.res::<Clock>();
 }
 
@@ -310,13 +313,11 @@ fn wake_caretakers(world: &mut World, baby: Entity) {
     let data = data(world);
     let mut sleepers: Vec<Entity> = Vec::new();
     for (e, age, q) in world.query_filtered::<(Entity, &Age, &ActionQueue), (Without<Dead>, Without<AtWork>)>().iter() {
-        if e != baby && age.stage >= LifeStage::Teen {
-            if let Some(c) = &q.current {
-                if crate::autonomy::is_sleeping(world, &data, c) {
+        if e != baby && age.stage >= LifeStage::Teen
+            && let Some(c) = &q.current
+                && crate::autonomy::is_sleeping(world, &data, c) {
                     sleepers.push(e);
                 }
-            }
-        }
     }
     sleepers.sort();
     if sleepers.is_empty() || !world.res_mut::<crate::rng::SimRng>().chance(0.5) {
@@ -324,11 +325,10 @@ fn wake_caretakers(world: &mut World, baby: Entity) {
     }
     let i = world.res_mut::<crate::rng::SimRng>().below(sleepers.len());
     let who = sleepers[i];
-    if let Some(mut q) = world.get_mut::<ActionQueue>(who) {
-        if let Some(c) = q.current.as_mut() {
+    if let Some(mut q) = world.get_mut::<ActionQueue>(who)
+        && let Some(c) = q.current.as_mut() {
             c.cancel = true;
         }
-    }
     let t = format!("{} was woken up by {}'s crying. Bleary-eyed parenting commences.", name_of(world, who), name_of(world, baby));
     log(world, LogKind::Info, Some(who), t);
 }

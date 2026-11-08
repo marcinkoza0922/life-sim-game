@@ -34,4 +34,9 @@
     (id: "lonely", name: "Lonely", value: -10.0, hours: 1.0),
     (id: "cheated_death", name: "Cheated Death", value: 30.0, hours: 24.0, desc: "Rock beats scythe. Who knew?"),
     (id: "refused_order", name: "Stood Their Ground", value: 3.0, hours: 2.0, desc: "Nobody tells them what to do. Except maybe hunger."),
+    (id: "honor_roll", name: "Honor Roll", value: 15.0, hours: 24.0, desc: "The fridge has never been prouder."),
+    (id: "bad_report_card", name: "Bad Report Card", value: -12.0, hours: 12.0, desc: "Considering forging a signature."),
+    (id: "expecting", name: "Expecting!", value: 15.0, hours: 24.0, desc: "Already picked out tiny shoes."),
+    (id: "new_baby", name: "New Baby!", value: 25.0, hours: 48.0, desc: "Sleep is a distant memory. Worth it."),
+    (id: "paid_respects", name: "Paid Respects", value: 6.0, hours: 6.0, desc: "Said what needed saying."),
 ]

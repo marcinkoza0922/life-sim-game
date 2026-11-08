@@ -41,6 +41,13 @@ pub struct SceneOptions {
     pub show_paths: bool,
     /// Camera focus point (used for cutaway decisions).
     pub focus: Vec3,
+    /// Terrain heightmap mesh (see [`crate::lotmesh::LotMeshes`]); flat grass tiles if absent.
+    pub terrain_mesh: Option<MeshId>,
+    /// Roof meshes by the level they sit on.
+    pub roof_meshes: Vec<(i32, MeshId)>,
+    pub show_roofs: bool,
+    /// Create-a-Household line-up: (stage, look, being edited).
+    pub preview: Vec<(LifeStage, Appearance, bool)>,
 }
 
 impl Default for SceneOptions {
@@ -56,6 +63,10 @@ impl Default for SceneOptions {
             show_rooms: false,
             show_paths: false,
             focus: Vec3::new(16.0, 0.0, 16.0),
+            terrain_mesh: None,
+            roof_meshes: Vec::new(),
+            show_roofs: true,
+            preview: Vec::new(),
         }
     }
 }
@@ -180,7 +191,13 @@ pub fn build(sim: &Sim, r: &Builtins, camera: Camera, opts: &SceneOptions) -> Sc
             d.push(bx(r, c, sz, land).rough(0.95).flags(flags::NO_SHADOW_CAST));
         }
         // the lot itself (slightly lusher), with holes where basements have been dug under open sky
+        if let Some(tm) = opts.terrain_mesh {
+            d.push(Draw::new(tm, Mat4::IDENTITY, [1.0, 1.0, 1.0]).rough(0.95).flags(flags::NO_SHADOW_CAST));
+        }
         for x in 0..lot.width {
+            if opts.terrain_mesh.is_some() {
+                break;
+            }
             for z in 0..lot.depth {
                 let t = IVec2::new(x, z);
                 if lot.has_floor(0, t) || !lot.has_ground(0, t) {
@@ -294,6 +311,16 @@ pub fn build(sim: &Sim, r: &Builtins, camera: Camera, opts: &SceneOptions) -> Sc
         }
     }
 
+    // ---------------------------------------------------------------- roofs
+    // A roof hides the level it sits on unless walls are fully up; roofs over lower levels always show.
+    if opts.show_roofs && top >= 0 {
+        for (l, mesh) in &opts.roof_meshes {
+            if *l < top || (*l == top && opts.wall_mode == WallMode::Up) {
+                d.push(Draw::new(*mesh, Mat4::IDENTITY, [1.0, 1.0, 1.0]).rough(0.8));
+            }
+        }
+    }
+
     // ---------------------------------------------------------------- objects
     for (oe, inst) in world.query::<(Entity, &ObjectInstance)>().iter() {
         if inst.level > top || (top >= 0 && inst.level < 0) {
@@ -302,12 +329,11 @@ pub fn build(sim: &Sim, r: &Builtins, camera: Camera, opts: &SceneOptions) -> Sc
         let def = data.object(inst.def);
         let selected = opts.hovered == Some(oe);
         object_draws(d, r, &data, inst.def, inst, 1.0, if selected { Some([1.15, 1.15, 1.0]) } else { None });
-        if let Some((intensity, color)) = def.light {
-            if night || inst.level < 0 {
+        if let Some((intensity, color)) = def.light
+            && (night || inst.level < 0) {
                 let p = inst.center(def) + Vec3::Y * 1.4;
                 frame.lights.push(PointLight { pos: p, radius: 7.0, color: Vec3::from(color), intensity });
             }
-        }
         if inst.broken {
             labels.push(Label { world: inst.center(def) + Vec3::Y * 1.2, text: "broken!".into(), kind: LabelKind::Alert });
         }
@@ -372,14 +398,53 @@ pub fn build(sim: &Sim, r: &Builtins, camera: Camera, opts: &SceneOptions) -> Sc
             labels.push(Label { world: head + Vec3::Y * 0.3, text: peon.full_name(), kind: LabelKind::Name });
         }
         // debug: current path
-        if opts.show_paths {
-            if let Some(q) = world.get::<ActionQueue>(e) {
-                if let Some(CurrentAction { phase: Phase::Walking { path, idx, .. }, .. }) = &q.current {
+        if opts.show_paths
+            && let Some(q) = world.get::<ActionQueue>(e)
+                && let Some(CurrentAction { phase: Phase::Walking { path, idx, .. }, .. }) = &q.current {
                     for p in path.iter().skip(*idx) {
                         d.push(Draw::new(r.sphere, Mat4::from_scale_rotation_translation(Vec3::splat(0.15), Quat::IDENTITY, *p + Vec3::Y * 0.1), [0.2, 0.6, 1.0]).flags(flags::UNLIT));
                     }
                 }
+    }
+
+    // ---------------------------------------------------------------- creator line-up
+    if !opts.preview.is_empty() {
+        let n = opts.preview.len() as f32;
+        let base = opts.focus;
+        for (i, (stage, app, editing)) in opts.preview.iter().enumerate() {
+            let p = base + Vec3::new((i as f32 - (n - 1.0) * 0.5) * 1.1, 0.25, 0.0);
+            let to_cam = camera.eye - p;
+            let yaw = to_cam.x.atan2(to_cam.z);
+            d.push(Draw::new(r.cylinder, Mat4::from_scale_rotation_translation(Vec3::new(0.9, 0.25, 0.9), Quat::IDENTITY, p - Vec3::Y * 0.125), if *editing { [0.95, 0.85, 0.4] } else { [0.7, 0.7, 0.72] }).rough(0.4));
+            let posture = Posture::default();
+            body_draws(d, r, p, yaw, *stage, app, &posture, opts.time * 2.0);
+        }
+    }
+
+    // ---------------------------------------------------------------- ghosts
+    for e in sim::ghosts::visible_ghosts(world) {
+        let (Some(tf), Some(age), Some(app)) = (world.get::<Transform>(e), world.get::<Age>(e), world.get::<Appearance>(e)) else { continue };
+        let pos = tf.prev_pos.lerp(tf.pos, opts.alpha);
+        let lvl = Lot::level_of(pos);
+        if lvl > top || (top >= 0 && lvl < 0) {
+            continue;
+        }
+        let yaw = lerp_angle(tf.prev_yaw, tf.yaw, opts.alpha);
+        let bob = (opts.time * 2.0 + e.index() as f32).sin() * 0.08;
+        let first = d.len();
+        let h = body_draws(d, r, pos + Vec3::Y * bob, yaw, age.stage, &app, &Posture::default(), opts.time * 2.0);
+        for dr in &mut d[first..] {
+            let c = dr.color;
+            dr.color = [c[0] * 0.3 + 0.55, c[1] * 0.3 + 0.7, c[2] * 0.3 + 0.75, 0.38];
+            dr.emissive = 0.6;
+            dr.flags |= flags::NO_SHADOW_CAST;
+        }
+        if let Some(b) = world.get::<Bubble>(e)
+            && let Some(s) = &b.speech {
+                labels.push(Label { world: pos + Vec3::Y * (h + 0.5), text: s.clone(), kind: LabelKind::Speech });
             }
+        if opts.hovered == Some(e) {
+            labels.push(Label { world: pos + Vec3::Y * (h + 0.8), text: format!("Ghost of {}", world.get::<Peon>(e).map(|p| p.full_name()).unwrap_or_default()), kind: LabelKind::Name });
         }
     }
 
@@ -394,7 +459,7 @@ pub fn build(sim: &Sim, r: &Builtins, camera: Camera, opts: &SceneOptions) -> Sc
             let col = if id == 0 { [0.5, 0.5, 0.5] } else { c };
             d.push(bx(r, Vec3::new(x as f32 + 0.5, l as f32 * LEVEL_HEIGHT + 0.06, z as f32 + 0.5), Vec3::new(0.9, 0.02, 0.9), col).flags(flags::UNLIT | flags::NO_SHADOW_CAST).alpha(0.35));
         }
-        for (&(l, x, z), _) in lot.occupancy.iter() {
+        for &(l, x, z) in lot.occupancy.keys() {
             if l == top {
                 d.push(bx(r, Vec3::new(x as f32 + 0.5, l as f32 * LEVEL_HEIGHT + 0.08, z as f32 + 0.5), Vec3::new(0.5, 0.02, 0.5), [1.0, 0.1, 0.1]).flags(flags::UNLIT | flags::NO_SHADOW_CAST).alpha(0.5));
             }
@@ -594,12 +659,12 @@ pub fn body_draws(d: &mut Vec<Draw>, r: &Builtins, pos: Vec3, yaw: f32, stage: L
             arm_pitch = [-1.2 + (phase * 0.7).sin() * 0.15, -1.2 - (phase * 0.7).sin() * 0.15];
         }
         Pose::Exercise => {
-            root = root * Mat4::from_translation(Vec3::Y * (phase * 1.5).sin().abs() * 0.08);
+            root *= Mat4::from_translation(Vec3::Y * (phase * 1.5).sin().abs() * 0.08);
             leg_pitch = [(phase * 1.5).sin() * 0.7, -(phase * 1.5).sin() * 0.7];
             arm_pitch = [-2.6, -2.6];
         }
         Pose::Dance => {
-            root = root * Mat4::from_rotation_y((phase * 0.8).sin() * 0.6);
+            root *= Mat4::from_rotation_y((phase * 0.8).sin() * 0.6);
             arm_pitch = [-2.0 + phase.sin(), -2.0 - phase.sin()];
         }
         Pose::Stand => {}

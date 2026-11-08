@@ -354,12 +354,12 @@ impl<'q, Q: QueryData> Iterator for QueryIter<'q, Q> {
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            if let Some(f) = self.fetch {
-                if self.row < self.len {
-                    let row = self.row;
-                    self.row += 1;
-                    return Some(unsafe { Q::item(f, row) });
-                }
+            if let Some(f) = self.fetch
+                && self.row < self.len
+            {
+                let row = self.row;
+                self.row += 1;
+                return Some(unsafe { Q::item(f, row) });
             }
             let &a = self.archetypes.next()?;
             let arch = &self.world.archetypes_raw()[a as usize];

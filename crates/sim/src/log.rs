@@ -1,7 +1,7 @@
 use hearth_ecs::Entity;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LogKind {
     Info,
     Funny,
@@ -14,23 +14,24 @@ pub enum LogKind {
     Debug,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LogEntry {
     pub tick: u64,
     pub kind: LogKind,
     pub text: String,
-    #[serde(skip)]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub subject: Option<Entity>,
 }
 
 /// Narrative event log. Drives UI notifications and lets tests assert on what happened.
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct SimLog {
     pub entries: Vec<LogEntry>,
     /// Entries not yet shown as notifications.
     pub unread: usize,
     /// Count of all entries ever written (entries may be trimmed).
     pub total: u64,
+    #[serde(skip)]
     pub echo: bool,
 }
 

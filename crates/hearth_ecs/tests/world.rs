@@ -242,3 +242,29 @@ fn stress_random_ops() {
         assert_eq!(*w.get::<Pos>(e).unwrap(), Pos(v, v));
     }
 }
+
+#[test]
+fn spawn_at_restores_exact_handles() {
+    let mut src = World::new();
+    let a = src.spawn((1u32,));
+    let b = src.spawn((2u32,));
+    src.despawn(a);
+    let a2 = src.spawn((3u32,)); // reuses index 0 with a new generation
+    assert_ne!(a, a2);
+
+    let mut dst = World::new();
+    assert!(dst.spawn_empty_at(b));
+    assert!(dst.spawn_empty_at(a2));
+    assert!(!dst.spawn_empty_at(b), "index already live");
+    dst.insert_one(b, 2u32);
+    dst.insert_one(a2, 3u32);
+    assert_eq!(*dst.get::<u32>(b).unwrap(), 2);
+    assert_eq!(*dst.get::<u32>(a2).unwrap(), 3);
+    assert!(!dst.contains(a), "old generation stays dead");
+    // fresh spawns never collide with restored handles
+    let c = dst.spawn((4u32,));
+    assert!(c != a2 && c != b);
+    assert_eq!(dst.entity_count(), 3);
+    dst.despawn(a2);
+    assert!(!dst.contains(a2));
+}

@@ -13,7 +13,7 @@ use crate::sim::{add_moodlet, data, fill, log, name_of, now};
 use crate::speech::redact;
 use crate::time::{Clock, Settings};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct PendingChoice {
     pub peon: Entity,
     pub career: String,
@@ -24,7 +24,7 @@ pub struct PendingChoice {
 }
 
 /// Career events waiting for the player to choose.
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PendingChoices {
     pub items: Vec<PendingChoice>,
 }
@@ -38,6 +38,8 @@ pub fn schedule_work(world: &mut World) {
         .iter()
         .map(|(e, j)| (e, j.clone()))
         .collect();
+    let mut jobs = jobs;
+    jobs.sort_by_key(|(e, _)| *e);
     for (e, job) in jobs {
         let Some(c) = data.career(&job.career) else { continue };
         let lvl = &c.levels[job.level];
@@ -78,7 +80,7 @@ pub fn begin_shift(world: &World, e: Entity) {
     let end_mod = start + lvl.hours as u64 * 60;
     let until = if clock.minute_of_day() <= start { tick + (start - clock.minute_of_day()) + lvl.hours as u64 * 60 } else { tick + end_mod.saturating_sub(clock.minute_of_day()).max(60) };
     let event_at = tick + 30 + world.res_mut::<SimRng>().below(((until - tick).max(61) - 60) as usize) as u64;
-    world.defer_insert(e, (AtWork { until, event_at, event_done: false },));
+    world.defer_insert(e, (AtWork { until, event_at, event_done: false, school: false },));
     log(world, LogKind::Career, Some(e), format!("{} left for work ({}).", name_of(world, e), lvl.title));
 }
 
@@ -90,7 +92,12 @@ pub fn run_shifts(world: &mut World) {
         .iter()
         .map(|(e, a)| (e, a.clone()))
         .collect();
+    let mut at_work = at_work;
+    at_work.sort_by_key(|(e, _)| *e);
     for (e, aw) in at_work {
+        if aw.school {
+            continue;
+        }
         if !aw.event_done && tick >= aw.event_at {
             world.get_mut::<AtWork>(e).unwrap().event_done = true;
             fire_event(world, e, &data, aw.until);
@@ -234,9 +241,9 @@ fn end_shift(world: &mut World, e: Entity, data: &GameData) {
     world.flush();
     world.remove::<AtWork>(e);
     // come home
-    let exit = exit_tile(&world.res::<Lot>());
+    let home = { let lot = world.res::<Lot>(); lot.ground_center(0, exit_tile(&lot)) };
     if let Some(mut tf) = world.get_mut::<Transform>(e) {
-        tf.pos = Lot::tile_center(0, exit);
+        tf.pos = home;
         tf.prev_pos = tf.pos;
     }
     {

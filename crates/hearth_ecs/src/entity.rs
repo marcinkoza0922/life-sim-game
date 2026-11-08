@@ -70,6 +70,26 @@ impl Entities {
         }
     }
 
+    /// Allocates exactly `e` (index and generation), for restoring saved worlds.
+    /// Returns false if that index is already live.
+    pub fn alloc_at(&mut self, e: Entity, location: Location) -> bool {
+        let i = e.index as usize;
+        while self.meta.len() <= i {
+            let idx = self.meta.len() as u32;
+            self.meta.push(Meta { generation: 0, location: None });
+            self.free.push(idx);
+        }
+        if self.meta[i].location.is_some() {
+            return false;
+        }
+        self.free.retain(|&f| f != e.index);
+        let m = &mut self.meta[i];
+        m.generation = e.generation;
+        m.location = Some(location);
+        self.len += 1;
+        true
+    }
+
     pub fn free(&mut self, e: Entity) -> bool {
         match self.meta.get_mut(e.index as usize) {
             Some(m) if m.generation == e.generation && m.location.is_some() => {

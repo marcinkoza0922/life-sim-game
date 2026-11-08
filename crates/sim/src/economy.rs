@@ -5,7 +5,7 @@ use crate::objects::ObjectInstance;
 use crate::sim::{data, log};
 use crate::time::{Clock, Settings};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Household {
     pub name: String,
     pub funds: i64,
@@ -57,7 +57,7 @@ fn repossess(world: &mut World) {
     let target = world
         .query::<(Entity, &ObjectInstance)>()
         .iter()
-        .max_by_key(|(_, o)| o.price_paid)
+        .max_by_key(|(e, o)| (o.price_paid, std::cmp::Reverse(*e)))
         .map(|(e, o)| (e, data.object(o.def).name.clone(), o.price_paid));
     if let Some((e, name, price)) = target {
         world.despawn(e);

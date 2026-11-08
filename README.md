@@ -8,6 +8,8 @@ See [`docs/DESIGN.md`](docs/DESIGN.md) for the full design.
 ```sh
 cargo run --release -p game --bin lifesim            # play (starter family, seed 7)
 cargo run --release -p game --bin lifesim -- --seed 3 --minutes 300   # different family, 5h in
+cargo run --release -p game --bin lifesim -- --creator                 # start in Create-a-Household
+cargo run --release -p game --bin lifesim -- --load saves/quicksave.ron
 ```
 
 ### Controls
@@ -23,7 +25,9 @@ cargo run --release -p game --bin lifesim -- --seed 3 --minutes 300   # differen
 | Space, 1–4 | pause, speed (1x / 2x / 3x / Ultra) |
 | F5 / F6 / F7 | Live / Buy / Build mode (time pauses while building) |
 | R | rotate object / stairs being placed |
-| V | wall mode: cutaway → down → up |
+| V | wall mode: cutaway → down → up (roofs show over the viewed level only with walls up) |
+| T / M | toggle roofs / mute gibberish voices |
+| Ctrl+S / Ctrl+O | quicksave / quickload (`saves/quicksave.ron`); ☰ Game menu also has New household and Neighborhood |
 | Tab / Home | next peon / focus camera on selected peon |
 | Delete | sell hovered object (Buy mode) |
 | L | story log |

@@ -40,4 +40,7 @@
      friendship: 2.0, accept: 0.8, care: true, tags: ["care"], stages: [Teen, YoungAdult, Adult, Elder], target_stages: [Toddler], bubble: "potty"),
     (id: "feed_toddler", name: "Serve Mushy Food", minutes: 25, rates: {Social: 10.0}, target_rates: {Hunger: 220.0},
      friendship: 2.0, accept: 0.9, care: true, tags: ["care", "food"], stages: [Teen, YoungAdult, Adult, Elder], target_stages: [Toddler], bubble: "spoon"),
+    (id: "try_for_baby", name: "Try for Baby", minutes: 30, rates: {Social: 80.0, Fun: 90.0, Energy: -10.0}, target_rates: {Social: 80.0, Fun: 90.0, Energy: -10.0},
+     romance: 5.0, min_romance: 50.0, accept: 0.85, romantic: true, autonomous: false, tags: ["romance"],
+     stages: [YoungAdult, Adult], target_stages: [YoungAdult, Adult], bubble: "<3<3"),
 ]

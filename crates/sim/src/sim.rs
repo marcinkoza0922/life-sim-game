@@ -117,6 +117,200 @@ pub struct PeonSpec {
     pub appearance: Appearance,
     pub skills: Vec<(Skill, f32)>,
     pub career: Option<String>,
+    /// Inheritable genotype; derived from `appearance` when absent.
+    #[serde(default)]
+    pub genes: Option<Genes>,
+}
+
+pub fn random_spec(world: &World, stage: LifeStage, last: Option<&str>) -> PeonSpec {
+    let data = data(world);
+    let mut rng = world.res_mut::<SimRng>().fork();
+    let taken: Vec<String> = world
+        .query::<&Peon>()
+        .iter()
+        .map(|p| p.first.clone())
+        .collect();
+    let mut first = rng.pick(&data.names.first).cloned().unwrap_or_else(|| "Pat".into());
+    for _ in 0..50 {
+        if !taken.contains(&first) {
+            break;
+        }
+        first = rng.pick(&data.names.first).cloned().unwrap();
+    }
+    let last = last.map(String::from).unwrap_or_else(|| rng.pick(&data.names.last).cloned().unwrap());
+    // axes: distribute 25 points
+    let mut axes = [0u8; 5];
+    let mut pts = 25;
+    while pts > 0 {
+        let i = rng.below(5);
+        if axes[i] < 10 {
+            axes[i] += 1;
+            pts -= 1;
+        }
+    }
+    let n_traits = if stage <= LifeStage::Toddler { 1 } else if stage <= LifeStage::Teen { 2 } else { 3 };
+    let mut traits: Vec<String> = Vec::new();
+    let mut guard = 0;
+    while traits.len() < n_traits && guard < 100 {
+        guard += 1;
+        let t = rng.pick(&data.traits).unwrap();
+        let clash = traits.iter().any(|x| x == &t.id || t.conflicts.contains(x));
+        if !clash {
+            traits.push(t.id.clone());
+        }
+    }
+    let quirk = rng.pick(&data.quirks).unwrap().id.clone();
+    let skin_tones = [[0.96, 0.8, 0.69], [0.87, 0.67, 0.5], [0.72, 0.5, 0.36], [0.55, 0.37, 0.25], [0.36, 0.24, 0.16]];
+    let hair = [[0.1, 0.07, 0.05], [0.35, 0.22, 0.1], [0.75, 0.6, 0.3], [0.6, 0.25, 0.1], [0.85, 0.85, 0.85], [0.3, 0.6, 0.55]];
+    let rcol = |rng: &mut SimRng| [rng.range_f32(0.15, 0.9), rng.range_f32(0.15, 0.9), rng.range_f32(0.15, 0.9)];
+    let genes = Genes {
+        skin: *rng.pick(&skin_tones).unwrap(),
+        hair: *rng.pick(&hair).unwrap(),
+        eyes: *rng.pick(&crate::genetics::EYE_COLORS).unwrap(),
+        height: rng.range_f32(0.92, 1.08),
+        build: rng.range_f32(0.0, 1.0),
+    };
+    let appearance = crate::genetics::express(&genes, stage, rcol(&mut rng), rcol(&mut rng), rng.below(4) as u8);
+    let career = if stage.is_adult() && stage != LifeStage::Elder && rng.chance(0.8) {
+        let adult: Vec<_> = data.careers.iter().filter(|c| c.min_stage >= LifeStage::YoungAdult).collect();
+        Some(rng.pick(&adult).unwrap().id.clone())
+    } else {
+        None
+    };
+    PeonSpec {
+        first,
+        last,
+        stage,
+        axes: Axes { neat: axes[0], outgoing: axes[1], active: axes[2], playful: axes[3], nice: axes[4] },
+        traits,
+        quirk,
+        appearance,
+        skills: Vec::new(),
+        career,
+        genes: Some(genes),
+    }
+}
+
+pub fn spawn_peon(world: &mut World, spec: PeonSpec, pos: Vec3) -> Entity {
+    spawn_peon_as(world, spec, pos, true)
+}
+
+/// Spawns a peon; household members are logged as moving in and added to the [`Household`].
+pub fn spawn_peon_as(world: &mut World, spec: PeonSpec, pos: Vec3, member: bool) -> Entity {
+    let data = data(world);
+    let scale = world.res::<Settings>().lifespan_scale;
+    let stage_len = spec.stage.base_days() * scale * world.res_mut::<SimRng>().range_f32(0.9, 1.1);
+    let mut needs = Needs::new();
+    for t in &spec.traits {
+        if let Some(n) = data.trait_def(t).and_then(|d| d.grants) {
+            needs.active[n.idx()] = true;
+        }
+    }
+    for n in Need::ALL {
+        needs.v[n.idx()] = world.res_mut::<SimRng>().range_f32(60.0, 95.0);
+    }
+    let mut skills = Skills::default();
+    for (s, v) in &spec.skills {
+        skills.v[s.idx()] = *v;
+    }
+    let e = world.spawn((
+        Peon { first: spec.first.clone(), last: spec.last.clone() },
+        Age { stage: spec.stage, days_in_stage: 0.0, stage_len, total_days: 0.0 },
+        needs,
+        Personality { axes: spec.axes, traits: spec.traits.clone(), quirk: spec.quirk.clone() },
+        skills,
+        Mood::default(),
+        Transform::at(pos),
+        spec.appearance.clone(),
+        Posture::default(),
+        Bubble::default(),
+        ActionQueue::default(),
+        Brain::default(),
+    ));
+    let genes = spec.genes.clone().unwrap_or_else(|| crate::genetics::genes_from_appearance(&spec.appearance));
+    world.insert(e, (Family::default(), genes));
+    if member {
+        world.insert_one(e, Member);
+    }
+    if matches!(spec.stage, LifeStage::Child | LifeStage::Teen) {
+        world.insert_one(e, Student::new());
+    }
+    if let Some(c) = &spec.career
+        && data.career(c).is_some() {
+            world.insert_one(e, Job { career: c.clone(), level: 0, performance: 0.0, days_worked: 0, last_shift_day: None });
+        }
+    if member {
+        world.res_mut::<Household>().members.push(e);
+        log(world, LogKind::Life, Some(e), format!("{} {} moved in.", spec.first, spec.last));
+    }
+    e
+}
+
+
+pub fn can_place(world: &World, def_id: &str, level: i32, tile: IVec2, rot: u8) -> Result<(), String> {
+    let data = data(world);
+    let id = data.object_id(def_id).ok_or("unknown object")?;
+    let def = data.object(id);
+    let inst = ObjectInstance::new(id, def, level, tile, rot);
+    let lot = world.res::<Lot>();
+    for t in inst.footprint_tiles(def) {
+        if !lot.has_ground(level, t) {
+            return Err("nothing to stand on".into());
+        }
+        if lot.occupancy.contains_key(&(level, t.x, t.y)) {
+            return Err("tile occupied".into());
+        }
+        if lot.stair_at(level, t).is_some() {
+            return Err("stairs in the way".into());
+        }
+        if level == 0 && !lot.has_floor(0, t) && !lot.terrain.tile_flat(t) {
+            return Err("the ground is too uneven".into());
+        }
+    }
+    // walls may not cross the footprint interior
+    let tiles = inst.footprint_tiles(def);
+    for a in &tiles {
+        for d in [IVec2::X, IVec2::Y] {
+            let b = *a + d;
+            if tiles.contains(&b)
+                && let Some(e) = crate::lot::Edge::between(level, *a, b)
+                    && lot.walls.contains_key(&e) {
+                        return Err("a wall is in the way".into());
+                    }
+        }
+    }
+    Ok(())
+}
+
+/// Buys (if `charge`) and places an object.
+pub fn place_object(world: &mut World, def_id: &str, level: i32, tile: IVec2, rot: u8, charge: bool) -> Result<Entity, String> {
+    can_place(world, def_id, level, tile, rot)?;
+    let data = data(world);
+    let id = data.object_id(def_id).unwrap();
+    let def = data.object(id);
+    if charge {
+        let mut hh = world.res_mut::<Household>();
+        if hh.funds < def.price {
+            return Err("can't afford it".into());
+        }
+        hh.funds -= def.price;
+    }
+    let mut inst = ObjectInstance::new(id, def, level, tile, rot);
+    if level == 0 && !world.res::<Lot>().has_floor(0, tile) {
+        inst.ground = world.res::<Lot>().terrain.corner(tile);
+    }
+    let tiles = inst.footprint_tiles(def);
+    let walkable = def.walkable;
+    let e = world.spawn((inst,));
+    let mut lot = world.res_mut::<Lot>();
+    if !walkable {
+        for t in tiles {
+            lot.occupancy.insert((level, t.x, t.y), e);
+        }
+    }
+    lot.rooms_dirty = true;
+    lot.version += 1;
+    Ok(e)
 }
 
 pub struct Sim {
@@ -138,6 +332,7 @@ impl Sim {
         world.insert_resource(career::PendingChoices::default());
         world.insert_resource(actions::NextActionId(1));
         world.insert_resource(needs::Nanny::default());
+        world.insert_resource(crate::townies::Neighborhood::default());
         for_debug(&mut world);
 
         let mut schedule = Schedule::new();
@@ -148,9 +343,14 @@ impl Sim {
             .add_system("needs", needs::decay_needs)
             .add_system("needs", needs::update_mood)
             .add_system("act", career::schedule_work)
+            .add_system("act", crate::school::schedule_school)
             .add_system("act", actions::run_actions)
             .add_system("post", needs::consequences)
             .add_system("post", career::run_shifts)
+            .add_system("post", crate::school::run_school)
+            .add_system("post", crate::family::pregnancies)
+            .add_system("post", crate::ghosts::haunt)
+            .add_system("post", crate::townies::visits)
             .add_system("post", life::aging)
             .add_system("post", economy::bills)
             .add_system("post", daily_upkeep);
@@ -211,144 +411,27 @@ impl Sim {
     // -------------------------------------------------------------------- peons
 
     pub fn random_spec(&mut self, stage: LifeStage, last: Option<&str>) -> PeonSpec {
-        let data = self.data();
-        let mut rng = self.world.res_mut::<SimRng>().fork();
-        let taken: Vec<String> = self
-            .world
-            .query::<&Peon>()
-            .iter()
-            .map(|p| p.first.clone())
-            .collect();
-        let mut first = rng.pick(&data.names.first).cloned().unwrap_or_else(|| "Pat".into());
-        for _ in 0..50 {
-            if !taken.contains(&first) {
-                break;
-            }
-            first = rng.pick(&data.names.first).cloned().unwrap();
-        }
-        let last = last.map(String::from).unwrap_or_else(|| rng.pick(&data.names.last).cloned().unwrap());
-        // axes: distribute 25 points
-        let mut axes = [0u8; 5];
-        let mut pts = 25;
-        while pts > 0 {
-            let i = rng.below(5);
-            if axes[i] < 10 {
-                axes[i] += 1;
-                pts -= 1;
-            }
-        }
-        let n_traits = if stage <= LifeStage::Toddler { 1 } else if stage <= LifeStage::Teen { 2 } else { 3 };
-        let mut traits: Vec<String> = Vec::new();
-        let mut guard = 0;
-        while traits.len() < n_traits && guard < 100 {
-            guard += 1;
-            let t = rng.pick(&data.traits).unwrap();
-            let clash = traits.iter().any(|x| x == &t.id || t.conflicts.contains(x));
-            if !clash {
-                traits.push(t.id.clone());
-            }
-        }
-        let quirk = rng.pick(&data.quirks).unwrap().id.clone();
-        let skin_tones = [[0.96, 0.8, 0.69], [0.87, 0.67, 0.5], [0.72, 0.5, 0.36], [0.55, 0.37, 0.25], [0.36, 0.24, 0.16]];
-        let hair = [[0.1, 0.07, 0.05], [0.35, 0.22, 0.1], [0.75, 0.6, 0.3], [0.6, 0.25, 0.1], [0.85, 0.85, 0.85], [0.3, 0.6, 0.55]];
-        let rcol = |rng: &mut SimRng| [rng.range_f32(0.15, 0.9), rng.range_f32(0.15, 0.9), rng.range_f32(0.15, 0.9)];
-        let appearance = Appearance {
-            skin: *rng.pick(&skin_tones).unwrap(),
-            hair: if stage == LifeStage::Elder { [0.8, 0.8, 0.8] } else { *rng.pick(&hair).unwrap() },
-            shirt: rcol(&mut rng),
-            pants: rcol(&mut rng),
-            height: rng.range_f32(0.92, 1.08),
-            build: rng.range_f32(0.0, 1.0),
-            hair_style: rng.below(4) as u8,
-        };
-        let career = if stage.is_adult() && stage != LifeStage::Elder && rng.chance(0.8) {
-            let adult: Vec<_> = data.careers.iter().filter(|c| c.min_stage >= LifeStage::YoungAdult).collect();
-            Some(rng.pick(&adult).unwrap().id.clone())
-        } else {
-            None
-        };
-        PeonSpec {
-            first,
-            last,
-            stage,
-            axes: Axes { neat: axes[0], outgoing: axes[1], active: axes[2], playful: axes[3], nice: axes[4] },
-            traits,
-            quirk,
-            appearance,
-            skills: Vec::new(),
-            career,
-        }
+        random_spec(&self.world, stage, last)
     }
 
     pub fn spawn_peon(&mut self, spec: PeonSpec, pos: Vec3) -> Entity {
-        let data = self.data();
-        let scale = self.world.res::<Settings>().lifespan_scale;
-        let stage_len = spec.stage.base_days() * scale * self.world.res_mut::<SimRng>().range_f32(0.9, 1.1);
-        let mut needs = Needs::new();
-        for t in &spec.traits {
-            if let Some(n) = data.trait_def(t).and_then(|d| d.grants) {
-                needs.active[n.idx()] = true;
-            }
-        }
-        for n in Need::ALL {
-            needs.v[n.idx()] = self.world.res_mut::<SimRng>().range_f32(60.0, 95.0);
-        }
-        let mut skills = Skills::default();
-        for (s, v) in &spec.skills {
-            skills.v[s.idx()] = *v;
-        }
-        let e = self.world.spawn((
-            Peon { first: spec.first.clone(), last: spec.last.clone() },
-            Age { stage: spec.stage, days_in_stage: 0.0, stage_len, total_days: 0.0 },
-            needs,
-            Personality { axes: spec.axes, traits: spec.traits.clone(), quirk: spec.quirk.clone() },
-            skills,
-            Mood::default(),
-            Transform::at(pos),
-            spec.appearance.clone(),
-            Posture::default(),
-            Bubble::default(),
-            ActionQueue::default(),
-            Brain::default(),
-        ));
-        self.world.insert(e, (Family::default(), Member));
-        if let Some(c) = &spec.career {
-            if data.career(c).is_some() {
-                self.world.insert_one(e, Job { career: c.clone(), level: 0, performance: 0.0, days_worked: 0, last_shift_day: None });
-            }
-        }
-        self.world.res_mut::<Household>().members.push(e);
-        log(&self.world, LogKind::Life, Some(e), format!("{} {} moved in.", spec.first, spec.last));
-        e
+        spawn_peon(&mut self.world, spec, pos)
     }
 
     /// Records parent/child links (for genetics and romance rules).
     pub fn set_parent(&mut self, parent: Entity, child: Entity) {
-        if let Some(mut f) = self.world.get_mut::<Family>(child) {
-            if !f.parents.contains(&parent) {
-                f.parents.push(parent);
-            }
-        }
-        if let Some(mut f) = self.world.get_mut::<Family>(parent) {
-            if !f.children.contains(&child) {
-                f.children.push(child);
-            }
-        }
-        self.world.res_mut::<Relationships>().add(parent, child, 50.0, 0.0);
+        crate::family::set_parent(&mut self.world, parent, child);
     }
 
     pub fn marry(&mut self, a: Entity, b: Entity) {
-        for (x, y) in [(a, b), (b, a)] {
-            if let Some(mut f) = self.world.get_mut::<Family>(x) {
-                f.spouse = Some(y);
-            }
-        }
-        let mut rels = self.world.res_mut::<Relationships>();
-        let r = rels.get_mut(a, b);
-        r.friendship = r.friendship.max(60.0);
-        r.romance = r.romance.max(60.0);
-        r.partners = true;
-        r.married = true;
+        crate::family::marry(&mut self.world, a, b);
+    }
+
+    /// Adopts a child (charges the agency fee).
+    pub fn adopt(&mut self, stage: LifeStage) -> Result<Entity, String> {
+        let r = crate::family::adopt(&mut self.world, stage);
+        self.world.flush();
+        r
     }
 
     // -------------------------------------------------------------------- orders
@@ -386,65 +469,12 @@ impl Sim {
     // -------------------------------------------------------------------- build / buy
 
     pub fn can_place(&self, def_id: &str, level: i32, tile: IVec2, rot: u8) -> Result<(), String> {
-        let data = self.data();
-        let id = data.object_id(def_id).ok_or("unknown object")?;
-        let def = data.object(id);
-        let inst = ObjectInstance::new(id, def, level, tile, rot);
-        let lot = self.world.res::<Lot>();
-        for t in inst.footprint_tiles(def) {
-            if !lot.has_ground(level, t) {
-                return Err("nothing to stand on".into());
-            }
-            if lot.occupancy.contains_key(&(level, t.x, t.y)) {
-                return Err("tile occupied".into());
-            }
-            if lot.stair_at(level, t).is_some() {
-                return Err("stairs in the way".into());
-            }
-        }
-        // walls may not cross the footprint interior
-        let tiles = inst.footprint_tiles(def);
-        for a in &tiles {
-            for d in [IVec2::X, IVec2::Y] {
-                let b = *a + d;
-                if tiles.contains(&b) {
-                    if let Some(e) = crate::lot::Edge::between(level, *a, b) {
-                        if lot.walls.contains_key(&e) {
-                            return Err("a wall is in the way".into());
-                        }
-                    }
-                }
-            }
-        }
-        Ok(())
+        can_place(&self.world, def_id, level, tile, rot)
     }
 
     /// Buys (if `charge`) and places an object.
     pub fn place_object(&mut self, def_id: &str, level: i32, tile: IVec2, rot: u8, charge: bool) -> Result<Entity, String> {
-        self.can_place(def_id, level, tile, rot)?;
-        let data = self.data();
-        let id = data.object_id(def_id).unwrap();
-        let def = data.object(id);
-        if charge {
-            let mut hh = self.world.res_mut::<Household>();
-            if hh.funds < def.price {
-                return Err("can't afford it".into());
-            }
-            hh.funds -= def.price;
-        }
-        let inst = ObjectInstance::new(id, def, level, tile, rot);
-        let tiles = inst.footprint_tiles(def);
-        let walkable = def.walkable;
-        let e = self.world.spawn((inst,));
-        let mut lot = self.world.res_mut::<Lot>();
-        if !walkable {
-            for t in tiles {
-                lot.occupancy.insert((level, t.x, t.y), e);
-            }
-        }
-        lot.rooms_dirty = true;
-        lot.version += 1;
-        Ok(e)
+        place_object(&mut self.world, def_id, level, tile, rot, charge)
     }
 
     /// Sells an object for its depreciated value.
@@ -452,7 +482,7 @@ impl Sim {
         let inst = self.world.remove::<ObjectInstance>(e)?;
         // stop anyone using it
         for u in inst.slot_users.iter().flatten() {
-            actions::abort_current(&mut self.world, *u);
+            actions::abort_current(&self.world, *u);
         }
         self.world.despawn(e);
         let value = (inst.price_paid as f32 * if inst.uses == 0 { 1.0 } else { 0.8 } * if inst.broken { 0.5 } else { 1.0 }) as i64;
@@ -560,4 +590,9 @@ fn for_debug(world: &mut World) {
     world.register_debug::<Dead>();
     world.register_debug::<ObjectInstance>();
     world.register_debug::<Appearance>();
+    world.register_debug::<Genes>();
+    world.register_debug::<Student>();
+    world.register_debug::<Pregnant>();
+    world.register_debug::<Ghost>();
+    world.register_debug::<crate::townies::Townie>();
 }
