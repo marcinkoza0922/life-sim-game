@@ -63,7 +63,7 @@
     (
         id: "counter_basic", name: "Countertop of Moderate Ambition", category: Surfaces, price: 150, footprint: (1, 1),
         parts: [
-            (shape: Box, size: (1.0, 0.88, 0.65), at: (0.5, 0.44, 0.33), color: (0.55, 0.42, 0.3), rough: 0.7),
+            (shape: Box, size: (1.0, 0.88, 0.65), at: (0.5, 0.44, 0.33), color: (0.66, 0.52, 0.39), material: "wood", rough: 0.7),
             (shape: Box, size: (1.0, 0.04, 0.68), at: (0.5, 0.9, 0.34), color: (0.82, 0.8, 0.76), rough: 0.25),
         ],
         beauty: 0.5,
@@ -71,7 +71,7 @@
     (
         id: "kitchen_sink", name: "Gurgle Kitchen Sink", category: Kitchen, price: 250, footprint: (1, 1),
         parts: [
-            (shape: Box, size: (1.0, 0.88, 0.65), at: (0.5, 0.44, 0.33), color: (0.55, 0.42, 0.3), rough: 0.7),
+            (shape: Box, size: (1.0, 0.88, 0.65), at: (0.5, 0.44, 0.33), color: (0.66, 0.52, 0.39), material: "wood", rough: 0.7),
             (shape: Box, size: (1.0, 0.04, 0.68), at: (0.5, 0.9, 0.34), color: (0.82, 0.8, 0.76), rough: 0.25),
             (shape: Box, size: (0.5, 0.03, 0.4), at: (0.5, 0.925, 0.35), color: (0.7, 0.72, 0.75), metal: 1.0, rough: 0.2),
             (shape: Cylinder, size: (0.04, 0.3, 0.04), at: (0.5, 1.05, 0.12), color: (0.7, 0.72, 0.75), metal: 1.0, rough: 0.2),
@@ -142,11 +142,11 @@
     (
         id: "bed_single", name: "Snoozeberg Single Bed", category: Sleeping, price: 450, footprint: (1, 2),
         parts: [
-            (shape: Box, size: (0.95, 0.35, 1.95), at: (0.5, 0.2, 1.0), color: (0.45, 0.32, 0.22), rough: 0.7),
-            (shape: Box, size: (0.9, 0.15, 1.85), at: (0.5, 0.45, 1.0), color: (0.92, 0.92, 0.9), rough: 0.9),
-            (shape: Box, size: (0.9, 0.06, 1.3), at: (0.5, 0.54, 1.3), color: (0.35, 0.5, 0.7), rough: 0.9),
-            (shape: Box, size: (0.6, 0.1, 0.3), at: (0.5, 0.57, 0.25), color: (0.97, 0.97, 0.97), rough: 0.9),
-            (shape: Box, size: (0.95, 0.8, 0.06), at: (0.5, 0.4, 0.03), color: (0.4, 0.28, 0.2), rough: 0.7),
+            (shape: Box, size: (0.95, 0.35, 1.95), at: (0.5, 0.2, 1.0), color: (0.54, 0.4, 0.29), material: "wood", rough: 0.7),
+            (shape: Box, size: (0.9, 0.15, 1.85), at: (0.5, 0.45, 1.0), color: (1.0, 1.0, 1.0), material: "fabric", rough: 0.9),
+            (shape: Box, size: (0.9, 0.06, 1.3), at: (0.5, 0.54, 1.3), color: (0.4, 0.57, 0.8), material: "fabric", rough: 0.9),
+            (shape: Box, size: (0.6, 0.1, 0.3), at: (0.5, 0.57, 0.25), color: (1.0, 1.0, 1.0), material: "fabric", rough: 0.9),
+            (shape: Box, size: (0.95, 0.8, 0.06), at: (0.5, 0.4, 0.03), color: (0.48, 0.35, 0.26), material: "wood", rough: 0.7),
         ],
         slots: [(stand: (1.5, 1.0), use_at: (0.5, 0.5, 1.0), facing: 0.0)],
         interactions: [
@@ -162,12 +162,12 @@
     (
         id: "bed_double", name: "Snoozeberg Royale Double Bed", category: Sleeping, price: 1100, footprint: (2, 2),
         parts: [
-            (shape: Box, size: (1.95, 0.35, 1.95), at: (1.0, 0.2, 1.0), color: (0.4, 0.27, 0.18), rough: 0.7),
-            (shape: Box, size: (1.88, 0.16, 1.85), at: (1.0, 0.45, 1.0), color: (0.94, 0.93, 0.9), rough: 0.9),
-            (shape: Box, size: (1.88, 0.06, 1.3), at: (1.0, 0.55, 1.3), color: (0.6, 0.25, 0.3), rough: 0.9),
-            (shape: Box, size: (0.6, 0.1, 0.3), at: (0.5, 0.58, 0.25), color: (0.97, 0.97, 0.97), rough: 0.9),
-            (shape: Box, size: (0.6, 0.1, 0.3), at: (1.5, 0.58, 0.25), color: (0.97, 0.97, 0.97), rough: 0.9),
-            (shape: Box, size: (1.95, 1.0, 0.07), at: (1.0, 0.5, 0.035), color: (0.36, 0.24, 0.16), rough: 0.7),
+            (shape: Box, size: (1.95, 0.35, 1.95), at: (1.0, 0.2, 1.0), color: (0.48, 0.33, 0.23), material: "wood", rough: 0.7),
+            (shape: Box, size: (1.88, 0.16, 1.85), at: (1.0, 0.45, 1.0), color: (1.0, 1.0, 1.0), material: "fabric", rough: 0.9),
+            (shape: Box, size: (1.88, 0.06, 1.3), at: (1.0, 0.55, 1.3), color: (0.69, 0.29, 0.34), material: "fabric", rough: 0.9),
+            (shape: Box, size: (0.6, 0.1, 0.3), at: (0.5, 0.58, 0.25), color: (1.0, 1.0, 1.0), material: "fabric", rough: 0.9),
+            (shape: Box, size: (0.6, 0.1, 0.3), at: (1.5, 0.58, 0.25), color: (1.0, 1.0, 1.0), material: "fabric", rough: 0.9),
+            (shape: Box, size: (1.95, 1.0, 0.07), at: (1.0, 0.5, 0.035), color: (0.43, 0.3, 0.21), material: "wood", rough: 0.7),
         ],
         slots: [
             (stand: (-0.5, 1.0), use_at: (0.5, 0.5, 1.0), facing: 0.0),
@@ -186,11 +186,11 @@
         id: "crib", name: "Babycage Deluxe Crib", category: Kids, price: 300, footprint: (1, 1),
         desc: "Marketing insisted we stop calling it a cage.",
         parts: [
-            (shape: Box, size: (0.85, 0.08, 0.85), at: (0.5, 0.45, 0.5), color: (0.95, 0.92, 0.85), rough: 0.9),
-            (shape: Box, size: (0.9, 0.9, 0.04), at: (0.5, 0.45, 0.06), color: (0.85, 0.75, 0.6), rough: 0.7),
-            (shape: Box, size: (0.9, 0.9, 0.04), at: (0.5, 0.45, 0.94), color: (0.85, 0.75, 0.6), rough: 0.7),
-            (shape: Box, size: (0.04, 0.9, 0.9), at: (0.06, 0.45, 0.5), color: (0.85, 0.75, 0.6), rough: 0.7),
-            (shape: Box, size: (0.04, 0.9, 0.9), at: (0.94, 0.45, 0.5), color: (0.85, 0.75, 0.6), rough: 0.7),
+            (shape: Box, size: (0.85, 0.08, 0.85), at: (0.5, 0.45, 0.5), color: (1.0, 1.0, 0.97), material: "fabric", rough: 0.9),
+            (shape: Box, size: (0.9, 0.9, 0.04), at: (0.5, 0.45, 0.06), color: (1.0, 0.93, 0.78), material: "wood", rough: 0.7),
+            (shape: Box, size: (0.9, 0.9, 0.04), at: (0.5, 0.45, 0.94), color: (1.0, 0.93, 0.78), material: "wood", rough: 0.7),
+            (shape: Box, size: (0.04, 0.9, 0.9), at: (0.06, 0.45, 0.5), color: (1.0, 0.93, 0.78), material: "wood", rough: 0.7),
+            (shape: Box, size: (0.04, 0.9, 0.9), at: (0.94, 0.45, 0.5), color: (1.0, 0.93, 0.78), material: "wood", rough: 0.7),
         ],
         slots: [(stand: (0.5, 1.5), use_at: (0.5, 0.5, 0.5), facing: 0.0)],
         interactions: [
@@ -203,12 +203,12 @@
         id: "sofa_basic", name: "Slouchmaster 3000 Sofa", category: Seating, price: 450, footprint: (2, 1),
         desc: "Eats remotes. Occasionally returns coins.",
         parts: [
-            (shape: Box, size: (1.9, 0.42, 0.85), at: (1.0, 0.21, 0.48), color: (0.36, 0.42, 0.52), rough: 0.9),
-            (shape: Box, size: (1.9, 0.5, 0.2), at: (1.0, 0.65, 0.12), color: (0.33, 0.39, 0.49), rough: 0.9),
-            (shape: Box, size: (0.18, 0.25, 0.85), at: (0.09, 0.55, 0.48), color: (0.33, 0.39, 0.49), rough: 0.9),
-            (shape: Box, size: (0.18, 0.25, 0.85), at: (1.91, 0.55, 0.48), color: (0.33, 0.39, 0.49), rough: 0.9),
-            (shape: Box, size: (0.75, 0.1, 0.6), at: (0.6, 0.47, 0.55), color: (0.4, 0.46, 0.56), rough: 0.95),
-            (shape: Box, size: (0.75, 0.1, 0.6), at: (1.4, 0.47, 0.55), color: (0.4, 0.46, 0.56), rough: 0.95),
+            (shape: Box, size: (1.9, 0.42, 0.85), at: (1.0, 0.21, 0.48), color: (0.41, 0.48, 0.59), material: "fabric", rough: 0.9),
+            (shape: Box, size: (1.9, 0.5, 0.2), at: (1.0, 0.65, 0.12), color: (0.38, 0.45, 0.56), material: "fabric", rough: 0.9),
+            (shape: Box, size: (0.18, 0.25, 0.85), at: (0.09, 0.55, 0.48), color: (0.38, 0.45, 0.56), material: "fabric", rough: 0.9),
+            (shape: Box, size: (0.18, 0.25, 0.85), at: (1.91, 0.55, 0.48), color: (0.38, 0.45, 0.56), material: "fabric", rough: 0.9),
+            (shape: Box, size: (0.75, 0.1, 0.6), at: (0.6, 0.47, 0.55), color: (0.46, 0.53, 0.64), material: "fabric", rough: 0.95),
+            (shape: Box, size: (0.75, 0.1, 0.6), at: (1.4, 0.47, 0.55), color: (0.46, 0.53, 0.64), material: "fabric", rough: 0.95),
         ],
         slots: [
             (stand: (0.5, 1.5), use_at: (0.55, 0.45, 0.55), facing: 0.0),
@@ -230,10 +230,10 @@
     (
         id: "armchair", name: "Grandpa's Opinion Chair", category: Seating, price: 280, footprint: (1, 1),
         parts: [
-            (shape: Box, size: (0.85, 0.42, 0.8), at: (0.5, 0.21, 0.5), color: (0.55, 0.3, 0.22), rough: 0.9),
-            (shape: Box, size: (0.85, 0.6, 0.18), at: (0.5, 0.72, 0.13), color: (0.5, 0.27, 0.2), rough: 0.9),
-            (shape: Box, size: (0.14, 0.25, 0.8), at: (0.08, 0.55, 0.5), color: (0.5, 0.27, 0.2), rough: 0.9),
-            (shape: Box, size: (0.14, 0.25, 0.8), at: (0.92, 0.55, 0.5), color: (0.5, 0.27, 0.2), rough: 0.9),
+            (shape: Box, size: (0.85, 0.42, 0.8), at: (0.5, 0.21, 0.5), color: (0.63, 0.34, 0.25), material: "fabric", rough: 0.9),
+            (shape: Box, size: (0.85, 0.6, 0.18), at: (0.5, 0.72, 0.13), color: (0.57, 0.31, 0.23), material: "fabric", rough: 0.9),
+            (shape: Box, size: (0.14, 0.25, 0.8), at: (0.08, 0.55, 0.5), color: (0.57, 0.31, 0.23), material: "fabric", rough: 0.9),
+            (shape: Box, size: (0.14, 0.25, 0.8), at: (0.92, 0.55, 0.5), color: (0.57, 0.31, 0.23), material: "fabric", rough: 0.9),
         ],
         slots: [(stand: (0.5, 1.5), use_at: (0.5, 0.45, 0.55), facing: 0.0)],
         interactions: [
@@ -246,12 +246,12 @@
     (
         id: "dining_chair", name: "Perfectly Adequate Chair", category: Seating, price: 80, footprint: (1, 1),
         parts: [
-            (shape: Box, size: (0.45, 0.05, 0.45), at: (0.5, 0.45, 0.5), color: (0.6, 0.45, 0.3), rough: 0.6),
-            (shape: Box, size: (0.45, 0.5, 0.05), at: (0.5, 0.72, 0.28), color: (0.6, 0.45, 0.3), rough: 0.6),
-            (shape: Box, size: (0.04, 0.45, 0.04), at: (0.3, 0.22, 0.3), color: (0.5, 0.37, 0.25)),
-            (shape: Box, size: (0.04, 0.45, 0.04), at: (0.7, 0.22, 0.3), color: (0.5, 0.37, 0.25)),
-            (shape: Box, size: (0.04, 0.45, 0.04), at: (0.3, 0.22, 0.7), color: (0.5, 0.37, 0.25)),
-            (shape: Box, size: (0.04, 0.45, 0.04), at: (0.7, 0.22, 0.7), color: (0.5, 0.37, 0.25)),
+            (shape: Box, size: (0.45, 0.05, 0.45), at: (0.5, 0.45, 0.5), color: (0.72, 0.56, 0.39), material: "wood", rough: 0.6),
+            (shape: Box, size: (0.45, 0.5, 0.05), at: (0.5, 0.72, 0.28), color: (0.72, 0.56, 0.39), material: "wood", rough: 0.6),
+            (shape: Box, size: (0.04, 0.45, 0.04), at: (0.3, 0.22, 0.3), color: (0.6, 0.46, 0.32), material: "wood"),
+            (shape: Box, size: (0.04, 0.45, 0.04), at: (0.7, 0.22, 0.3), color: (0.6, 0.46, 0.32), material: "wood"),
+            (shape: Box, size: (0.04, 0.45, 0.04), at: (0.3, 0.22, 0.7), color: (0.6, 0.46, 0.32), material: "wood"),
+            (shape: Box, size: (0.04, 0.45, 0.04), at: (0.7, 0.22, 0.7), color: (0.6, 0.46, 0.32), material: "wood"),
         ],
         slots: [(stand: (0.5, -0.5), use_at: (0.5, 0.45, 0.5), facing: 0.0)],
         interactions: [
@@ -261,11 +261,11 @@
     (
         id: "dining_table", name: "Family Argument Table", category: Surfaces, price: 300, footprint: (2, 1),
         parts: [
-            (shape: Box, size: (1.8, 0.05, 0.9), at: (1.0, 0.75, 0.5), color: (0.55, 0.38, 0.24), rough: 0.5),
-            (shape: Box, size: (0.06, 0.73, 0.06), at: (0.2, 0.365, 0.15), color: (0.45, 0.3, 0.2)),
-            (shape: Box, size: (0.06, 0.73, 0.06), at: (1.8, 0.365, 0.15), color: (0.45, 0.3, 0.2)),
-            (shape: Box, size: (0.06, 0.73, 0.06), at: (0.2, 0.365, 0.85), color: (0.45, 0.3, 0.2)),
-            (shape: Box, size: (0.06, 0.73, 0.06), at: (1.8, 0.365, 0.85), color: (0.45, 0.3, 0.2)),
+            (shape: Box, size: (1.8, 0.05, 0.9), at: (1.0, 0.75, 0.5), color: (0.66, 0.47, 0.31), material: "wood", rough: 0.5),
+            (shape: Box, size: (0.06, 0.73, 0.06), at: (0.2, 0.365, 0.15), color: (0.54, 0.37, 0.26), material: "wood"),
+            (shape: Box, size: (0.06, 0.73, 0.06), at: (1.8, 0.365, 0.15), color: (0.54, 0.37, 0.26), material: "wood"),
+            (shape: Box, size: (0.06, 0.73, 0.06), at: (0.2, 0.365, 0.85), color: (0.54, 0.37, 0.26), material: "wood"),
+            (shape: Box, size: (0.06, 0.73, 0.06), at: (1.8, 0.365, 0.85), color: (0.54, 0.37, 0.26), material: "wood"),
         ],
         beauty: 1.0,
     ),
@@ -273,7 +273,7 @@
         id: "tv_basic", name: "Glowbox 9000 Television", category: Electronics, price: 500, footprint: (1, 1),
         desc: "Now with 40% more infomercials.",
         parts: [
-            (shape: Box, size: (0.9, 0.5, 0.4), at: (0.5, 0.25, 0.3), color: (0.2, 0.15, 0.12), rough: 0.6),
+            (shape: Box, size: (0.9, 0.5, 0.4), at: (0.5, 0.25, 0.3), color: (0.24, 0.19, 0.16), material: "wood", rough: 0.6),
             (shape: Box, size: (0.95, 0.55, 0.05), at: (0.5, 0.82, 0.3), color: (0.05, 0.05, 0.06), rough: 0.3),
             (shape: Box, size: (0.88, 0.48, 0.01), at: (0.5, 0.82, 0.33), color: (0.2, 0.35, 0.5), rough: 0.1, emissive: 1.5),
         ],
@@ -340,7 +340,7 @@
     (
         id: "bookshelf", name: "Shelf of Unread Classics", category: Decor, price: 250, footprint: (1, 1),
         parts: [
-            (shape: Box, size: (0.95, 1.9, 0.35), at: (0.5, 0.95, 0.2), color: (0.42, 0.28, 0.18), rough: 0.7),
+            (shape: Box, size: (0.95, 1.9, 0.35), at: (0.5, 0.95, 0.2), color: (0.5, 0.35, 0.23), material: "wood", rough: 0.7),
             (shape: Box, size: (0.85, 0.3, 0.25), at: (0.5, 0.45, 0.25), color: (0.6, 0.2, 0.2), rough: 0.8),
             (shape: Box, size: (0.85, 0.3, 0.25), at: (0.5, 0.9, 0.25), color: (0.2, 0.35, 0.5), rough: 0.8),
             (shape: Box, size: (0.85, 0.3, 0.25), at: (0.5, 1.35, 0.25), color: (0.3, 0.5, 0.3), rough: 0.8),
@@ -373,8 +373,8 @@
     (
         id: "painting", name: "Abstract Painting of a Feeling", category: Decor, price: 200, footprint: (1, 1),
         parts: [
-            (shape: Box, size: (0.08, 0.9, 0.08), at: (0.5, 0.45, 0.5), color: (0.3, 0.25, 0.2)),
-            (shape: Box, size: (0.9, 0.7, 0.05), at: (0.5, 1.3, 0.5), color: (0.3, 0.25, 0.2)),
+            (shape: Box, size: (0.08, 0.9, 0.08), at: (0.5, 0.45, 0.5), color: (0.36, 0.31, 0.26), material: "wood"),
+            (shape: Box, size: (0.9, 0.7, 0.05), at: (0.5, 1.3, 0.5), color: (0.36, 0.31, 0.26), material: "wood"),
             (shape: Box, size: (0.8, 0.6, 0.02), at: (0.5, 1.3, 0.53), color: (0.85, 0.5, 0.2), rough: 0.9),
         ],
         slots: [(stand: (0.5, 1.5), use_at: (0.5, 0.0, 1.3), facing: 180.0)],
@@ -389,7 +389,7 @@
         parts: [
             (shape: Cylinder, size: (0.3, 0.03, 0.3), at: (0.5, 0.015, 0.5), color: (0.2, 0.2, 0.2), metal: 1.0, rough: 0.3),
             (shape: Cylinder, size: (0.03, 1.5, 0.03), at: (0.5, 0.75, 0.5), color: (0.2, 0.2, 0.2), metal: 1.0, rough: 0.3),
-            (shape: Cylinder, size: (0.4, 0.3, 0.4), at: (0.5, 1.55, 0.5), color: (0.95, 0.9, 0.75), rough: 0.9, emissive: 0.8),
+            (shape: Cylinder, size: (0.4, 0.3, 0.4), at: (0.5, 1.55, 0.5), color: (1.0, 1.0, 0.86), material: "fabric", rough: 0.9, emissive: 0.8),
         ],
         beauty: 1.0, light: (4.0, (1.0, 0.85, 0.65)),
     ),
@@ -411,7 +411,7 @@
     (
         id: "mirror", name: "Mirror of Mild Judgment", category: Decor, price: 120, footprint: (1, 1),
         parts: [
-            (shape: Box, size: (0.6, 1.6, 0.05), at: (0.5, 0.95, 0.1), color: (0.35, 0.25, 0.18)),
+            (shape: Box, size: (0.6, 1.6, 0.05), at: (0.5, 0.95, 0.1), color: (0.42, 0.31, 0.23), material: "wood"),
             (shape: Box, size: (0.5, 1.45, 0.01), at: (0.5, 0.97, 0.13), color: (0.85, 0.9, 0.95), metal: 1.0, rough: 0.02),
         ],
         slots: [(stand: (0.5, 1.5), use_at: (0.5, 0.0, 0.9), facing: 180.0)],
@@ -463,8 +463,8 @@
     (
         id: "chess_table", name: "Chess Table of Smugness", category: Fun, price: 400, footprint: (1, 1),
         parts: [
-            (shape: Cylinder, size: (0.7, 0.04, 0.7), at: (0.5, 0.72, 0.5), color: (0.45, 0.3, 0.2)),
-            (shape: Cylinder, size: (0.1, 0.7, 0.1), at: (0.5, 0.35, 0.5), color: (0.4, 0.27, 0.18)),
+            (shape: Cylinder, size: (0.7, 0.04, 0.7), at: (0.5, 0.72, 0.5), color: (0.54, 0.37, 0.26), material: "wood"),
+            (shape: Cylinder, size: (0.1, 0.7, 0.1), at: (0.5, 0.35, 0.5), color: (0.48, 0.33, 0.23), material: "wood"),
             (shape: Box, size: (0.4, 0.01, 0.4), at: (0.5, 0.745, 0.5), color: (0.9, 0.9, 0.85)),
         ],
         slots: [
@@ -482,16 +482,16 @@
     (
         id: "rug", name: "Rug That Ties the Room Together", category: Decor, price: 150, footprint: (2, 2),
         parts: [
-            (shape: Box, size: (1.9, 0.01, 1.9), at: (1.0, 0.005, 1.0), color: (0.55, 0.2, 0.18), rough: 1.0),
-            (shape: Box, size: (1.5, 0.012, 1.5), at: (1.0, 0.006, 1.0), color: (0.75, 0.6, 0.35), rough: 1.0),
+            (shape: Box, size: (1.9, 0.01, 1.9), at: (1.0, 0.005, 1.0), color: (0.63, 0.23, 0.21), material: "fabric", rough: 1.0),
+            (shape: Box, size: (1.5, 0.012, 1.5), at: (1.0, 0.006, 1.0), color: (0.86, 0.69, 0.4), material: "fabric", rough: 1.0),
         ],
         beauty: 2.0, walkable: true,
     ),
     (
         id: "end_table", name: "Table For Your Ends", category: Surfaces, price: 70, footprint: (1, 1),
         parts: [
-            (shape: Box, size: (0.5, 0.04, 0.5), at: (0.5, 0.55, 0.5), color: (0.5, 0.35, 0.22)),
-            (shape: Box, size: (0.4, 0.53, 0.4), at: (0.5, 0.265, 0.5), color: (0.45, 0.3, 0.2)),
+            (shape: Box, size: (0.5, 0.04, 0.5), at: (0.5, 0.55, 0.5), color: (0.6, 0.43, 0.29), material: "wood"),
+            (shape: Box, size: (0.4, 0.53, 0.4), at: (0.5, 0.265, 0.5), color: (0.54, 0.37, 0.26), material: "wood"),
             (shape: Cylinder, size: (0.15, 0.2, 0.15), at: (0.5, 0.67, 0.5), color: (0.9, 0.85, 0.7), emissive: 0.6),
         ],
         beauty: 1.0, light: (2.0, (1.0, 0.8, 0.6)),
@@ -590,7 +590,7 @@
         id: "espresso_bar", name: "Espresso Bar of Judgment", category: Kitchen, price: 700, footprint: (1, 1),
         desc: "Makes eleven sizes of coffee, all of them called something Italian.",
         parts: [
-            (shape: Box, size: (0.95, 0.9, 0.6), at: (0.5, 0.45, 0.35), color: (0.3, 0.2, 0.14), rough: 0.6),
+            (shape: Box, size: (0.95, 0.9, 0.6), at: (0.5, 0.45, 0.35), color: (0.36, 0.25, 0.18), material: "wood", rough: 0.6),
             (shape: Box, size: (1.0, 0.04, 0.65), at: (0.5, 0.92, 0.35), color: (0.85, 0.85, 0.82), rough: 0.3),
             (shape: Box, size: (0.5, 0.4, 0.35), at: (0.5, 1.14, 0.25), color: (0.75, 0.75, 0.78), metal: 1.0, rough: 0.25),
             (shape: Cylinder, size: (0.07, 0.08, 0.07), at: (0.4, 0.98, 0.5), color: (0.95, 0.93, 0.88)),
