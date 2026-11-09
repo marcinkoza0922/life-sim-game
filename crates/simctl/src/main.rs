@@ -326,7 +326,7 @@ fn lineup(ra: &RenderArgs) {
             frame.draws.push(hearth_render::Draw::new(r.builtins.cube, Mat4::from_scale_rotation_translation(Vec3::new(0.5, 0.45, 0.5), glam::Quat::IDENTITY, Vec3::new(x, 0.225, -0.05)), [0.55, 0.4, 0.3]));
         }
         let yaw = 0.0;
-        art.draw((&mut frame.skinned, &mut frame.joints), Vec3::new(x, y, 0.0), yaw, *stage, &app, &posture, ra.time, game::peons::Look::Normal);
+        art.draw((&mut frame.skinned, &mut frame.joints), Vec3::new(x, y, 0.0), yaw, *stage, &app, &posture, &mut game::peons::AnimState::default(), ra.time, game::peons::Look::Normal);
     }
     if let Some(dir) = std::path::Path::new(&ra.out).parent() {
         std::fs::create_dir_all(dir).ok();
@@ -376,7 +376,7 @@ fn render(a: &Args) {
         ..Default::default()
     };
     let peons = if ra.greybox { None } else { Some(game::peons::PeonArt::load(&mut r).expect("peon models")) };
-    let out = build(&sim, &r.builtins, peons.as_ref(), camera, &opts);
+    let out = build(&sim, &r.builtins, peons.as_ref(), &mut game::peons::Animator::default(), camera, &opts);
     if let Some(dir) = std::path::Path::new(&ra.out).parent() {
         std::fs::create_dir_all(dir).ok();
     }

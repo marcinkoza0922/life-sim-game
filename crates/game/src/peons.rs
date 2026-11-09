@@ -3,10 +3,13 @@
 //! renderer's skinned path. Appearance drives the palette (skin, hair, clothes), the `slim`/`heavy`
 //! morph targets (build), the hair mesh and a height scale.
 
+use std::collections::HashMap;
+
 use glam::{Mat4, Vec3};
 use hearth_render::model::{Model, Pose as JointPose};
 use hearth_render::{PALETTE_SLOTS, Renderer, SkinnedDraw, SkinnedMeshId};
 use sim::components::{Appearance, Posture};
+use sim::Entity;
 use sim::data::{LifeStage, Pose};
 
 /// Palette slots, matched to material names in the glTF files.
@@ -98,18 +101,19 @@ impl PeonArt {
     }
 
     /// Adds a posed body to a frame's `skinned` draws and `joints`. `t` is a per-peon clock in
-    /// seconds. Returns the height of the top of the head above `pos` (for labels).
+    /// seconds; `anim` carries the peon's playback between frames (a fresh [`AnimState`] poses it
+    /// straight from `t`, with no blending). Returns the height of the top of the head above `pos`
+    /// (for labels).
     #[allow(clippy::too_many_arguments)]
-    pub fn draw(&self, out: (&mut Vec<SkinnedDraw>, &mut Vec<Mat4>), pos: Vec3, yaw: f32, stage: LifeStage, app: &Appearance, posture: &Posture, t: f32, look: Look) -> f32 {
-        let art = &self.stages[file_index(stage)];
+    pub fn draw(&self, out: (&mut Vec<SkinnedDraw>, &mut Vec<Mat4>), pos: Vec3, yaw: f32, stage: LifeStage, app: &Appearance, posture: &Posture, anim: &mut AnimState, t: f32, look: Look) -> f32 {
+        let fi = file_index(stage);
+        let art = &self.stages[fi];
         let (clip, rate) = clip_for(stage, posture, art.height);
         let skel = &art.model.skeleton;
-        let mut pose: JointPose = skel.rest_pose();
-        if let Some(c) = art.model.clip(clip) {
-            c.sample(t * rate, &mut pose);
-        }
+        let (pos, yaw) = anim.update(&art.model, fi, clip, rate, t, pos, yaw);
+        let pose = &anim.pose;
         let mut mats = Vec::with_capacity(skel.joints.len());
-        skel.skin_matrices(&pose, &mut mats);
+        skel.skin_matrices(pose, &mut mats);
         let (skinned, joints) = out;
         let pose_id = hearth_render::push_pose(joints, &mats);
 
@@ -149,9 +153,114 @@ impl PeonArt {
         }
 
         // top of the head: the head joint's posed height plus its rest distance to the crown
-        let head_y = art.head_joint.map_or(art.head_rest_y, |j| skel.globals(&pose)[j].w_axis.y);
+        let head_y = art.head_joint.map_or(art.head_rest_y, |j| skel.globals(pose)[j].w_axis.y);
         let crown = if posture.pose == Pose::Lie { head_y + 0.1 } else { head_y + (art.height - art.head_rest_y) };
         crown * scale
+    }
+}
+
+/// Seconds to cross-fade from one clip to the next.
+pub const BLEND_SECS: f32 = 0.3;
+/// A root jump on a clip change further than this is a teleport (not eased).
+const MAX_ROOT_EASE: f32 = 3.0;
+
+/// One peon's animation playback, kept by the game between frames: the clip playing, how far
+/// into it, and a cross-fade from the last pose drawn when the clip changes. The fade also eases
+/// the root, because the sim snaps a peon onto a seat or bed at the moment its posture changes.
+#[derive(Clone, Debug, Default)]
+pub struct AnimState {
+    /// Body model and clip playing; None until the first update.
+    playing: Option<(usize, &'static str)>,
+    /// Seconds into the clip (already scaled by playback rate).
+    phase: f32,
+    last_t: f32,
+    /// Pose faded out from, and fade progress (0..1; 1 = done).
+    from: JointPose,
+    fade: f32,
+    /// Root offset (from the old drawn position/yaw to the new) faded out with the pose.
+    root_offset: Vec3,
+    yaw_offset: f32,
+    last_root: (Vec3, f32),
+    /// Last pose produced.
+    pub pose: JointPose,
+    seen: u64,
+}
+
+impl AnimState {
+    /// Advances playback to `t` and writes the pose into `self.pose`. Returns the root position
+    /// and yaw to draw at (eased during a fade).
+    #[allow(clippy::too_many_arguments)]
+    pub fn update(&mut self, model: &Model, body: usize, clip: &'static str, rate: f32, t: f32, pos: Vec3, yaw: f32) -> (Vec3, f32) {
+        let skel = &model.skeleton;
+        match self.playing {
+            Some((b, c)) if b == body && self.pose.len() == skel.joints.len() => {
+                let dt = (t - self.last_t).clamp(0.0, 0.25);
+                if c != clip {
+                    self.from.clone_from(&self.pose);
+                    self.fade = 0.0;
+                    self.phase = 0.0;
+                    self.playing = Some((body, clip));
+                    let (p0, y0) = self.last_root;
+                    let (off, yoff) = (p0 - pos, wrap_angle(y0 - yaw));
+                    (self.root_offset, self.yaw_offset) = if off.length() < MAX_ROOT_EASE { (off, yoff) } else { (Vec3::ZERO, 0.0) };
+                }
+                self.phase += dt * rate;
+                self.fade = (self.fade + dt / BLEND_SECS).min(1.0);
+            }
+            // first frame, or a new body (aged up): start in sync with the clock, no fade
+            _ => {
+                self.playing = Some((body, clip));
+                self.phase = t * rate;
+                self.fade = 1.0;
+                self.root_offset = Vec3::ZERO;
+                self.yaw_offset = 0.0;
+            }
+        }
+        self.last_t = t;
+
+        self.pose.clear();
+        self.pose.extend(skel.joints.iter().map(|j| j.rest));
+        if let Some(c) = model.clip(clip) {
+            c.sample(self.phase, &mut self.pose);
+        }
+        let (pos, yaw) = if self.fade < 1.0 {
+            let w = self.fade * self.fade * (3.0 - 2.0 * self.fade);
+            for (p, f) in self.pose.iter_mut().zip(&self.from) {
+                *p = f.lerp(*p, w);
+            }
+            (pos + self.root_offset * (1.0 - w), yaw + self.yaw_offset * (1.0 - w))
+        } else {
+            (pos, yaw)
+        };
+        self.last_root = (pos, yaw);
+        (pos, yaw)
+    }
+}
+
+fn wrap_angle(a: f32) -> f32 {
+    use std::f32::consts::{PI, TAU};
+    (a + PI).rem_euclid(TAU) - PI
+}
+
+/// Animation state for every peon on screen, keyed by entity. Call [`Animator::begin_frame`] once
+/// per frame; peons not drawn in a frame are forgotten (and snap into their pose when next seen).
+#[derive(Debug, Default)]
+pub struct Animator {
+    states: HashMap<Entity, AnimState>,
+    frame: u64,
+}
+
+impl Animator {
+    pub fn begin_frame(&mut self) {
+        let f = self.frame;
+        self.states.retain(|_, s| s.seen == f);
+        self.frame += 1;
+    }
+
+    pub fn state(&mut self, e: Entity) -> &mut AnimState {
+        let s = self.states.entry(e).or_default();
+        s.seen = self.frame;
+        s
     }
 }
 
@@ -200,5 +309,77 @@ mod tests {
             .height();
             assert!((top - want).abs() < want * 0.05, "{name}: model height {top}, stage height {want}");
         }
+    }
+
+    fn adult() -> Model {
+        Model::load_glb(FILES[4].1, &slot_of).unwrap()
+    }
+
+    fn hips_y(m: &Model, pose: &JointPose) -> f32 {
+        m.skeleton.globals(pose)[m.skeleton.joint("hips").unwrap()].w_axis.y
+    }
+
+    #[test]
+    fn clip_change_cross_fades_pose_and_root() {
+        let m = adult();
+        let mut a = AnimState::default();
+        let floor = Vec3::new(2.0, 0.0, 2.0);
+        let seat = Vec3::new(2.5, 0.45, 2.0);
+        let mut t = 10.0;
+        a.update(&m, 4, "idle", 1.0, t, floor, 0.0);
+        let standing = hips_y(&m, &a.pose);
+
+        // the sim snaps onto the seat as the posture changes: the first frame still looks standing
+        t += 1.0 / 60.0;
+        let (p, _) = a.update(&m, 4, "sit", 1.0, t, seat, 1.0);
+        assert!((hips_y(&m, &a.pose) - standing).abs() < 0.02, "no pop into the sit pose");
+        assert!(p.distance(floor) < 0.02, "root eased from where it was drawn: {p}");
+
+        // halfway through the fade: in between
+        t += BLEND_SECS * 0.5;
+        let (p, _) = a.update(&m, 4, "sit", 1.0, t, seat, 1.0);
+        let mut sitting = m.skeleton.rest_pose();
+        m.clip("sit").unwrap().sample(t - 10.0, &mut sitting);
+        let (mid, sat) = (hips_y(&m, &a.pose), hips_y(&m, &sitting));
+        assert!(mid < standing - 0.05 && mid > sat + 0.05, "hips {mid} between {standing} and {sat}");
+        assert!(p.distance(floor) > 0.1 && p.distance(seat) > 0.1, "root between: {p}");
+
+        // after it: fully seated, root on the seat
+        t += BLEND_SECS;
+        let (p, yaw) = a.update(&m, 4, "sit", 1.0, t, seat, 1.0);
+        let mut sitting = m.skeleton.rest_pose();
+        m.clip("sit").unwrap().sample(a.phase, &mut sitting);
+        assert_eq!(a.pose, sitting);
+        assert_eq!((p, yaw), (seat, 1.0));
+    }
+
+    #[test]
+    fn fresh_state_poses_from_the_clock_and_teleports_snap() {
+        let m = adult();
+        let mut a = AnimState::default();
+        a.update(&m, 4, "walk", 1.3, 7.0, Vec3::ZERO, 0.0);
+        let mut want = m.skeleton.rest_pose();
+        m.clip("walk").unwrap().sample(7.0 * 1.3, &mut want);
+        assert_eq!(a.pose, want);
+        // coming home from across the map: the root jumps, not slides
+        let far = Vec3::new(20.0, 0.0, 0.0);
+        let (p, _) = a.update(&m, 4, "idle", 1.0, 7.02, far, 0.0);
+        assert_eq!(p, far);
+    }
+
+    #[test]
+    fn animator_forgets_peons_not_drawn() {
+        let mut w = hearth_ecs::World::new();
+        let (e1, e2) = (w.spawn_empty(), w.spawn_empty());
+        let mut an = Animator::default();
+        an.begin_frame();
+        an.state(e1).phase = 1.0;
+        an.state(e2).phase = 2.0;
+        an.begin_frame();
+        an.state(e1);
+        an.begin_frame();
+        assert_eq!(an.states.len(), 1);
+        assert_eq!(an.state(e1).phase, 1.0);
+        assert_eq!(an.state(e2).phase, 0.0);
     }
 }

@@ -395,8 +395,12 @@ Added since:
   head, `slim`/`heavy` shape keys from per-bone normal offsets, clips idle/walk/sit/lie/use/dance/exercise).
   `game::peons` maps `Posture` to a clip, `Appearance` to palette/morphs/hair/height; ghosts reuse it
   translucent. `simctl lineup --pose P` renders every stage side by side for review.
+- **Clip cross-fades:** `peons::Animator` (owned by the game, keyed by entity, pruned when a peon isn't
+  drawn) keeps each peon's clip phase; on a clip change it fades from the last drawn pose over
+  `BLEND_SECS` (0.3 s, smoothstep) and eases the root offset/yaw with it, since the sim snaps a peon onto
+  a seat or bed as the posture changes (jumps over 3 m, e.g. coming home, still snap).
 
-**Known gaps / next up:** clip cross-fades (poses still snap like the greybox did); eye colour from genes
+**Known gaps / next up:** eye colour from genes
 (pupils are a fixed colour); per-object animation (holding a book, typing at a desk); playable multi-lot
 neighborhoods (switching households, community lots) — townies are the first step; multi-tile object
 picking polish; hygiene still occasionally bottoms out in long headless runs (warning, not a failure).
