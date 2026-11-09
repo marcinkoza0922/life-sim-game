@@ -94,7 +94,8 @@ pub fn run_shifts(world: &mut World) {
     let mut at_work = at_work;
     at_work.sort_by_key(|(e, _)| *e);
     for (e, aw) in at_work {
-        if aw.school {
+        // someone who died earlier this tick (an accident at work, flushed by another shift's end)
+        if aw.school || !world.has::<AtWork>(e) {
             continue;
         }
         if !aw.event_done && tick >= aw.event_at {
@@ -149,6 +150,7 @@ fn best_choice(world: &World, e: Entity, data: &GameData, career: &str, ev: usiz
                 CareerEffect::Performance(p) => *p,
                 CareerEffect::Money(m) => *m as f32 / 50.0,
                 CareerEffect::Fired => -100.0,
+                CareerEffect::Accident(p, _) => -200.0 * p,
                 _ => 0.0,
             })
             .sum()
@@ -201,6 +203,12 @@ fn apply_choice(world: &World, e: Entity, data: &GameData, career: &str, ev: usi
                 let t = fill(world, e, t);
                 log(world, LogKind::Funny, Some(e), t);
             }
+            CareerEffect::Accident(p, cause) => {
+                if world.res_mut::<SimRng>().chance(*p) {
+                    let cause = cause.clone();
+                    world.defer(move |w| crate::life::die(w, e, &cause));
+                }
+            }
             CareerEffect::Fired => {
                 world.defer_remove::<Job>(e);
                 add_moodlet(world, e, "fired");
@@ -239,6 +247,9 @@ fn end_shift(world: &mut World, e: Entity, data: &GameData) {
     }
     world.flush();
     world.remove::<AtWork>(e);
+    if world.has::<Dead>(e) {
+        return;
+    }
     // come home (to wherever the household is; nowhere visible if they've been parked off-lot)
     if !world.has::<Offlot>(e) {
         let home = { let lot = world.res::<Lot>(); lot.ground_center(0, exit_tile(&lot)) };

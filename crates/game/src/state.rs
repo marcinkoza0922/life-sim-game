@@ -117,9 +117,16 @@ pub struct Game {
     /// Mouse held with the terrain tool (brush repeats while held).
     pub sculpting: Option<f32>,
     pub show_neighborhood: bool,
+    /// Save/load window, with the name typed for the next save.
+    pub show_saves: bool,
+    pub save_name: String,
+    /// Day of the last autosave (`None` until the first day change is seen).
+    pub autosave_day: Option<u64>,
     pub mute: bool,
     /// The lot that was live last frame (see [`Game::check_lot_change`]).
     pub shown_lot: usize,
+    /// Interface-only state (open menus, tabs).
+    pub hud: crate::ui::HudState,
 }
 
 impl Game {
@@ -160,8 +167,12 @@ impl Game {
             creator: None,
             sculpting: None,
             show_neighborhood: false,
+            show_saves: false,
+            save_name: String::new(),
+            autosave_day: None,
             mute: false,
             shown_lot,
+            hud: Default::default(),
         }
     }
 
@@ -257,6 +268,27 @@ impl Game {
                 self.say(format!("Loaded {}", path.display()));
             }
             Err(e) => self.say(format!("Load failed: {e}")),
+        }
+    }
+
+    /// Writes `saves/autosave.ron` once per sim day (interactive play only; the caller decides).
+    pub fn autosave_if_new_day(&mut self) {
+        let day = self.sim.clock().day();
+        match self.autosave_day {
+            None => self.autosave_day = Some(day),
+            Some(d) if d != day => {
+                self.autosave_day = Some(day);
+                self.autosave();
+            }
+            _ => {}
+        }
+    }
+
+    pub fn autosave(&mut self) {
+        let path = crate::saves::path_for(crate::saves::AUTOSAVE);
+        match self.sim.save_to_file(&path) {
+            Ok(()) => self.say("Autosaved."),
+            Err(e) => self.say(format!("Autosave failed: {e}")),
         }
     }
 

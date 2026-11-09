@@ -16,18 +16,31 @@ pub struct Rel {
     pub romance: f32,
     pub partners: bool,
     pub married: bool,
+    /// Engaged to be married (also `partners`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub engaged: bool,
+    /// When the planned wedding starts (see [`crate::romance::weddings`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wedding_at: Option<u64>,
+    /// They used to be together.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub exes: bool,
 }
 
 impl Rel {
     pub fn label(&self) -> &'static str {
         if self.married {
             "Spouse"
+        } else if self.engaged {
+            "Engaged"
         } else if self.partners {
             "Partner"
         } else if self.romance >= 40.0 {
             "Sweetheart"
         } else if self.romance >= 15.0 {
             "Crush"
+        } else if self.exes {
+            "Ex"
         } else if self.friendship >= 70.0 {
             "Best Friend"
         } else if self.friendship >= 30.0 {
@@ -63,6 +76,11 @@ impl Relationships {
         let r = self.get_mut(a, b);
         r.friendship = (r.friendship + friendship).clamp(-100.0, 100.0);
         r.romance = (r.romance + romance).clamp(0.0, 100.0);
+    }
+    /// Are they a couple (partners, engaged or married)?
+    pub fn together(&self, a: Entity, b: Entity) -> bool {
+        let r = self.get(a, b);
+        r.partners || r.engaged || r.married
     }
     /// Everyone `a` has a relationship with.
     pub fn of(&self, a: Entity) -> Vec<(Entity, Rel)> {
@@ -121,6 +139,18 @@ pub fn social_allowed(world: &World, def: &SocialDef, a: Entity, b: Entity) -> R
     if def.romantic && (is_family(world, a, b) || !aa.stage.is_adult() || !ab.stage.is_adult()) {
         return Err("absolutely not");
     }
+    social_pair_ok(world, def, a, b)
+}
+
+/// The pair-specific gates (sexes, where they stand with each other). When these fail the social
+/// isn't offered at all, rather than shown greyed out.
+pub fn social_pair_ok(world: &World, def: &SocialDef, a: Entity, b: Entity) -> Result<(), &'static str> {
+    if def.opposite_sex && !crate::romance::opposite_sex(world, a, b) {
+        return Err("only for a woman and a man");
+    }
+    if let Some(req) = def.requires {
+        crate::romance::rel_req_ok(world, req, a, b)?;
+    }
     Ok(())
 }
 
@@ -128,6 +158,9 @@ pub fn social_allowed(world: &World, def: &SocialDef, a: Entity, b: Entity) -> R
 pub fn accept_chance(world: &World, def: &SocialDef, a: Entity, b: Entity) -> f32 {
     if def.care {
         return def.accept;
+    }
+    if def.certain {
+        return 1.0;
     }
     let rel = world.res::<Relationships>().get(a, b);
     let mood = world.get::<Mood>(b).map(|m| m.value).unwrap_or(0.0);
@@ -145,6 +178,13 @@ pub fn accept_chance(world: &World, def: &SocialDef, a: Entity, b: Entity) -> f3
         if pers.has("romantic") && def.romantic {
             p += 0.1;
         }
+        if def.id == "propose" && (pers.has("hothead") || pers.has("gloomy")) {
+            p -= 0.2;
+        }
+    }
+    if def.id == "ask_move_in" && crate::romance::committed_to(world, b).is_some_and(|c| c != a) {
+        // they'd be leaving someone
+        p -= 0.5;
     }
     p.clamp(0.05, 0.98)
 }

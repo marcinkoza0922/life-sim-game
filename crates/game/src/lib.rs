@@ -4,8 +4,12 @@
 pub mod audio;
 pub mod camera;
 pub mod creator;
+pub mod debug_ui;
+pub mod icons;
 pub mod lotmesh;
+pub mod materials;
 pub mod peons;
+pub mod saves;
 pub mod scene;
 pub mod state;
 pub mod ui;

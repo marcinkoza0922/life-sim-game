@@ -4,7 +4,8 @@
 
 use std::sync::Arc;
 
-use egui::{Color32, RichText, Ui};
+use hearth_ui::theme::{self, CREAM, INK, INK_SOFT};
+use hearth_ui::{Button, Color, FontId, Id, Order, SpringCfg, Text, Ui, Vec2, vec2};
 use glam::Vec3;
 use sim::components::{Appearance, Axes, Genes};
 use sim::data::{GameData, LifeStage};
@@ -246,21 +247,29 @@ fn spawn_household(sim: &mut Sim, family: &str, members: &[PeonSpec], couple: bo
 // ------------------------------------------------------------------------------------------------
 // UI
 
-fn c32(c: [f32; 3]) -> Color32 {
-    Color32::from_rgb((c[0] * 255.0) as u8, (c[1] * 255.0) as u8, (c[2] * 255.0) as u8)
-}
+/// Clothing colours for shirts and trousers.
+pub const CLOTHES: [[f32; 3]; 12] = [
+    [0.86, 0.3, 0.3],
+    [0.95, 0.55, 0.25],
+    [0.96, 0.8, 0.3],
+    [0.45, 0.75, 0.4],
+    [0.2, 0.62, 0.58],
+    [0.3, 0.55, 0.85],
+    [0.5, 0.4, 0.8],
+    [0.85, 0.45, 0.7],
+    [0.92, 0.9, 0.85],
+    [0.55, 0.55, 0.6],
+    [0.25, 0.25, 0.32],
+    [0.45, 0.32, 0.22],
+];
 
 fn swatches(ui: &mut Ui, palette: &[[f32; 3]], current: &mut [f32; 3]) -> bool {
+    let size = if palette.len() > 10 { 21.0 } else { 24.0 };
     let mut changed = false;
-    ui.horizontal_wrapped(|ui| {
+    ui.wrap(|ui| {
         for c in palette {
             let selected = (current[0] - c[0]).abs() + (current[1] - c[1]).abs() + (current[2] - c[2]).abs() < 0.02;
-            let (rect, resp) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::click());
-            ui.painter().rect_filled(rect, 3.0, c32(*c));
-            if selected {
-                ui.painter().rect_stroke(rect, 3.0, egui::Stroke::new(2.0, Color32::WHITE), egui::StrokeKind::Outside);
-            }
-            if resp.clicked() {
+            if ui.swatch(Color::rgb(*c), selected, size).clicked {
                 *current = *c;
                 changed = true;
             }
@@ -269,11 +278,13 @@ fn swatches(ui: &mut Ui, palette: &[[f32; 3]], current: &mut [f32; 3]) -> bool {
     changed
 }
 
-fn color_edit(ui: &mut Ui, label: &str, c: &mut [f32; 3]) {
-    ui.horizontal(|ui| {
-        ui.label(label);
-        ui.color_edit_button_rgb(c);
-    });
+/// A labelled row: a fixed-width caption then the content.
+fn field<R>(ui: &mut Ui, label: &str, f: impl FnOnce(&mut Ui) -> R) -> R {
+    ui.row(36.0, |ui| {
+        let r = ui.alloc(vec2(96.0, 20.0));
+        ui.paint_text(vec2(r.min.x, r.center().y), vec2(0.0, 0.5), label, FontId::Bold, 14.0, INK);
+        f(ui)
+    })
 }
 
 /// What the player chose this frame.
@@ -283,117 +294,119 @@ pub enum CreatorAction {
     MoveIn,
 }
 
-pub fn window(ui: &mut Ui, c: &mut Creator) -> CreatorAction {
+pub fn screen(ui: &mut Ui, c: &mut Creator) -> CreatorAction {
     let mut action = CreatorAction::None;
     let data = c.data.clone();
-    let max_h = ui.ctx().content_rect().height() - 90.0;
-    egui::Window::new("Create a Household").default_pos([20.0, 50.0]).default_width(430.0).max_height(max_h).resizable(false).show(ui.ctx(), |ui| {
-        ui.horizontal(|ui| {
-            ui.label("Family name");
-            if ui.text_edit_singleline(&mut c.family_name).changed() {
-                let name = c.family_name.clone();
-                for m in &mut c.members {
-                    m.last = name.clone();
-                }
-            }
-        });
-        ui.horizontal_wrapped(|ui| {
-            for i in 0..c.members.len() {
-                let m = &c.members[i];
-                let label = format!("{} ({})", if m.first.is_empty() { "?" } else { &m.first }, m.stage.label());
-                if ui.selectable_label(c.editing == i, label).clicked() {
-                    c.editing = i;
-                }
-            }
-        });
-        ui.horizontal(|ui| {
-            ui.menu_button("+ Add person", |ui| {
-                for s in STAGES {
-                    if ui.button(s.label()).clicked() {
-                        c.add_member(s);
-                        ui.close();
+    let w = 480.0;
+    let pos = vec2(16.0, 16.0);
+    let pop = ui.spring(Id::new("creator"), 0, 1.0, 0.6, SpringCfg::BOUNCY);
+    ui.area("creator", Order::Panel, pos, w, |ui| {
+        ui.painter.push_transform(pos, Vec2::splat(pop), 0.0, Vec2::ZERO);
+        ui.card(CREAM, 16.0, Some(w), |ui| {
+            ui.heading("Create a Household");
+            field(ui, "Family name", |ui| {
+                if ui.text_field("family", &mut c.family_name, "Lastname", 250.0).changed {
+                    let name = c.family_name.clone();
+                    for m in &mut c.members {
+                        m.last = name.clone();
                     }
                 }
             });
-            if ui.add_enabled(c.members.len() > 1, egui::Button::new("Remove")).clicked() {
-                c.remove(c.editing);
-            }
-            if ui.button("🎲 Randomize").clicked() {
-                c.randomize(c.editing);
-            }
-            ui.checkbox(&mut c.couple, "First two adults are married");
-        });
-        ui.separator();
-        let i = c.editing;
-        egui::ScrollArea::vertical().max_height((max_h - 230.0).max(200.0)).show(ui, |ui| {
-            let mut new_stage = None;
-            {
-                let m = &mut c.members[i];
-                ui.horizontal(|ui| {
-                    ui.label("First name");
-                    ui.text_edit_singleline(&mut m.first);
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Life stage");
-                    egui::ComboBox::from_id_salt("stage").selected_text(m.stage.label()).show_ui(ui, |ui| {
-                        for s in STAGES {
-                            if ui.selectable_label(m.stage == s, s.label()).clicked() {
-                                new_stage = Some(s);
-                            }
+            ui.wrap(|ui| {
+                for i in 0..c.members.len() {
+                    let m = &c.members[i];
+                    let label = format!("{} · {}", if m.first.is_empty() { "?" } else { &m.first }, m.stage.label());
+                    if ui.btn(Button::new(label).small().color(theme::SUN).selected(c.editing == i)).clicked {
+                        c.editing = i;
+                    }
+                }
+            });
+            ui.row(0.0, |ui| {
+                let stages: Vec<String> = STAGES.iter().map(|s| s.label().to_string()).collect();
+                if let Some(i) = ui.dropdown("add", "➕ Add person", &stages, 150.0) {
+                    c.add_member(STAGES[i]);
+                }
+                if ui.btn(Button::new("Remove").small().color(theme::CORAL).enabled(c.members.len() > 1)).clicked {
+                    c.remove(c.editing);
+                }
+                let r = ui.btn(Button::new("🎲").small().round().color(theme::LILAC));
+                ui.tooltip(&r, "Randomize this person");
+                if r.clicked {
+                    c.randomize(c.editing);
+                }
+                let r = ui.chip("💕 Couple", c.couple);
+                ui.tooltip(&r, "The first two adults are married");
+                if r.clicked {
+                    c.couple = !c.couple;
+                }
+            });
+            ui.dots();
+            let i = c.editing;
+            let h = (ui.screen.max.y - ui.cursor().y - 190.0).max(160.0);
+            ui.scroll(("member", i), h, |ui| {
+                let mut new_stage = None;
+                {
+                    let m = &mut c.members[i];
+                    field(ui, "First name", |ui| ui.text_field("first", &mut m.first, "Firstname", 250.0));
+                    field(ui, "Life stage", |ui| {
+                        let labels: Vec<String> = STAGES.iter().map(|s| s.label().to_string()).collect();
+                        if let Some(k) = ui.dropdown("stage", m.stage.label(), &labels, 170.0) {
+                            new_stage = Some(STAGES[k]);
                         }
                     });
-                });
-            }
-            if let Some(s) = new_stage {
-                c.set_stage(i, s);
-            }
-            let m = &mut c.members[i];
-            egui::CollapsingHeader::new("Looks").default_open(true).show(ui, |ui| {
+                }
+                if let Some(s) = new_stage {
+                    c.set_stage(i, s);
+                }
+                let m = &mut c.members[i];
+                ui.section("Looks", theme::PINK);
                 let mut g = m.genes.clone().unwrap_or_else(|| genetics::genes_from_appearance(&m.appearance));
                 let mut changed = false;
-                ui.label("Skin");
-                changed |= swatches(ui, &SKIN_TONES, &mut g.skin);
-                ui.label("Hair");
-                changed |= swatches(ui, &HAIR_COLORS, &mut g.hair);
-                ui.label("Eyes");
-                changed |= swatches(ui, &EYE_COLORS, &mut g.eyes);
-                changed |= ui.add(egui::Slider::new(&mut g.height, 0.9..=1.1).text("height")).changed();
-                changed |= ui.add(egui::Slider::new(&mut g.build, 0.0..=1.0).text("build")).changed();
+                field(ui, "Skin", |ui| changed |= swatches(ui, &SKIN_TONES, &mut g.skin));
+                field(ui, "Hair", |ui| changed |= swatches(ui, &HAIR_COLORS, &mut g.hair));
+                field(ui, "Eyes", |ui| changed |= swatches(ui, &EYE_COLORS, &mut g.eyes));
+                changed |= ui.slider("Height", &mut g.height, 0.9, 1.1, 0.0, 220.0);
+                changed |= ui.slider("Build", &mut g.build, 0.0, 1.0, 0.0, 220.0);
                 let mut style = m.appearance.hair_style as u32;
-                ui.horizontal(|ui| {
-                    ui.label("Hair style");
-                    for (k, name) in ["Classic", "Bun", "Long", "Heroic fringe"].iter().enumerate() {
-                        if ui.selectable_label(style == k as u32, *name).clicked() {
-                            style = k as u32;
-                            changed = true;
+                field(ui, "Hair style", |ui| {
+                    ui.wrap(|ui| {
+                        for (k, name) in ["Classic", "Bun", "Long", "Heroic fringe"].iter().enumerate() {
+                            if ui.chip(*name, style == k as u32).clicked {
+                                style = k as u32;
+                                changed = true;
+                            }
                         }
-                    }
+                    })
                 });
                 m.appearance.hair_style = style as u8;
-                color_edit(ui, "Shirt", &mut m.appearance.shirt);
-                color_edit(ui, "Pants", &mut m.appearance.pants);
+                field(ui, "Shirt", |ui| swatches(ui, &CLOTHES, &mut m.appearance.shirt));
+                field(ui, "Trousers", |ui| swatches(ui, &CLOTHES, &mut m.appearance.pants));
                 if changed {
                     m.genes = Some(g);
                     refresh_appearance(m);
                 }
-            });
-            egui::CollapsingHeader::new("Personality").default_open(true).show(ui, |ui| {
+                ui.section("Personality", theme::LILAC);
                 let a = &mut m.axes;
                 let total = |a: &Axes| a.neat as u32 + a.outgoing as u32 + a.active as u32 + a.playful as u32 + a.nice as u32;
                 let used = total(a);
-                ui.label(RichText::new(format!("Points: {used} / {AXIS_BUDGET}")).color(if used > AXIS_BUDGET { Color32::RED } else { Color32::LIGHT_GRAY }));
+                ui.row(0.0, |ui| {
+                    ui.text(Text::new("Points").bold().size(14.0));
+                    ui.bar("points", used as f32 / AXIS_BUDGET as f32, if used > AXIS_BUDGET { theme::CORAL } else { theme::LILAC }, vec2(200.0, 16.0));
+                    ui.text(Text::new(format!("{used} / {AXIS_BUDGET}")).size(13.0).color(if used > AXIS_BUDGET { theme::CORAL } else { INK_SOFT }));
+                });
                 for (name, v) in [("Neat", &mut a.neat), ("Outgoing", &mut a.outgoing), ("Active", &mut a.active), ("Playful", &mut a.playful), ("Nice", &mut a.nice)] {
-                    ui.add(egui::Slider::new(v, 0..=10).text(name));
+                    ui.slider_u8(name, v, 0, 10, 220.0);
                 }
                 let max = max_traits(m.stage);
-                ui.label(format!("Traits ({} of {max})", m.traits.len()));
-                ui.horizontal_wrapped(|ui| {
+                ui.text(Text::new(format!("Traits ({} of {max})", m.traits.len())).bold().size(14.0));
+                ui.wrap(|ui| {
                     for t in &data.traits {
                         let has = m.traits.contains(&t.id);
                         let conflict = m.traits.iter().any(|o| t.conflicts.contains(o) || data.trait_def(o).is_some_and(|d| d.conflicts.contains(&t.id)));
                         let enabled = has || (!conflict && m.traits.len() < max);
-                        let resp = ui.add_enabled(enabled, egui::Button::selectable(has, &t.name)).on_hover_text(&t.desc);
-                        if resp.clicked() {
+                        let r = ui.btn(Button::new(t.name.clone()).small().color(theme::LILAC).selected(has).enabled(enabled));
+                        ui.tooltip(&r, t.desc.clone());
+                        if r.clicked {
                             if has {
                                 m.traits.retain(|x| x != &t.id);
                             } else {
@@ -402,59 +415,53 @@ pub fn window(ui: &mut Ui, c: &mut Creator) -> CreatorAction {
                         }
                     }
                 });
-                ui.horizontal(|ui| {
-                    ui.label("Quirk");
+                field(ui, "Quirk", |ui| {
                     let cur = data.quirk(&m.quirk).map(|q| q.name.clone()).unwrap_or_else(|| "?".into());
-                    egui::ComboBox::from_id_salt("quirk").selected_text(cur).show_ui(ui, |ui| {
-                        for q in &data.quirks {
-                            if ui.selectable_label(m.quirk == q.id, &q.name).on_hover_text(&q.desc).clicked() {
-                                m.quirk = q.id.clone();
-                            }
-                        }
-                    });
+                    let names: Vec<String> = data.quirks.iter().map(|q| q.name.clone()).collect();
+                    if let Some(k) = ui.dropdown("quirk", &cur, &names, 250.0) {
+                        m.quirk = data.quirks[k].id.clone();
+                    }
                 });
-            });
-            if m.stage.is_adult() && m.stage != LifeStage::Elder {
-                ui.horizontal(|ui| {
-                    ui.label("Career");
+                if let Some(q) = data.quirk(&m.quirk) {
+                    ui.small(q.desc.clone());
+                }
+                if m.stage.is_adult() && m.stage != LifeStage::Elder {
+                    ui.section("Career", theme::SKY);
+                    let options: Vec<&sim::data::CareerDef> = data.careers.iter().filter(|cd| cd.min_stage <= m.stage).collect();
+                    let mut names = vec!["Unemployed".to_string()];
+                    names.extend(options.iter().map(|cd| cd.name.clone()));
                     let cur = m.career.as_ref().and_then(|c| data.career(c)).map(|c| c.name.clone()).unwrap_or_else(|| "Unemployed".into());
-                    egui::ComboBox::from_id_salt("career").selected_text(cur).show_ui(ui, |ui| {
-                        if ui.selectable_label(m.career.is_none(), "Unemployed").clicked() {
-                            m.career = None;
-                        }
-                        for cd in data.careers.iter().filter(|cd| cd.min_stage <= m.stage) {
-                            if ui.selectable_label(m.career.as_deref() == Some(&cd.id), &cd.name).on_hover_text(&cd.desc).clicked() {
-                                m.career = Some(cd.id.clone());
-                            }
+                    field(ui, "Job", |ui| {
+                        if let Some(k) = ui.dropdown("career", &cur, &names, 250.0) {
+                            m.career = if k == 0 { None } else { Some(options[k - 1].id.clone()) };
                         }
                     });
-                });
-            }
-        });
-        ui.separator();
-        if let Err(e) = c.validate() {
-            ui.label(RichText::new(e).color(Color32::from_rgb(255, 150, 120)));
-        } else if let Some(e) = &c.error {
-            ui.label(RichText::new(e).color(Color32::from_rgb(255, 150, 120)));
-        }
-        ui.horizontal(|ui| {
-            ui.label("Move into:");
-            let current = c.lots.iter().find(|(l, _)| Some(*l) == c.lot).map(|(_, s)| s.clone()).unwrap_or_else(|| "(no vacant lots)".into());
-            egui::ComboBox::from_id_salt("creator_lot").selected_text(current).show_ui(ui, |ui| {
-                for (l, label) in &c.lots {
-                    ui.selectable_value(&mut c.lot, Some(*l), label);
                 }
             });
-        });
-        ui.horizontal(|ui| {
-            if ui.add_enabled(c.validate().is_ok() && c.lot.is_some(), egui::Button::new(RichText::new("Move In").strong())).clicked() {
-                action = CreatorAction::MoveIn;
+            ui.dots();
+            if let Err(e) = c.validate() {
+                ui.text(Text::new(e).size(13.5).color(theme::CORAL.darken(0.15)).wrap());
+            } else if let Some(e) = &c.error {
+                ui.text(Text::new(e.clone()).size(13.5).color(theme::CORAL.darken(0.15)).wrap());
             }
-            if ui.button("Cancel").clicked() {
-                action = CreatorAction::Cancel;
-            }
-            ui.label(RichText::new(format!("Starting funds: ${START_FUNDS}")).weak());
+            field(ui, "Move into", |ui| {
+                let current = c.lots.iter().find(|(l, _)| Some(*l) == c.lot).map(|(_, s)| s.clone()).unwrap_or_else(|| "(no vacant lots)".into());
+                let labels: Vec<String> = c.lots.iter().map(|(_, s)| s.clone()).collect();
+                if let Some(k) = ui.dropdown("lot", &current, &labels, 300.0) {
+                    c.lot = Some(c.lots[k].0);
+                }
+            });
+            ui.row(50.0, |ui| {
+                if ui.btn(Button::new("Move in!").big().color(theme::GRASS).enabled(c.validate().is_ok() && c.lot.is_some())).clicked {
+                    action = CreatorAction::MoveIn;
+                }
+                if ui.btn(Button::new("Cancel").color(theme::CORAL)).clicked {
+                    action = CreatorAction::Cancel;
+                }
+                ui.text(Text::new(format!("Starting funds {}", crate::ui::money(START_FUNDS))).size(13.0).soft());
+            });
         });
+        ui.painter.pop_transform();
     });
     action
 }

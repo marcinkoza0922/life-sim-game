@@ -5,10 +5,10 @@
 //! Home focus · L story log · F1 inspector · F2 autonomy · F3 overlays · F4 profiler · F8 settings ·
 //! F12 screenshot · Esc cancel.
 //!
-//! Ctrl+S save · Ctrl+O load · T roofs · M mute voices.
+//! Ctrl+S quick save · Ctrl+O quick load · ☰ Game → Saves… · `--continue` resumes the newest save · T roofs · M mute voices.
 //!
 //! Test hooks: `--seed N --minutes M --screenshot-after FRAMES PATH --mode live|buy|build --level L
-//! --debug --size WxH --cam YAW,PITCH,DIST --menu-on OBJECT_ID --speed I --load SAVE --creator --walls up|cutaway|down`
+//! --debug --size WxH --cam YAW,PITCH,DIST --menu-on OBJECT_ID --speed I --load SAVE --creator --walls up|cutaway|down --show saves|neighborhood`
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -24,7 +24,20 @@ use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::raw_window_handle::HasDisplayHandle;
 use winit::window::{Window, WindowId};
+
+/// The OS clipboard (Wayland or X11) for hearth_ui text fields, via egui-winit's wrapper.
+struct SystemClipboard(egui_winit::clipboard::Clipboard);
+
+impl hearth_ui::Clipboard for SystemClipboard {
+    fn get(&mut self) -> Option<String> {
+        self.0.get()
+    }
+    fn set(&mut self, text: String) {
+        self.0.set_text(text);
+    }
+}
 
 struct Args {
     seed: u64,
@@ -38,12 +51,15 @@ struct Args {
     menu_on: Option<String>,
     speed: usize,
     load: Option<PathBuf>,
+    /// Resume the newest save in `saves/`.
+    resume: bool,
     creator: bool,
     walls: Option<scene::WallMode>,
+    show: Option<String>,
 }
 
 fn parse_args() -> Args {
-    let mut a = Args { seed: 7, minutes: 0, screenshot_after: None, mode: Mode::Live, level: 0, debug: false, size: (1600, 960), cam: None, menu_on: None, speed: 0, load: None, creator: false, walls: None };
+    let mut a = Args { seed: 7, minutes: 0, screenshot_after: None, mode: Mode::Live, level: 0, debug: false, size: (1600, 960), cam: None, menu_on: None, speed: 0, load: None, resume: false, creator: false, walls: None, show: None };
     let mut it = std::env::args().skip(1);
     while let Some(x) = it.next() {
         match x.as_str() {
@@ -73,7 +89,9 @@ fn parse_args() -> Args {
             "--menu-on" => a.menu_on = it.next(),
             "--speed" => a.speed = it.next().unwrap().parse().unwrap(),
             "--load" => a.load = it.next().map(PathBuf::from),
+            "--continue" => a.resume = true,
             "--creator" => a.creator = true,
+            "--show" => a.show = it.next(),
             "--walls" => {
                 a.walls = Some(match it.next().unwrap().as_str() {
                     "up" => scene::WallMode::Up,
@@ -96,6 +114,10 @@ struct Gfx {
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
     renderer: Renderer,
+    /// The game's interface.
+    ui: hearth_ui::Ui,
+    ui_renderer: hearth_ui::Renderer,
+    /// Developer windows only (F1–F4, F8, L).
     egui_ctx: egui::Context,
     egui_state: egui_winit::State,
     egui_renderer: egui_wgpu::Renderer,
@@ -123,7 +145,17 @@ struct App {
 
 impl App {
     fn new(args: Args) -> App {
-        let mut sim = match &args.load {
+        let load = args.load.clone().or_else(|| {
+            if !args.resume {
+                return None;
+            }
+            let newest = game::saves::list().into_iter().next();
+            if newest.is_none() {
+                eprintln!("--continue: no saves found, starting a new game");
+            }
+            newest.map(|s| s.path)
+        });
+        let mut sim = match &load {
             Some(p) => sim::Sim::load_from_file(p, sim::data::GameData::embedded()).unwrap_or_else(|e| {
                 eprintln!("couldn't load {}: {e}", p.display());
                 std::process::exit(1)
@@ -139,6 +171,11 @@ impl App {
         if args.creator {
             game.open_creator();
             game.cam.snap();
+        }
+        match args.show.as_deref() {
+            Some("saves") => game.show_saves = true,
+            Some("neighborhood") => game.show_neighborhood = true,
+            _ => {}
         }
         if let Some(w) = args.walls {
             game.wall_mode = w;
@@ -252,7 +289,12 @@ impl App {
                 let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
                 g.screenshot = Some(PathBuf::from(format!("screenshots/lifesim-{t}.png")));
             }
-            KeyCode::F10 => event_loop.exit(),
+            KeyCode::F10 => {
+                if g.creator.is_none() {
+                    g.autosave();
+                }
+                event_loop.exit()
+            }
             _ => {}
         }
     }
@@ -345,6 +387,9 @@ impl App {
             }
         }
         self.game.update(dt);
+        if self.args.screenshot_after.is_none() {
+            self.game.autosave_if_new_day();
+        }
         // terrain brush repeats while the mouse is held
         if let (Some(last), Some(n)) = (self.game.sculpting, self.ndc())
             && self.game.time - last > 0.08 {
@@ -359,7 +404,7 @@ impl App {
         let ndc = self.ndc();
         let cam = self.game.camera(aspect);
         // hover
-        let over_ui = self.gfx.as_ref().is_some_and(|g| g.egui_ctx.is_pointer_over_egui());
+        let over_ui = self.gfx.as_ref().is_some_and(|g| g.egui_ctx.is_pointer_over_egui() || g.ui.wants_pointer());
         let pick = if over_ui { None } else { ndc.and_then(|n| self.game.pick(&cam, n)) };
         self.game.hovered = match &pick {
             Some(Pick::Peon(e)) | Some(Pick::Object(e)) => Some(*e),
@@ -416,10 +461,21 @@ impl App {
         let out = scene::build(&self.game.sim, &gfx.renderer.builtins, gfx.peons.as_ref(), &mut gfx.anims, cam, &opts);
 
         // UI
+        let size_px = [gfx.config.width, gfx.config.height];
+        let cx = ui::UiCtx { camera: &cam, labels: &out.labels, screen: (size_px[0] as f32, size_px[1] as f32) };
+        gfx.ui.begin_frame(dt, size_px);
+        ui::draw(&mut gfx.ui, &mut self.game, &cx);
+        gfx.ui.end_frame();
+        gfx.ui_renderer.prepare(&gfx.renderer.gpu.device, &gfx.renderer.gpu.queue, &mut gfx.ui, size_px);
+        // developer windows
         let raw = gfx.egui_state.take_egui_input(&gfx.window);
-        let cx = ui::UiCtx { camera: &cam, labels: &out.labels, render_stats: gfx.renderer.stats, screen: (gfx.config.width as f32, gfx.config.height as f32) };
+        let dcx = game::debug_ui::DebugCtx { render_stats: gfx.renderer.stats };
         let game = &mut self.game;
-        let full = gfx.egui_ctx.run_ui(raw, |ui| ui::draw(ui, game, &cx));
+        let mut full = gfx.egui_ctx.run_ui(raw, |ui| {
+            if game::debug_ui::any_open(game) {
+                game::debug_ui::draw(ui, game, &dcx);
+            }
+        });
         gfx.egui_state.handle_platform_output(&gfx.window, full.platform_output);
         let prims = gfx.egui_ctx.tessellate(full.shapes, full.pixels_per_point);
         let (dev, q) = (&gfx.renderer.gpu.device.clone(), &gfx.renderer.gpu.queue.clone());
@@ -428,6 +484,8 @@ impl App {
                 gfx.egui_renderer.update_texture(dev, q, *id, delta);
             }
         }
+        let freed: Vec<egui::TextureId> = full.textures_delta.free.iter().copied().collect();
+        full.textures_delta.clear();
         let sd = egui_wgpu::ScreenDescriptor { size_in_pixels: [gfx.config.width, gfx.config.height], pixels_per_point: full.pixels_per_point };
 
         let draw_to = |gfx: &mut Gfx, tex: &wgpu::Texture| {
@@ -439,7 +497,7 @@ impl App {
             let extra = gfx.egui_renderer.update_buffers(dev, q, &mut enc, &prims, &sd);
             {
                 let pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("egui"),
+                    label: Some("ui"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view,
                         depth_slice: None,
@@ -452,6 +510,7 @@ impl App {
                     multiview_mask: None,
                 });
                 let mut pass = pass.forget_lifetime();
+                gfx.ui_renderer.paint(&mut pass);
                 gfx.egui_renderer.render(&mut pass, &prims, &sd);
             }
             q.submit(extra.into_iter().chain([enc.finish()]));
@@ -495,7 +554,7 @@ impl App {
                 gfx.surface.configure(dev, &gfx.config);
             }
         }
-        for id in &full.textures_delta.free {
+        for id in &freed {
             gfx.egui_renderer.free_texture(id);
         }
         self.game.frame_ms = now.elapsed().as_secs_f32() * 1000.0;
@@ -533,7 +592,7 @@ impl ApplicationHandler for App {
         let gpu = Gpu::with_instance(instance, Some(&surface)).expect("no suitable GPU");
         let size = window.inner_size();
         let caps = surface.get_capabilities(&gpu.adapter);
-        // Linear surface format for egui (which blends in gamma space), with an sRGB view for 3D.
+        // Linear surface format for the UI (which blends in gamma space), with an sRGB view for 3D.
         log::info!("surface formats: {:?}", caps.formats);
         let base = [wgpu::TextureFormat::Bgra8Unorm, wgpu::TextureFormat::Rgba8Unorm]
             .into_iter()
@@ -546,27 +605,49 @@ impl ApplicationHandler for App {
         config.present_mode = wgpu::PresentMode::AutoVsync;
         surface.configure(&gpu.device, &config);
         let mut renderer = Renderer::new(gpu.clone(), srgb);
+        game::materials::install(&mut renderer, &self.game.sim.data());
         let peons = game::peons::PeonArt::load(&mut renderer).inspect_err(|e| log::error!("peon models: {e:#}; using greybox bodies")).ok();
         let format = base;
         let egui_ctx = egui::Context::default();
         egui_ctx.set_visuals(egui::Visuals::dark());
         let egui_state = egui_winit::State::new(egui_ctx.clone(), egui::ViewportId::ROOT, &window, Some(window.scale_factor() as f32), None, None);
         let egui_renderer = egui_wgpu::Renderer::new(&gpu.device, format, egui_wgpu::RendererOptions::default());
+        let mut ui = hearth_ui::Ui::new();
+        ui.input.ppp = window.scale_factor() as f32;
+        ui.clipboard = Box::new(SystemClipboard(egui_winit::clipboard::Clipboard::new(window.display_handle().ok().map(|h| h.as_raw()))));
+        let ui_renderer = hearth_ui::Renderer::new(&gpu.device, format);
         if self.args.screenshot_after.is_some() {
-            // automated captures shouldn't catch windows mid-fade
+            // automated captures shouldn't catch anything mid-bounce
             egui_ctx.all_styles_mut(|s| s.animation_time = 0.0);
+            ui.instant = true;
         }
-        self.gfx = Some(Gfx { surface, config, renderer, egui_ctx, egui_state, egui_renderer, window, meshes: Default::default(), peons, anims: Default::default() });
+        self.gfx = Some(Gfx { surface, config, renderer, ui, ui_renderer, egui_ctx, egui_state, egui_renderer, window, meshes: Default::default(), peons, anims: Default::default() });
         self.last = Instant::now();
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         let Some(gfx) = self.gfx.as_mut() else { return };
         let consumed = gfx.egui_state.on_window_event(&gfx.window, &event).consumed;
-        let wants_kb = gfx.egui_ctx.egui_wants_keyboard_input();
-        let over_ui = gfx.egui_ctx.is_pointer_over_egui();
+        let over_egui = gfx.egui_ctx.is_pointer_over_egui();
+        let egui_kb = gfx.egui_ctx.egui_wants_keyboard_input();
+        // developer windows sit on top: what they take, the game UI doesn't see
+        let to_ui = match &event {
+            WindowEvent::MouseInput { state: ElementState::Pressed, .. } | WindowEvent::MouseWheel { .. } => !over_egui,
+            WindowEvent::KeyboardInput { .. } => !egui_kb,
+            _ => true,
+        };
+        if to_ui {
+            gfx.ui.input.on_event(&event);
+        }
+        let wants_kb = egui_kb || gfx.ui.wants_keyboard();
+        let over_ui = over_egui || gfx.ui.wants_pointer();
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => {
+                if self.args.screenshot_after.is_none() && self.game.creator.is_none() {
+                    self.game.autosave();
+                }
+                event_loop.exit()
+            }
             WindowEvent::Resized(s) => {
                 gfx.config.width = s.width.max(1);
                 gfx.config.height = s.height.max(1);

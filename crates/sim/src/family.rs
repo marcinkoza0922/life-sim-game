@@ -1,5 +1,5 @@
 //! Family growth: trying for a baby, pregnancy, birth (with genetics) and adoption.
-//! Either partner may end up carrying; the sim doesn't model sex, only partnership.
+//! Only women carry; a couple with no one who can is pointed to the adoption agency.
 
 use glam::Vec3;
 use hearth_ecs::{Entity, Without, World};
@@ -48,14 +48,19 @@ pub fn marry(world: &mut World, a: Entity, b: Entity) {
     r.romance = r.romance.max(60.0);
     r.partners = true;
     r.married = true;
+    r.engaged = false;
+    r.exes = false;
+    r.wedding_at = None;
 }
 
 fn household_size(world: &World) -> usize {
     world.res::<Household>().members.len()
 }
 
-fn can_carry(world: &World, e: Entity) -> bool {
-    !world.has::<Pregnant>(e)
+/// Can `e` get pregnant right now?
+pub fn can_carry(world: &World, e: Entity) -> bool {
+    world.get::<Sex>(e).is_some_and(|s| *s == Sex::Female)
+        && !world.has::<Pregnant>(e)
         && !world.has::<Dead>(e)
         && world.get::<Age>(e).is_some_and(|a| matches!(a.stage, LifeStage::YoungAdult | LifeStage::Adult))
 }
@@ -72,6 +77,11 @@ pub fn try_for_baby(world: &mut World, a: Entity, b: Entity) {
         return;
     }
     let carriers: Vec<Entity> = [a, b].into_iter().filter(|e| can_carry(world, *e)).collect();
+    let female = [a, b].into_iter().any(|e| world.get::<Sex>(e).is_some_and(|s| *s == Sex::Female));
+    if !female {
+        log(world, LogKind::Funny, Some(a), format!("{na} and {nb} tried for a baby. Biology declined to comment. The Agency of Questionable Storks has brochures."));
+        return;
+    }
     let lucky = world.res_mut::<SimRng>().chance(0.6);
     if carriers.is_empty() || !lucky {
         log(world, LogKind::Social, Some(a), format!("{na} and {nb} tried for a baby. No luck this time. They seem fine with practicing."));
@@ -79,6 +89,11 @@ pub fn try_for_baby(world: &mut World, a: Entity, b: Entity) {
     }
     let carrier = *world.res_mut::<SimRng>().pick(&carriers).unwrap();
     let other = if carrier == a { b } else { a };
+    conceive(world, carrier, other);
+}
+
+/// `carrier` is expecting a baby with `other`.
+pub fn conceive(world: &mut World, carrier: Entity, other: Entity) {
     let scale = world.res::<Settings>().lifespan_scale;
     let tick = now(world);
     let due = tick + (PREGNANCY_DAYS * scale * TICKS_PER_DAY as f32) as u64;
@@ -110,8 +125,8 @@ pub fn pregnancies(world: &mut World) {
             let i = world.res_mut::<SimRng>().below(CRAVINGS.len());
             set_bubble(world, e, Some(CRAVINGS[i].into()), None, 20);
         }
-        // babies wait until their carrier is home
-        if tick >= p.due && !is_away(world, e) {
+        // babies wait until their carrier is home (a visiting neighbor's arrive down the street)
+        if tick >= p.due && !is_away(world, e) && world.has::<Member>(e) {
             give_birth(world, e, p.other);
         }
     }

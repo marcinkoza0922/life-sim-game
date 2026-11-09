@@ -1,0 +1,17 @@
+[package]
+name = "hearth_ui"
+description = "Hearth: a bouncy immediate-mode game UI on wgpu (SDF shapes, springs, ab_glyph text)"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+wgpu.workspace = true
+glam.workspace = true
+bytemuck.workspace = true
+winit.workspace = true
+ab_glyph.workspace = true
+image.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+hearth_render.workspace = true

@@ -20,7 +20,7 @@ Written in Rust on a custom, fit-to-purpose ECS.
 
 | Area | Decision |
 |---|---|
-| Engine | Custom archetype ECS + wgpu 30 + winit 0.30; crates for math (glam), glTF, audio (kira), UI (egui 0.36) |
+| Engine | Custom archetype ECS + wgpu 30 + winit 0.30; crates for math (glam), glTF, audio (kira); game UI is our own `hearth_ui` (egui 0.36 only for developer windows) |
 | Platform | Linux first (Vulkan). Cross-platform later — avoid platform-specific code |
 | Visual style | Semi-realistic PBR; greybox placeholders first, glTF art later |
 | Camera | Free orbit/zoom/pan, wall cutaway, upper-floor hiding |
@@ -49,20 +49,30 @@ crates/
                  resources, events, commands, schedule. No game knowledge.
   hearth_render  wgpu renderer: meshes, PBR-lite shading, shadows, instancing,
                  offscreen capture (screenshots). No game knowledge.
+  hearth_ui      Immediate-mode game UI on wgpu: SDF shapes (rounded boxes, arcs,
+                 triangles, soft shadows), springs on every widget, ab_glyph text
+                 atlas from bundled fonts, RGBA image atlas, clipboard-aware text
+                 fields. No game knowledge.
   sim            The game simulation. Pure logic on hearth_ecs — no rendering,
                  no windowing, fully deterministic given a seed. Testable headless.
   game           The playable binary (`lifesim`): window, input, camera, build
-                 tools, egui UI, sim→render bridging, debug overlays.
+                 tools, hearth_ui interface (ui.rs, creator.rs), egui developer
+                 windows (debug_ui.rs), sim→render bridging, debug overlays.
   simctl         Headless CLI: run the sim for N days, run scenario files,
                  dump event logs / stats as JSON, render screenshots offscreen.
 assets/
-  data/          RON content: objects, traits, quirks, careers, needs, names
+  data/          RON content: objects, traits, quirks, careers, needs, names, materials
   models/        peon_<stage>.glb rigged bodies (generated; embedded in the game binary)
+  textures/      <material id>/{albedo,normal,orm}.png tiling maps (embedded by game/build.rs)
+  materialcraft/ materials.py: generates the .sbs packages and textures/ maps headlessly
   blender/       make_peons.py: builds the bodies, rig, hair and clips headlessly
+  vectorcraft/   make_icons.py: UI icon SVGs (icons/, sheet.svg) rasterised by vectorcraft-cli
+  ui/icons/      <name>.png 128 px UI icons (generated; embedded by game/src/icons.rs)
+  fonts/         Nunito, Fredoka, Noto Emoji (OFL, licences alongside; embedded by hearth_ui)
 docs/
 ```
 
-Dependency direction: `game → {sim, hearth_render, hearth_ecs}`, `simctl → {sim, hearth_render}`,
+Dependency direction: `game → {sim, hearth_render, hearth_ui, hearth_ecs}`, `simctl → {sim, hearth_render}`,
 `sim → hearth_ecs`. The sim never depends on the renderer. This keeps the simulation
 deterministic, fast to test, and runnable at thousands of ticks per second.
 
@@ -100,7 +110,12 @@ in the game crate covers debug UI needs.)
 - wgpu 30 on Vulkan. HDR-ish linear pipeline into an sRGB surface.
 - **Shading:** PBR-lite (GGX specular, Lambert diffuse, metallic/roughness),
   one directional sun with a shadow map, hemispherical ambient. Real IBL later.
-- **Meshes:** CPU `MeshData` (pos/normal/uv/color) → GPU buffers; handle-based `MeshId`.
+- **Materials:** albedo / normal / ORM `texture_2d_array`s (512² layers with mips; layer 0 flat).
+  A draw's `MaterialId` picks a layer; it is box-projected (triplanar) in the draw's scaled object
+  space, so scaled primitives keep constant texel density, nothing swims when objects move, and no
+  UVs are needed. Tiled building pieces (floor tiles, wall segments) set `flags::WORLD_TEXTURE` to
+  project in world space instead, so one texture runs across their seams. The draw colour tints the albedo; textured draws take roughness/metallic from ORM.
+- **Meshes:** CPU `MeshData` (pos/normal/color; no UVs yet) → GPU buffers; handle-based `MeshId`.
   Per-instance data (model matrix, base color, roughness/metallic, flags) in an instance buffer;
   draws are batched by mesh.
 - **Placeholders:** procedural primitives (box, cylinder, capsule, plane, wedge) used for
@@ -311,8 +326,27 @@ bills every 3 days (scaled by lot value). Unpaid bills → warnings → repo-man
 
 - **Camera:** orbit target on the active level; RMB rotate, MMB/WASD pan, wheel zoom, PageUp/Down
   change level. Walls modes: Up / Cutaway / Down.
-- **UI (egui, themed later):** needs panel, peon portraits, action queue, mood & moodlets,
-  career panel, build/buy catalog, clock/speed controls, notification feed.
+- **UI (`hearth_ui`, bubbly toy-box style):** cream paper cards with plum outlines and solid drop
+  shadows, candy accents (teal, coral, sun, grass, sky, lilac), Fredoka headings over Nunito body text,
+  Noto Emoji as an icon font. Everything moves on damped springs: buttons lift on hover and squash
+  when pressed, panels slide in with overshoot, windows and tooltips pop, bars wobble when their value
+  jumps, funds count up, the interaction menu fans out radially. Screens: floating HUD (household and
+  funds, clock and speeds, modes and menu), cartoon portrait bubbles with mood rings, tabbed peon panel
+  (needs, moodlets, traits/skills, career, relationships), Buy/Build tile catalogs, saves and
+  neighborhood windows, career events, toasts, Create-a-Household. `Ui::instant` snaps springs for
+  deterministic screenshots. Developer windows (F1–F4, F8, L) stay on egui.
+  `hearth_ui` in brief: per-frame `begin_frame` / widgets / `end_frame`; widget ids hash a label in the
+  id scope (repeats get a counter); springs and small floats live in per-id memory (unused springs are
+  dropped after 30 frames); areas register their rects so the next frame's `wants_pointer` keeps clicks
+  from reaching the world; layers back to front are Background (world bubbles, never block), Panel,
+  Window, Popup, Tooltip. Images: register RGBA or PNG bytes once with `ui.images.add_rgba` /
+  `add_png(bytes, max_side)` (packed into a 2048² atlas, never repacked, no mipmaps, so load near
+  display size), then draw with `ui.image`, `ui.image_framed`, `Button::icon` or
+  `painter.image` (rounded corners, tint, outline); they share the one instanced draw with shapes and
+  text. Text fields select by drag, Shift+click/arrows and double-click, jump words with Ctrl, and
+  copy/cut/paste through `Ui::clipboard` (the game installs the OS clipboard via egui-winit; tests
+  use an in-memory one). `crates/hearth_ui/tests/gpu.rs` renders a sample to
+  `out/hearth_ui_snapshot.png`.
 - **Speech:** gibberish syllable generator + pitch by age/sex; bubbles show icons of topics.
 
 ## 7. Debug & Test Tooling
@@ -345,9 +379,9 @@ Built in from day one:
 | **M8 Neighborhood** | Multiple lots, visitors, community lots |
 | **M9 Roofs & terrain polish**, saves, settings, audio |
 
-## 9. Status (2026-11-08)
+## 9. Status (2026-11-09)
 
-**M0 done, M1 done, parts of M2–M4 in.** Everything below is playable in `lifesim`:
+**M0–M5 and M8 done; M6 (creator, no clothing yet), M7 (rigged peons, materials; objects still greybox) and M9 (roofs, terrain, saves; audio is voices only) partly in.** Everything below is playable in `lifesim`:
 
 - Hearth ECS with tests and a clean Miri run; schedule with per-system timings.
 - Renderer: instanced PBR-lite, shadowed sun with day/night cycle, lamp & room lights, MSAA, ACES,
@@ -381,6 +415,9 @@ Added since:
 - **Saves:** whole-world RON snapshots with exact entity handles (`World::spawn_empty_at`); object defs by
   string id. Save → load → continue is bit-identical to never saving (tested). Systems that consume
   randomness iterate in sorted entity order so ECS storage layout never changes outcomes.
+  **Slots:** ☰ Game → Saves… lists `saves/*.ron` (save under a name, overwrite, load, delete); Ctrl+S/O stay the
+  quicksave. The game autosaves to `saves/autosave.ron` at each new sim day and on quit, and `lifesim --continue`
+  resumes the newest save.
 - **Roofs:** gable/hip/flat roofs on rectangles, auto-roof (greedy rectangles over top-floor rooms), roof tool,
   procedural meshes with overhangs and gable-end walls. **Terrain:** corner heightmap with raise/lower/
   flatten/smooth brush; floors/walls flatten and lock their corners; objects need flat ground; steep steps block nav.
@@ -464,5 +501,28 @@ Added since:
   (furnished first; on an empty plot they build), always leaving one lot for sale. Interaction costs are
   charged to the buyer's own household (`economy::debit`), not always the played one.
 
-**Known gaps / next up:** neighbors' graves when they die off-lot; walking between lots instead of
-appearing at the street; guests sleeping over in their hosts' beds (nothing sends them home at night).
+- **Walking between lots:** Visit, Go Out and Go Home are walks (`neighborhood::Trip`, run by `trips`): the
+  household heads out to the street and off down the sidewalk toward the destination (lots are numbered
+  along the street), the destination goes live once they've all left (or after two hours), and they walk
+  in from the end of the street they came from. Babies are carried (off-lot for the walk). The sidewalk
+  legs are `ActionKind::Walk` (fixed waypoints off the nav grid). Neighbors who drop by walk up the
+  sidewalk from their end of the street and leave the same way. Switching or moving households is
+  still instant (and calls off a walk underway). `Sim::finish_trip` runs the clock until a walk is over.
+- **No sleepovers:** guests (visiting neighbors, or the household away from home) can't use beds
+  (`autonomy::not_a_guest_bed`; cribs are fine), and at midnight the household is sent home from
+  wherever it is: the hosts hand them their coats, or the café/park closes.
+- **Graves at home:** whoever dies is buried on their home lot. If that lot is parked, it's made live in a
+  scratch world to place the tombstone and parked again with a fresh handle for the grave, so the ghost
+  (off-lot meanwhile) finds it when the lot is next live. A visitor who dies on someone else's lot goes
+  home to be buried, and the household dying while out no longer gets a grave at the park.
+  `simctl hood` lists graves per lot.
+
+- **Accidents:** `Outcome::Accident` (chance cut by up to 80% by a skill, doubled for the Clumsy; logs a line,
+  applies a moodlet, fatal with probability `fatal`) and `CareerEffect::Accident`. Repairing live wiring
+  (stove, computer, treadmill) can shock (Singed; rarely **electrocution**); shaking the **Snackatron** vending
+  machine (café, gym, buyable) can tip it over (Flattened; rarely fatal); a Cheerful peon at full Fun still having
+  fun can get a laughing fit (rarely **laughter**); a Supervillain who monologues and fails can die of
+  **hubris**. Deaths at work end the shift and drop pending decisions. The Reaper can be talked round
+  (Charisma × 5%) or beaten at rock-paper-scissors (10%), not for old age, and not again within 24 h.
+  Everything that can break now has a Repair, and ghosts only break things that can be fixed. Over 30
+  seeds × 40 days, accidents caused one death; old age caused the rest.

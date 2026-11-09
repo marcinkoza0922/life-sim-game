@@ -19,6 +19,11 @@ struct Globals {
 @group(0) @binding(0) var<uniform> g: Globals;
 @group(0) @binding(1) var shadow_tex: texture_depth_2d;
 @group(0) @binding(2) var shadow_samp: sampler_comparison;
+// Material layers (0 = flat); see `MaterialMaps`.
+@group(0) @binding(3) var mat_albedo: texture_2d_array<f32>;
+@group(0) @binding(4) var mat_normal: texture_2d_array<f32>;
+@group(0) @binding(5) var mat_orm: texture_2d_array<f32>;
+@group(0) @binding(6) var mat_samp: sampler;
 
 struct VsIn {
     @location(0) pos: vec3<f32>,
@@ -30,6 +35,7 @@ struct VsIn {
     @location(6) m3: vec4<f32>,
     @location(7) icolor: vec4<f32>,
     @location(8) params: vec4<f32>,  // roughness, metallic, emissive, flags
+    @location(9) tex: vec4<f32>,     // material layer, 1 / texture scale
 };
 
 struct VsOut {
@@ -39,7 +45,32 @@ struct VsOut {
     @location(2) color: vec4<f32>,
     @location(3) params: vec4<f32>,
     @location(4) light_clip: vec4<f32>,
+    // triplanar mapping: position in scaled object space (rotation and translation removed), in
+    // texture repeats, and the model rotation that takes that space back to world
+    @location(5) tex_pos: vec3<f32>,
+    @location(6) @interpolate(flat) layer: u32,
+    @location(7) @interpolate(flat) r0: vec3<f32>,
+    @location(8) @interpolate(flat) r1: vec3<f32>,
+    @location(9) @interpolate(flat) r2: vec3<f32>,
 };
+
+// tex: layer, 1 / scale, world-space flag
+fn set_triplanar(o: ptr<function, VsOut>, m: mat4x4<f32>, pos: vec3<f32>, tex: vec4<f32>) {
+    (*o).layer = u32(tex.x + 0.5);
+    if (tex.z > 0.5) {
+        (*o).tex_pos = (m * vec4<f32>(pos, 1.0)).xyz * tex.y;
+        (*o).r0 = vec3<f32>(1.0, 0.0, 0.0);
+        (*o).r1 = vec3<f32>(0.0, 1.0, 0.0);
+        (*o).r2 = vec3<f32>(0.0, 0.0, 1.0);
+        return;
+    }
+    let s = vec3<f32>(length(m[0].xyz), length(m[1].xyz), length(m[2].xyz));
+    let inv = 1.0 / max(s, vec3<f32>(1e-6));
+    (*o).tex_pos = pos * s * tex.y;
+    (*o).r0 = m[0].xyz * inv.x;
+    (*o).r1 = m[1].xyz * inv.y;
+    (*o).r2 = m[2].xyz * inv.z;
+}
 
 @vertex
 fn vs_main(v: VsIn) -> VsOut {
@@ -54,6 +85,7 @@ fn vs_main(v: VsIn) -> VsOut {
     o.color = vec4<f32>(pow(max(c.rgb, vec3<f32>(0.0)), vec3<f32>(2.2)), c.a);
     o.params = v.params;
     o.light_clip = g.light_view_proj * world;
+    set_triplanar(&o, m, v.pos, v.tex);
     return o;
 }
 
@@ -118,6 +150,7 @@ fn vs_skinned(v: SkIn) -> VsOut {
     o.color = vec4<f32>(pow(max(c.rgb, vec3<f32>(0.0)), vec3<f32>(2.2)), c.a);
     o.params = v.params;
     o.light_clip = g.light_view_proj * world;
+    set_triplanar(&o, mat4x4<f32>(vec4<f32>(1.0, 0.0, 0.0, 0.0), vec4<f32>(0.0, 1.0, 0.0, 0.0), vec4<f32>(0.0, 0.0, 1.0, 0.0), vec4<f32>(0.0, 0.0, 0.0, 1.0)), vec3<f32>(0.0), vec4<f32>(0.0, 1.0, 0.0, 0.0));
     return o;
 }
 
@@ -176,22 +209,63 @@ fn aces(x: vec3<f32>) -> vec3<f32> {
     return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
+struct Surface {
+    albedo: vec3<f32>,
+    // object-space normal (scaled object space, see VsOut)
+    normal: vec3<f32>,
+    orm: vec3<f32>,
+};
+
+// Box-projected material sample. Planes map (u, v) so textures stand upright on vertical faces:
+// X faces use (z, -y), Y faces (x, z), Z faces (x, -y). Normal-map tangents follow the same axes
+// (green = up the image), added to the geometric normal per plane and blended (UDN).
+fn triplanar(p: vec3<f32>, n: vec3<f32>, layer: u32) -> Surface {
+    var w = pow(abs(n), vec3<f32>(4.0));
+    w = w / max(w.x + w.y + w.z, 1e-5);
+    let ux = vec2<f32>(p.z, -p.y);
+    let uy = vec2<f32>(p.x, p.z);
+    let uz = vec2<f32>(p.x, -p.y);
+    var s: Surface;
+    s.albedo = textureSample(mat_albedo, mat_samp, ux, layer).rgb * w.x
+        + textureSample(mat_albedo, mat_samp, uy, layer).rgb * w.y
+        + textureSample(mat_albedo, mat_samp, uz, layer).rgb * w.z;
+    s.orm = textureSample(mat_orm, mat_samp, ux, layer).rgb * w.x
+        + textureSample(mat_orm, mat_samp, uy, layer).rgb * w.y
+        + textureSample(mat_orm, mat_samp, uz, layer).rgb * w.z;
+    let tx = textureSample(mat_normal, mat_samp, ux, layer).xy * 2.0 - 1.0;
+    let ty = textureSample(mat_normal, mat_samp, uy, layer).xy * 2.0 - 1.0;
+    let tz = textureSample(mat_normal, mat_samp, uz, layer).xy * 2.0 - 1.0;
+    // world direction of +u and of "up the image" (-v) on each plane
+    let dx = vec3<f32>(0.0, tx.y, tx.x);
+    let dy = vec3<f32>(ty.x, 0.0, -ty.y);
+    let dz = vec3<f32>(tz.x, tz.y, 0.0);
+    let bump = select(0.0, 1.0, layer > 0u);
+    s.normal = normalize(n + (dx * w.x + dy * w.y + dz * w.z) * bump);
+    return s;
+}
+
 @fragment
 fn fs_main(i: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let flags = u32(i.params.w + 0.5);
-    let albedo = i.color.rgb;
-    if ((flags & 1u) != 0u) {
-        // unlit (selection rings, overlays)
-        return vec4<f32>(albedo, i.color.a);
-    }
     var n = normalize(i.normal);
     if (!front) {
         n = -n;
     }
+    // sample before any early return (implicit-derivative sampling needs uniform control flow)
+    let rot = mat3x3<f32>(i.r0, i.r1, i.r2);
+    let surf = triplanar(i.tex_pos, transpose(rot) * n, i.layer);
+    let albedo = i.color.rgb * surf.albedo;
+    if ((flags & 1u) != 0u) {
+        // unlit (selection rings, overlays)
+        return vec4<f32>(albedo, i.color.a);
+    }
+    let textured = i.layer > 0u;
+    n = normalize(rot * surf.normal);
     let v = normalize(g.eye.xyz - i.world);
     let l = normalize(g.sun_dir.xyz);
-    let rough = clamp(i.params.x, 0.04, 1.0);
-    let metal = clamp(i.params.y, 0.0, 1.0);
+    let rough = clamp(select(i.params.x, surf.orm.g, textured), 0.04, 1.0);
+    let metal = clamp(select(i.params.y, surf.orm.b, textured), 0.0, 1.0);
+    let ao = surf.orm.r;
     let ndotl = max(dot(n, l), 0.0);
     var sh = 1.0;
     if ((flags & 2u) == 0u) {
@@ -200,7 +274,7 @@ fn fs_main(i: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
     var color = shade(n, v, l, albedo, rough, metal) * g.sun_color.rgb * g.sun_dir.w * sh;
     // hemispheric ambient
     let hemi = mix(g.ground_color.rgb, g.sky_color.rgb, n.y * 0.5 + 0.5);
-    color += hemi * albedo * (1.0 - metal * 0.6);
+    color += hemi * albedo * (1.0 - metal * 0.6) * ao;
     // point lights
     let count = i32(g.counts.x);
     for (var k = 0; k < count; k++) {

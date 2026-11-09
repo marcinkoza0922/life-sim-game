@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/hearth_ecs", "crates/hearth_render", "crates/sim", "crates/game", "crates/simctl"]
+members = ["crates/hearth_ecs", "crates/hearth_render", "crates/hearth_ui", "crates/sim", "crates/game", "crates/simctl"]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,6 +10,7 @@ authors = ["Marcin Koza"]
 [workspace.dependencies]
 hearth_ecs = { path = "crates/hearth_ecs" }
 hearth_render = { path = "crates/hearth_render" }
+hearth_ui = { path = "crates/hearth_ui" }
 sim = { path = "crates/sim" }
 glam = { version = "0.30", features = ["serde", "bytemuck"] }
 serde = { version = "1", features = ["derive"] }
@@ -18,6 +19,7 @@ ron = "0.12"
 bytemuck = { version = "1", features = ["derive"] }
 wgpu = "30"
 winit = "0.30"
+ab_glyph = "0.2.32"
 egui = "0.36"
 egui-wgpu = "0.36"
 egui-winit = "0.36"

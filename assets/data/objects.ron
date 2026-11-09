@@ -6,8 +6,8 @@
         desc: "Keeps food cold and secrets colder.",
         parts: [
             (shape: Box, size: (0.8, 1.8, 0.7), at: (0.5, 0.9, 0.4), color: (0.92, 0.93, 0.95), rough: 0.3),
-            (shape: Box, size: (0.04, 0.5, 0.04), at: (0.82, 1.2, 0.77), color: (0.6, 0.6, 0.62), metal: 1.0, rough: 0.2),
-            (shape: Box, size: (0.04, 0.3, 0.04), at: (0.82, 0.5, 0.77), color: (0.6, 0.6, 0.62), metal: 1.0, rough: 0.2),
+            (shape: Box, size: (0.04, 0.5, 0.04), at: (0.82, 1.2, 0.77), color: (0.6, 0.6, 0.62), material: "metal", metal: 1.0, rough: 0.2),
+            (shape: Box, size: (0.04, 0.3, 0.04), at: (0.82, 0.5, 0.77), color: (0.6, 0.6, 0.62), material: "metal", metal: 1.0, rough: 0.2),
             (shape: Box, size: (0.79, 0.01, 0.01), at: (0.5, 0.75, 0.755), color: (0.3, 0.3, 0.32)),
         ],
         slots: [(stand: (0.5, 1.5), use_at: (0.5, 0.0, 1.3), facing: 180.0)],
@@ -50,7 +50,11 @@
                 Log(chance: 0.06, text: "{name} set off the smoke alarm. The smoke alarm seemed relieved to finally have a purpose."),
              ]),
             (id: "repair", name: "Repair", anim: "fix", prop: "wrench", rates: {Fun: -10.0}, duration: Minutes(60), pose: Use, tags: ["repair"], skill: (Handiness, 4.0),
-             when_broken: true, only_broken: true, repairs: true, bubble: "wrench"),
+             when_broken: true, only_broken: true, repairs: true, bubble: "wrench",
+             outcomes: [
+                Accident(chance: 0.2, cause: "electrocution", skill: Handiness, moodlet: "singed", fatal: 0.06,
+                text: "{name} touched the wrong wire. The stove works now. So, briefly, did {name}'s eyebrows."),
+             ]),
             (id: "scrub", name: "Scrub Stove", anim: "scrub", prop: "sponge", rates: {Fun: -15.0, Environment: 20.0}, duration: Minutes(15), pose: Use,
              tags: ["chore", "neat"], min_dirt: 0.3, cleans: true, bubble: "sponge"),
         ],
@@ -59,18 +63,18 @@
     (
         id: "counter_basic", name: "Countertop of Moderate Ambition", category: Surfaces, price: 150, footprint: (1, 1),
         parts: [
-            (shape: Box, size: (1.0, 0.88, 0.65), at: (0.5, 0.44, 0.33), color: (0.55, 0.42, 0.3), rough: 0.7),
-            (shape: Box, size: (1.0, 0.04, 0.68), at: (0.5, 0.9, 0.34), color: (0.82, 0.8, 0.76), rough: 0.25),
+            (shape: Box, size: (1.0, 0.88, 0.65), at: (0.5, 0.44, 0.33), color: (0.66, 0.52, 0.39), material: "wood", rough: 0.7),
+            (shape: Box, size: (1.0, 0.04, 0.68), at: (0.5, 0.9, 0.34), color: (0.82, 0.8, 0.76), material: "stone", rough: 0.25),
         ],
         beauty: 0.5,
     ),
     (
         id: "kitchen_sink", name: "Gurgle Kitchen Sink", category: Kitchen, price: 250, footprint: (1, 1),
         parts: [
-            (shape: Box, size: (1.0, 0.88, 0.65), at: (0.5, 0.44, 0.33), color: (0.55, 0.42, 0.3), rough: 0.7),
-            (shape: Box, size: (1.0, 0.04, 0.68), at: (0.5, 0.9, 0.34), color: (0.82, 0.8, 0.76), rough: 0.25),
-            (shape: Box, size: (0.5, 0.03, 0.4), at: (0.5, 0.925, 0.35), color: (0.7, 0.72, 0.75), metal: 1.0, rough: 0.2),
-            (shape: Cylinder, size: (0.04, 0.3, 0.04), at: (0.5, 1.05, 0.12), color: (0.7, 0.72, 0.75), metal: 1.0, rough: 0.2),
+            (shape: Box, size: (1.0, 0.88, 0.65), at: (0.5, 0.44, 0.33), color: (0.66, 0.52, 0.39), material: "wood", rough: 0.7),
+            (shape: Box, size: (1.0, 0.04, 0.68), at: (0.5, 0.9, 0.34), color: (0.82, 0.8, 0.76), material: "stone", rough: 0.25),
+            (shape: Box, size: (0.5, 0.03, 0.4), at: (0.5, 0.925, 0.35), color: (0.7, 0.72, 0.75), material: "metal", metal: 1.0, rough: 0.2),
+            (shape: Cylinder, size: (0.04, 0.3, 0.04), at: (0.5, 1.05, 0.12), color: (0.7, 0.72, 0.75), material: "metal", metal: 1.0, rough: 0.2),
         ],
         slots: [(stand: (0.5, 1.5), use_at: (0.5, 0.0, 1.2), facing: 180.0)],
         interactions: [
@@ -106,7 +110,7 @@
             (shape: Box, size: (0.95, 0.06, 0.95), at: (0.5, 0.03, 0.5), color: (0.9, 0.9, 0.92), rough: 0.2),
             (shape: Box, size: (0.03, 2.0, 0.95), at: (0.03, 1.0, 0.5), color: (0.75, 0.85, 0.9), rough: 0.05),
             (shape: Box, size: (0.95, 2.0, 0.03), at: (0.5, 1.0, 0.03), color: (0.85, 0.87, 0.9), rough: 0.3),
-            (shape: Cylinder, size: (0.15, 0.03, 0.15), at: (0.5, 1.95, 0.2), color: (0.7, 0.7, 0.72), metal: 1.0, rough: 0.2),
+            (shape: Cylinder, size: (0.15, 0.03, 0.15), at: (0.5, 1.95, 0.2), color: (0.7, 0.7, 0.72), material: "metal", metal: 1.0, rough: 0.2),
         ],
         slots: [(stand: (0.5, 1.5), use_at: (0.5, 0.0, 0.5), facing: 180.0)],
         interactions: [
@@ -138,11 +142,11 @@
     (
         id: "bed_single", name: "Snoozeberg Single Bed", category: Sleeping, price: 450, footprint: (1, 2),
         parts: [
-            (shape: Box, size: (0.95, 0.35, 1.95), at: (0.5, 0.2, 1.0), color: (0.45, 0.32, 0.22), rough: 0.7),
-            (shape: Box, size: (0.9, 0.15, 1.85), at: (0.5, 0.45, 1.0), color: (0.92, 0.92, 0.9), rough: 0.9),
-            (shape: Box, size: (0.9, 0.06, 1.3), at: (0.5, 0.54, 1.3), color: (0.35, 0.5, 0.7), rough: 0.9),
-            (shape: Box, size: (0.6, 0.1, 0.3), at: (0.5, 0.57, 0.25), color: (0.97, 0.97, 0.97), rough: 0.9),
-            (shape: Box, size: (0.95, 0.8, 0.06), at: (0.5, 0.4, 0.03), color: (0.4, 0.28, 0.2), rough: 0.7),
+            (shape: Box, size: (0.95, 0.35, 1.95), at: (0.5, 0.2, 1.0), color: (0.54, 0.4, 0.29), material: "wood", rough: 0.7),
+            (shape: Box, size: (0.9, 0.15, 1.85), at: (0.5, 0.45, 1.0), color: (1.0, 1.0, 1.0), material: "fabric", rough: 0.9),
+            (shape: Box, size: (0.9, 0.06, 1.3), at: (0.5, 0.54, 1.3), color: (0.4, 0.57, 0.8), material: "fabric", rough: 0.9),
+            (shape: Box, size: (0.6, 0.1, 0.3), at: (0.5, 0.57, 0.25), color: (1.0, 1.0, 1.0), material: "fabric", rough: 0.9),
+            (shape: Box, size: (0.95, 0.8, 0.06), at: (0.5, 0.4, 0.03), color: (0.48, 0.35, 0.26), material: "wood", rough: 0.7),
         ],
         slots: [(stand: (1.5, 1.0), use_at: (0.5, 0.5, 1.0), facing: 0.0)],
         interactions: [
@@ -158,12 +162,12 @@
     (
         id: "bed_double", name: "Snoozeberg Royale Double Bed", category: Sleeping, price: 1100, footprint: (2, 2),
         parts: [
-            (shape: Box, size: (1.95, 0.35, 1.95), at: (1.0, 0.2, 1.0), color: (0.4, 0.27, 0.18), rough: 0.7),
-            (shape: Box, size: (1.88, 0.16, 1.85), at: (1.0, 0.45, 1.0), color: (0.94, 0.93, 0.9), rough: 0.9),
-            (shape: Box, size: (1.88, 0.06, 1.3), at: (1.0, 0.55, 1.3), color: (0.6, 0.25, 0.3), rough: 0.9),
-            (shape: Box, size: (0.6, 0.1, 0.3), at: (0.5, 0.58, 0.25), color: (0.97, 0.97, 0.97), rough: 0.9),
-            (shape: Box, size: (0.6, 0.1, 0.3), at: (1.5, 0.58, 0.25), color: (0.97, 0.97, 0.97), rough: 0.9),
-            (shape: Box, size: (1.95, 1.0, 0.07), at: (1.0, 0.5, 0.035), color: (0.36, 0.24, 0.16), rough: 0.7),
+            (shape: Box, size: (1.95, 0.35, 1.95), at: (1.0, 0.2, 1.0), color: (0.48, 0.33, 0.23), material: "wood", rough: 0.7),
+            (shape: Box, size: (1.88, 0.16, 1.85), at: (1.0, 0.45, 1.0), color: (1.0, 1.0, 1.0), material: "fabric", rough: 0.9),
+            (shape: Box, size: (1.88, 0.06, 1.3), at: (1.0, 0.55, 1.3), color: (0.69, 0.29, 0.34), material: "fabric", rough: 0.9),
+            (shape: Box, size: (0.6, 0.1, 0.3), at: (0.5, 0.58, 0.25), color: (1.0, 1.0, 1.0), material: "fabric", rough: 0.9),
+            (shape: Box, size: (0.6, 0.1, 0.3), at: (1.5, 0.58, 0.25), color: (1.0, 1.0, 1.0), material: "fabric", rough: 0.9),
+            (shape: Box, size: (1.95, 1.0, 0.07), at: (1.0, 0.5, 0.035), color: (0.43, 0.3, 0.21), material: "wood", rough: 0.7),
         ],
         slots: [
             (stand: (-0.5, 1.0), use_at: (0.5, 0.5, 1.0), facing: 0.0),
@@ -182,11 +186,11 @@
         id: "crib", name: "Babycage Deluxe Crib", category: Kids, price: 300, footprint: (1, 1),
         desc: "Marketing insisted we stop calling it a cage.",
         parts: [
-            (shape: Box, size: (0.85, 0.08, 0.85), at: (0.5, 0.45, 0.5), color: (0.95, 0.92, 0.85), rough: 0.9),
-            (shape: Box, size: (0.9, 0.9, 0.04), at: (0.5, 0.45, 0.06), color: (0.85, 0.75, 0.6), rough: 0.7),
-            (shape: Box, size: (0.9, 0.9, 0.04), at: (0.5, 0.45, 0.94), color: (0.85, 0.75, 0.6), rough: 0.7),
-            (shape: Box, size: (0.04, 0.9, 0.9), at: (0.06, 0.45, 0.5), color: (0.85, 0.75, 0.6), rough: 0.7),
-            (shape: Box, size: (0.04, 0.9, 0.9), at: (0.94, 0.45, 0.5), color: (0.85, 0.75, 0.6), rough: 0.7),
+            (shape: Box, size: (0.85, 0.08, 0.85), at: (0.5, 0.45, 0.5), color: (1.0, 1.0, 0.97), material: "fabric", rough: 0.9),
+            (shape: Box, size: (0.9, 0.9, 0.04), at: (0.5, 0.45, 0.06), color: (1.0, 0.93, 0.78), material: "wood", rough: 0.7),
+            (shape: Box, size: (0.9, 0.9, 0.04), at: (0.5, 0.45, 0.94), color: (1.0, 0.93, 0.78), material: "wood", rough: 0.7),
+            (shape: Box, size: (0.04, 0.9, 0.9), at: (0.06, 0.45, 0.5), color: (1.0, 0.93, 0.78), material: "wood", rough: 0.7),
+            (shape: Box, size: (0.04, 0.9, 0.9), at: (0.94, 0.45, 0.5), color: (1.0, 0.93, 0.78), material: "wood", rough: 0.7),
         ],
         slots: [(stand: (0.5, 1.5), use_at: (0.5, 0.5, 0.5), facing: 0.0)],
         interactions: [
@@ -199,12 +203,12 @@
         id: "sofa_basic", name: "Slouchmaster 3000 Sofa", category: Seating, price: 450, footprint: (2, 1),
         desc: "Eats remotes. Occasionally returns coins.",
         parts: [
-            (shape: Box, size: (1.9, 0.42, 0.85), at: (1.0, 0.21, 0.48), color: (0.36, 0.42, 0.52), rough: 0.9),
-            (shape: Box, size: (1.9, 0.5, 0.2), at: (1.0, 0.65, 0.12), color: (0.33, 0.39, 0.49), rough: 0.9),
-            (shape: Box, size: (0.18, 0.25, 0.85), at: (0.09, 0.55, 0.48), color: (0.33, 0.39, 0.49), rough: 0.9),
-            (shape: Box, size: (0.18, 0.25, 0.85), at: (1.91, 0.55, 0.48), color: (0.33, 0.39, 0.49), rough: 0.9),
-            (shape: Box, size: (0.75, 0.1, 0.6), at: (0.6, 0.47, 0.55), color: (0.4, 0.46, 0.56), rough: 0.95),
-            (shape: Box, size: (0.75, 0.1, 0.6), at: (1.4, 0.47, 0.55), color: (0.4, 0.46, 0.56), rough: 0.95),
+            (shape: Box, size: (1.9, 0.42, 0.85), at: (1.0, 0.21, 0.48), color: (0.41, 0.48, 0.59), material: "fabric", rough: 0.9),
+            (shape: Box, size: (1.9, 0.5, 0.2), at: (1.0, 0.65, 0.12), color: (0.38, 0.45, 0.56), material: "fabric", rough: 0.9),
+            (shape: Box, size: (0.18, 0.25, 0.85), at: (0.09, 0.55, 0.48), color: (0.38, 0.45, 0.56), material: "fabric", rough: 0.9),
+            (shape: Box, size: (0.18, 0.25, 0.85), at: (1.91, 0.55, 0.48), color: (0.38, 0.45, 0.56), material: "fabric", rough: 0.9),
+            (shape: Box, size: (0.75, 0.1, 0.6), at: (0.6, 0.47, 0.55), color: (0.46, 0.53, 0.64), material: "fabric", rough: 0.95),
+            (shape: Box, size: (0.75, 0.1, 0.6), at: (1.4, 0.47, 0.55), color: (0.46, 0.53, 0.64), material: "fabric", rough: 0.95),
         ],
         slots: [
             (stand: (0.5, 1.5), use_at: (0.55, 0.45, 0.55), facing: 0.0),
@@ -226,10 +230,10 @@
     (
         id: "armchair", name: "Grandpa's Opinion Chair", category: Seating, price: 280, footprint: (1, 1),
         parts: [
-            (shape: Box, size: (0.85, 0.42, 0.8), at: (0.5, 0.21, 0.5), color: (0.55, 0.3, 0.22), rough: 0.9),
-            (shape: Box, size: (0.85, 0.6, 0.18), at: (0.5, 0.72, 0.13), color: (0.5, 0.27, 0.2), rough: 0.9),
-            (shape: Box, size: (0.14, 0.25, 0.8), at: (0.08, 0.55, 0.5), color: (0.5, 0.27, 0.2), rough: 0.9),
-            (shape: Box, size: (0.14, 0.25, 0.8), at: (0.92, 0.55, 0.5), color: (0.5, 0.27, 0.2), rough: 0.9),
+            (shape: Box, size: (0.85, 0.42, 0.8), at: (0.5, 0.21, 0.5), color: (0.63, 0.34, 0.25), material: "fabric", rough: 0.9),
+            (shape: Box, size: (0.85, 0.6, 0.18), at: (0.5, 0.72, 0.13), color: (0.57, 0.31, 0.23), material: "fabric", rough: 0.9),
+            (shape: Box, size: (0.14, 0.25, 0.8), at: (0.08, 0.55, 0.5), color: (0.57, 0.31, 0.23), material: "fabric", rough: 0.9),
+            (shape: Box, size: (0.14, 0.25, 0.8), at: (0.92, 0.55, 0.5), color: (0.57, 0.31, 0.23), material: "fabric", rough: 0.9),
         ],
         slots: [(stand: (0.5, 1.5), use_at: (0.5, 0.45, 0.55), facing: 0.0)],
         interactions: [
@@ -242,12 +246,12 @@
     (
         id: "dining_chair", name: "Perfectly Adequate Chair", category: Seating, price: 80, footprint: (1, 1),
         parts: [
-            (shape: Box, size: (0.45, 0.05, 0.45), at: (0.5, 0.45, 0.5), color: (0.6, 0.45, 0.3), rough: 0.6),
-            (shape: Box, size: (0.45, 0.5, 0.05), at: (0.5, 0.72, 0.28), color: (0.6, 0.45, 0.3), rough: 0.6),
-            (shape: Box, size: (0.04, 0.45, 0.04), at: (0.3, 0.22, 0.3), color: (0.5, 0.37, 0.25)),
-            (shape: Box, size: (0.04, 0.45, 0.04), at: (0.7, 0.22, 0.3), color: (0.5, 0.37, 0.25)),
-            (shape: Box, size: (0.04, 0.45, 0.04), at: (0.3, 0.22, 0.7), color: (0.5, 0.37, 0.25)),
-            (shape: Box, size: (0.04, 0.45, 0.04), at: (0.7, 0.22, 0.7), color: (0.5, 0.37, 0.25)),
+            (shape: Box, size: (0.45, 0.05, 0.45), at: (0.5, 0.45, 0.5), color: (0.72, 0.56, 0.39), material: "wood", rough: 0.6),
+            (shape: Box, size: (0.45, 0.5, 0.05), at: (0.5, 0.72, 0.28), color: (0.72, 0.56, 0.39), material: "wood", rough: 0.6),
+            (shape: Box, size: (0.04, 0.45, 0.04), at: (0.3, 0.22, 0.3), color: (0.6, 0.46, 0.32), material: "wood"),
+            (shape: Box, size: (0.04, 0.45, 0.04), at: (0.7, 0.22, 0.3), color: (0.6, 0.46, 0.32), material: "wood"),
+            (shape: Box, size: (0.04, 0.45, 0.04), at: (0.3, 0.22, 0.7), color: (0.6, 0.46, 0.32), material: "wood"),
+            (shape: Box, size: (0.04, 0.45, 0.04), at: (0.7, 0.22, 0.7), color: (0.6, 0.46, 0.32), material: "wood"),
         ],
         slots: [(stand: (0.5, -0.5), use_at: (0.5, 0.45, 0.5), facing: 0.0)],
         interactions: [
@@ -257,11 +261,11 @@
     (
         id: "dining_table", name: "Family Argument Table", category: Surfaces, price: 300, footprint: (2, 1),
         parts: [
-            (shape: Box, size: (1.8, 0.05, 0.9), at: (1.0, 0.75, 0.5), color: (0.55, 0.38, 0.24), rough: 0.5),
-            (shape: Box, size: (0.06, 0.73, 0.06), at: (0.2, 0.365, 0.15), color: (0.45, 0.3, 0.2)),
-            (shape: Box, size: (0.06, 0.73, 0.06), at: (1.8, 0.365, 0.15), color: (0.45, 0.3, 0.2)),
-            (shape: Box, size: (0.06, 0.73, 0.06), at: (0.2, 0.365, 0.85), color: (0.45, 0.3, 0.2)),
-            (shape: Box, size: (0.06, 0.73, 0.06), at: (1.8, 0.365, 0.85), color: (0.45, 0.3, 0.2)),
+            (shape: Box, size: (1.8, 0.05, 0.9), at: (1.0, 0.75, 0.5), color: (0.66, 0.47, 0.31), material: "wood", rough: 0.5),
+            (shape: Box, size: (0.06, 0.73, 0.06), at: (0.2, 0.365, 0.15), color: (0.54, 0.37, 0.26), material: "wood"),
+            (shape: Box, size: (0.06, 0.73, 0.06), at: (1.8, 0.365, 0.15), color: (0.54, 0.37, 0.26), material: "wood"),
+            (shape: Box, size: (0.06, 0.73, 0.06), at: (0.2, 0.365, 0.85), color: (0.54, 0.37, 0.26), material: "wood"),
+            (shape: Box, size: (0.06, 0.73, 0.06), at: (1.8, 0.365, 0.85), color: (0.54, 0.37, 0.26), material: "wood"),
         ],
         beauty: 1.0,
     ),
@@ -269,7 +273,7 @@
         id: "tv_basic", name: "Glowbox 9000 Television", category: Electronics, price: 500, footprint: (1, 1),
         desc: "Now with 40% more infomercials.",
         parts: [
-            (shape: Box, size: (0.9, 0.5, 0.4), at: (0.5, 0.25, 0.3), color: (0.2, 0.15, 0.12), rough: 0.6),
+            (shape: Box, size: (0.9, 0.5, 0.4), at: (0.5, 0.25, 0.3), color: (0.24, 0.19, 0.16), material: "wood", rough: 0.6),
             (shape: Box, size: (0.95, 0.55, 0.05), at: (0.5, 0.82, 0.3), color: (0.05, 0.05, 0.06), rough: 0.3),
             (shape: Box, size: (0.88, 0.48, 0.01), at: (0.5, 0.82, 0.33), color: (0.2, 0.35, 0.5), rough: 0.1, emissive: 1.5),
         ],
@@ -322,6 +326,12 @@
             (id: "novel", name: "Write a Novel", anim: "type", rates: {Fun: 25.0, Narration: 150.0}, duration: Minutes(90), pose: Use,
              tags: ["creative"], skill: (Creativity, 3.0), bubble: "pen",
              outcomes: [Money(chance: 0.15, min: 20, max: 300), Log(chance: 0.1, text: "{name} wrote 40,000 words about a sad lighthouse.")]),
+            (id: "repair", name: "Repair", anim: "fix", prop: "wrench", rates: {Fun: -10.0}, duration: Minutes(45), pose: Use, tags: ["repair"], skill: (Handiness, 4.0),
+             when_broken: true, only_broken: true, repairs: true, bubble: "wrench",
+             outcomes: [
+                Accident(chance: 0.15, cause: "electrocution", skill: Handiness, moodlet: "singed", fatal: 0.06,
+                text: "{name} unplugged the wrong thing, then plugged themselves in. Briefly."),
+             ]),
             (id: "dust", name: "Dust Desk", anim: "scrub", rates: {Fun: -15.0, Environment: 20.0}, duration: Minutes(15), pose: Use,
              tags: ["chore", "neat"], min_dirt: 0.3, cleans: true, bubble: "dust"),
         ],
@@ -330,7 +340,7 @@
     (
         id: "bookshelf", name: "Shelf of Unread Classics", category: Decor, price: 250, footprint: (1, 1),
         parts: [
-            (shape: Box, size: (0.95, 1.9, 0.35), at: (0.5, 0.95, 0.2), color: (0.42, 0.28, 0.18), rough: 0.7),
+            (shape: Box, size: (0.95, 1.9, 0.35), at: (0.5, 0.95, 0.2), color: (0.5, 0.35, 0.23), material: "wood", rough: 0.7),
             (shape: Box, size: (0.85, 0.3, 0.25), at: (0.5, 0.45, 0.25), color: (0.6, 0.2, 0.2), rough: 0.8),
             (shape: Box, size: (0.85, 0.3, 0.25), at: (0.5, 0.9, 0.25), color: (0.2, 0.35, 0.5), rough: 0.8),
             (shape: Box, size: (0.85, 0.3, 0.25), at: (0.5, 1.35, 0.25), color: (0.3, 0.5, 0.3), rough: 0.8),
@@ -363,8 +373,8 @@
     (
         id: "painting", name: "Abstract Painting of a Feeling", category: Decor, price: 200, footprint: (1, 1),
         parts: [
-            (shape: Box, size: (0.08, 0.9, 0.08), at: (0.5, 0.45, 0.5), color: (0.3, 0.25, 0.2)),
-            (shape: Box, size: (0.9, 0.7, 0.05), at: (0.5, 1.3, 0.5), color: (0.3, 0.25, 0.2)),
+            (shape: Box, size: (0.08, 0.9, 0.08), at: (0.5, 0.45, 0.5), color: (0.36, 0.31, 0.26), material: "wood"),
+            (shape: Box, size: (0.9, 0.7, 0.05), at: (0.5, 1.3, 0.5), color: (0.36, 0.31, 0.26), material: "wood"),
             (shape: Box, size: (0.8, 0.6, 0.02), at: (0.5, 1.3, 0.53), color: (0.85, 0.5, 0.2), rough: 0.9),
         ],
         slots: [(stand: (0.5, 1.5), use_at: (0.5, 0.0, 1.3), facing: 180.0)],
@@ -377,17 +387,17 @@
     (
         id: "floor_lamp", name: "Tall Lamp With Opinions", category: Lighting, price: 90, footprint: (1, 1),
         parts: [
-            (shape: Cylinder, size: (0.3, 0.03, 0.3), at: (0.5, 0.015, 0.5), color: (0.2, 0.2, 0.2), metal: 1.0, rough: 0.3),
-            (shape: Cylinder, size: (0.03, 1.5, 0.03), at: (0.5, 0.75, 0.5), color: (0.2, 0.2, 0.2), metal: 1.0, rough: 0.3),
-            (shape: Cylinder, size: (0.4, 0.3, 0.4), at: (0.5, 1.55, 0.5), color: (0.95, 0.9, 0.75), rough: 0.9, emissive: 0.8),
+            (shape: Cylinder, size: (0.3, 0.03, 0.3), at: (0.5, 0.015, 0.5), color: (0.2, 0.2, 0.2), material: "metal", metal: 1.0, rough: 0.3),
+            (shape: Cylinder, size: (0.03, 1.5, 0.03), at: (0.5, 0.75, 0.5), color: (0.2, 0.2, 0.2), material: "metal", metal: 1.0, rough: 0.3),
+            (shape: Cylinder, size: (0.4, 0.3, 0.4), at: (0.5, 1.55, 0.5), color: (1.0, 1.0, 0.86), material: "fabric", rough: 0.9, emissive: 0.8),
         ],
         beauty: 1.0, light: (4.0, (1.0, 0.85, 0.65)),
     ),
     (
         id: "trash_can", name: "Can of Regret", category: Misc, price: 30, footprint: (1, 1),
         parts: [
-            (shape: Cylinder, size: (0.4, 0.6, 0.4), at: (0.5, 0.3, 0.5), color: (0.45, 0.47, 0.5), metal: 0.8, rough: 0.4),
-            (shape: Cylinder, size: (0.43, 0.04, 0.43), at: (0.5, 0.62, 0.5), color: (0.4, 0.42, 0.45), metal: 0.8, rough: 0.4),
+            (shape: Cylinder, size: (0.4, 0.6, 0.4), at: (0.5, 0.3, 0.5), color: (0.45, 0.47, 0.5), material: "metal", metal: 0.8, rough: 0.4),
+            (shape: Cylinder, size: (0.43, 0.04, 0.43), at: (0.5, 0.62, 0.5), color: (0.4, 0.42, 0.45), material: "metal", metal: 0.8, rough: 0.4),
         ],
         slots: [(stand: (0.5, 1.5), use_at: (0.5, 0.0, 1.0), facing: 180.0)],
         interactions: [
@@ -401,7 +411,7 @@
     (
         id: "mirror", name: "Mirror of Mild Judgment", category: Decor, price: 120, footprint: (1, 1),
         parts: [
-            (shape: Box, size: (0.6, 1.6, 0.05), at: (0.5, 0.95, 0.1), color: (0.35, 0.25, 0.18)),
+            (shape: Box, size: (0.6, 1.6, 0.05), at: (0.5, 0.95, 0.1), color: (0.42, 0.31, 0.23), material: "wood"),
             (shape: Box, size: (0.5, 1.45, 0.01), at: (0.5, 0.97, 0.13), color: (0.85, 0.9, 0.95), metal: 1.0, rough: 0.02),
         ],
         slots: [(stand: (0.5, 1.5), use_at: (0.5, 0.0, 0.9), facing: 180.0)],
@@ -442,6 +452,9 @@
             (id: "workout", name: "Work Out", rates: {Fun: 20.0, Hygiene: -25.0, Energy: -15.0}, ads: {Fun: 25.0}, duration: Minutes(60), pose: Exercise,
              tags: ["exercise"], skill: (Fitness, 4.0), bubble: "sweat",
              outcomes: [Log(chance: 0.05, text: "{name} cycled 30 km and arrived exactly where they started. Again.")]),
+            (id: "repair", name: "Repair", anim: "fix", prop: "wrench", rates: {Fun: -10.0}, duration: Minutes(40), pose: Use, tags: ["repair"], skill: (Handiness, 3.0),
+             when_broken: true, only_broken: true, repairs: true, bubble: "wrench",
+             outcomes: [Log(chance: 0.2, text: "{name} fixed the bike and has three bolts left over. That's probably fine.")]),
             (id: "wipe", name: "Wipe Down", anim: "scrub", prop: "sponge", rates: {Fun: -15.0, Environment: 20.0}, duration: Minutes(15), pose: Use,
              tags: ["chore", "neat"], min_dirt: 0.3, cleans: true, bubble: "sponge"),
         ],
@@ -450,8 +463,8 @@
     (
         id: "chess_table", name: "Chess Table of Smugness", category: Fun, price: 400, footprint: (1, 1),
         parts: [
-            (shape: Cylinder, size: (0.7, 0.04, 0.7), at: (0.5, 0.72, 0.5), color: (0.45, 0.3, 0.2)),
-            (shape: Cylinder, size: (0.1, 0.7, 0.1), at: (0.5, 0.35, 0.5), color: (0.4, 0.27, 0.18)),
+            (shape: Cylinder, size: (0.7, 0.04, 0.7), at: (0.5, 0.72, 0.5), color: (0.54, 0.37, 0.26), material: "wood"),
+            (shape: Cylinder, size: (0.1, 0.7, 0.1), at: (0.5, 0.35, 0.5), color: (0.48, 0.33, 0.23), material: "wood"),
             (shape: Box, size: (0.4, 0.01, 0.4), at: (0.5, 0.745, 0.5), color: (0.9, 0.9, 0.85)),
         ],
         slots: [
@@ -469,16 +482,16 @@
     (
         id: "rug", name: "Rug That Ties the Room Together", category: Decor, price: 150, footprint: (2, 2),
         parts: [
-            (shape: Box, size: (1.9, 0.01, 1.9), at: (1.0, 0.005, 1.0), color: (0.55, 0.2, 0.18), rough: 1.0),
-            (shape: Box, size: (1.5, 0.012, 1.5), at: (1.0, 0.006, 1.0), color: (0.75, 0.6, 0.35), rough: 1.0),
+            (shape: Box, size: (1.9, 0.01, 1.9), at: (1.0, 0.005, 1.0), color: (0.63, 0.23, 0.21), material: "fabric", rough: 1.0),
+            (shape: Box, size: (1.5, 0.012, 1.5), at: (1.0, 0.006, 1.0), color: (0.86, 0.69, 0.4), material: "fabric", rough: 1.0),
         ],
         beauty: 2.0, walkable: true,
     ),
     (
         id: "end_table", name: "Table For Your Ends", category: Surfaces, price: 70, footprint: (1, 1),
         parts: [
-            (shape: Box, size: (0.5, 0.04, 0.5), at: (0.5, 0.55, 0.5), color: (0.5, 0.35, 0.22)),
-            (shape: Box, size: (0.4, 0.53, 0.4), at: (0.5, 0.265, 0.5), color: (0.45, 0.3, 0.2)),
+            (shape: Box, size: (0.5, 0.04, 0.5), at: (0.5, 0.55, 0.5), color: (0.6, 0.43, 0.29), material: "wood"),
+            (shape: Box, size: (0.4, 0.53, 0.4), at: (0.5, 0.265, 0.5), color: (0.54, 0.37, 0.26), material: "wood"),
             (shape: Cylinder, size: (0.15, 0.2, 0.15), at: (0.5, 0.67, 0.5), color: (0.9, 0.85, 0.7), emissive: 0.6),
         ],
         beauty: 1.0, light: (2.0, (1.0, 0.8, 0.6)),
@@ -539,6 +552,12 @@
             (id: "run", name: "Run Nowhere", rates: {Fun: 15.0, Hygiene: -30.0, Energy: -20.0}, ads: {Fun: 20.0}, duration: Minutes(45), pose: Exercise,
              stages: [Teen, YoungAdult, Adult, Elder], tags: ["exercise"], skill: (Fitness, 5.0), bubble: "sweat",
              outcomes: [Log(chance: 0.05, text: "{name} ran a 10k on the treadmill and celebrated by taking the elevator.")]),
+            (id: "repair", name: "Repair", anim: "fix", prop: "wrench", rates: {Fun: -10.0}, duration: Minutes(50), pose: Use, tags: ["repair"], skill: (Handiness, 4.0),
+             when_broken: true, only_broken: true, repairs: true, bubble: "wrench",
+             outcomes: [
+                Accident(chance: 0.15, cause: "electrocution", skill: Handiness, moodlet: "singed", fatal: 0.06,
+                text: "The treadmill motor bit {name}. Electrically."),
+             ]),
             (id: "wipe", name: "Wipe Down", anim: "scrub", prop: "sponge", rates: {Fun: -15.0, Environment: 20.0}, duration: Minutes(15), pose: Use,
              tags: ["chore", "neat"], min_dirt: 0.3, cleans: true, bubble: "sponge"),
         ],
@@ -553,7 +572,7 @@
             (shape: Box, size: (0.08, 0.42, 0.08), at: (0.5, 0.21, 1.45), color: (0.2, 0.2, 0.22), metal: 0.6),
             (shape: Box, size: (0.06, 1.0, 0.06), at: (0.12, 0.5, 0.3), color: (0.2, 0.2, 0.22), metal: 0.6),
             (shape: Box, size: (0.06, 1.0, 0.06), at: (0.88, 0.5, 0.3), color: (0.2, 0.2, 0.22), metal: 0.6),
-            (shape: Cylinder, size: (1.2, 0.03, 0.03), at: (0.5, 0.95, 0.3), color: (0.7, 0.7, 0.72), metal: 1.0, rough: 0.3),
+            (shape: Cylinder, size: (1.2, 0.03, 0.03), at: (0.5, 0.95, 0.3), color: (0.7, 0.7, 0.72), material: "metal", metal: 1.0, rough: 0.3),
             (shape: Cylinder, size: (0.05, 0.3, 0.3), at: (0.02, 0.95, 0.3), color: (0.1, 0.1, 0.1)),
             (shape: Cylinder, size: (0.05, 0.3, 0.3), at: (0.98, 0.95, 0.3), color: (0.1, 0.1, 0.1)),
         ],
@@ -571,9 +590,9 @@
         id: "espresso_bar", name: "Espresso Bar of Judgment", category: Kitchen, price: 700, footprint: (1, 1),
         desc: "Makes eleven sizes of coffee, all of them called something Italian.",
         parts: [
-            (shape: Box, size: (0.95, 0.9, 0.6), at: (0.5, 0.45, 0.35), color: (0.3, 0.2, 0.14), rough: 0.6),
+            (shape: Box, size: (0.95, 0.9, 0.6), at: (0.5, 0.45, 0.35), color: (0.36, 0.25, 0.18), material: "wood", rough: 0.6),
             (shape: Box, size: (1.0, 0.04, 0.65), at: (0.5, 0.92, 0.35), color: (0.85, 0.85, 0.82), rough: 0.3),
-            (shape: Box, size: (0.5, 0.4, 0.35), at: (0.5, 1.14, 0.25), color: (0.75, 0.75, 0.78), metal: 1.0, rough: 0.25),
+            (shape: Box, size: (0.5, 0.4, 0.35), at: (0.5, 1.14, 0.25), color: (0.75, 0.75, 0.78), material: "metal", metal: 1.0, rough: 0.25),
             (shape: Cylinder, size: (0.07, 0.08, 0.07), at: (0.4, 0.98, 0.5), color: (0.95, 0.93, 0.88)),
             (shape: Cylinder, size: (0.07, 0.08, 0.07), at: (0.6, 0.98, 0.5), color: (0.95, 0.93, 0.88)),
         ],
@@ -588,5 +607,48 @@
              tags: ["chore", "neat"], min_dirt: 0.3, cleans: true, bubble: "sponge"),
         ],
         beauty: 1.0, dirt_per_use: 0.02,
+    ),
+    (
+        id: "vending_machine", name: "Snackatron of Broken Promises", category: Kitchen, price: 350, footprint: (1, 1),
+        desc: "Takes your money with great enthusiasm. Gives snacks with great reluctance.",
+        parts: [
+            (shape: Box, size: (0.9, 1.8, 0.7), at: (0.5, 0.9, 0.4), color: (0.7, 0.12, 0.1), rough: 0.4),
+            (shape: Box, size: (0.55, 1.1, 0.02), at: (0.4, 1.15, 0.76), color: (0.55, 0.7, 0.75), emissive: 0.6, rough: 0.1),
+            (shape: Box, size: (0.18, 0.5, 0.02), at: (0.82, 1.25, 0.76), color: (0.15, 0.15, 0.16), metal: 0.5),
+            (shape: Box, size: (0.55, 0.18, 0.03), at: (0.4, 0.35, 0.76), color: (0.08, 0.08, 0.09)),
+        ],
+        slots: [(stand: (0.5, 1.5), use_at: (0.5, 0.0, 1.1), facing: 180.0)],
+        interactions: [
+            (id: "buy", name: "Buy a Snack", anim: "eat", prop: "apple", rates: {Hunger: 140.0}, ads: {Hunger: 30.0}, duration: Minutes(10), pose: Use, cost: 2,
+             stages: [Child, Teen, YoungAdult, Adult, Elder], tags: ["food"], bubble: "snack",
+             outcomes: [Log(chance: 0.1, text: "The Snackatron took {name}'s dollar, thought about it, and kept the chips. {name} paid again.")]),
+            (id: "shake", name: "Shake It for Free Snacks", anim: "kick", rates: {Hunger: 80.0, Chaos: 300.0, Fun: 40.0}, ads: {Hunger: 15.0, Fun: 15.0}, duration: Minutes(8), pose: Use,
+             stages: [Teen, YoungAdult, Adult, Elder], tags: ["mischief", "food"], bubble: "!!",
+             outcomes: [
+                Accident(chance: 0.05, cause: "vending machine", skill: Fitness, moodlet: "flattened", fatal: 0.1,
+                    text: "The Snackatron rocked, teetered, and lay down on {name}. Two bags of chips fell out."),
+             ]),
+            (id: "wipe", name: "Wipe Down", anim: "scrub", prop: "sponge", rates: {Fun: -15.0, Environment: 20.0}, duration: Minutes(15), pose: Use,
+             tags: ["chore", "neat"], min_dirt: 0.3, cleans: true, bubble: "sponge"),
+        ],
+        beauty: 0.0, dirt_per_use: 0.02,
+    ),
+    (
+        id: "wedding_cake", name: "Tiered Cake of Questionable Structure", category: Kitchen, price: 120, footprint: (1, 1),
+        desc: "Three tiers, eight slices, one lean. Turns up on its own when there's a wedding.",
+        parts: [
+            (shape: Box, size: (0.7, 0.72, 0.7), at: (0.5, 0.36, 0.5), color: (0.55, 0.36, 0.22), rough: 0.6, material: "wood"),
+            (shape: Cylinder, size: (0.5, 0.18, 0.5), at: (0.5, 0.81, 0.5), color: (0.97, 0.95, 0.9), rough: 0.7),
+            (shape: Cylinder, size: (0.36, 0.16, 0.36), at: (0.51, 0.98, 0.5), color: (0.97, 0.93, 0.92), rough: 0.7),
+            (shape: Cylinder, size: (0.22, 0.14, 0.22), at: (0.53, 1.13, 0.5), color: (0.98, 0.9, 0.92), rough: 0.7),
+            (shape: Sphere, size: (0.07, 0.07, 0.07), at: (0.53, 1.23, 0.5), color: (0.85, 0.2, 0.3), rough: 0.4),
+        ],
+        slots: [(stand: (0.5, 1.5), use_at: (0.5, 0.0, 1.1), facing: 180.0)],
+        interactions: [
+            (id: "slice", name: "Have a Slice", anim: "eat", prop: "spoon", rates: {Hunger: 120.0, Fun: 40.0}, ads: {Hunger: 25.0, Fun: 15.0}, duration: Minutes(10), pose: Use,
+             stages: [Child, Teen, YoungAdult, Adult, Elder], tags: ["food", "fun"], bubble: "cake",
+             outcomes: [Log(chance: 0.1, text: "{name} found a plastic bride and groom in their slice. They're keeping them.")]),
+        ],
+        beauty: 2.0, servings: Some(8),
     ),
 ]

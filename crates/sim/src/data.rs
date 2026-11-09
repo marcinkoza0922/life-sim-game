@@ -228,6 +228,24 @@ pub struct Part {
     pub metal: f32,
     #[serde(default)]
     pub emissive: f32,
+    /// A [`MaterialDef`] id: textures the part, with `color` as a tint (white = as authored).
+    /// Without textures loaded the part falls back to flat `color`/`rough`/`metal`.
+    #[serde(default)]
+    pub material: Option<String>,
+}
+
+/// A textured surface. Maps live in `assets/textures/<id>/` (`albedo.png`, optional
+/// `normal.png` and `orm.png`) and are loaded by the game; the sim only checks names.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MaterialDef {
+    pub id: String,
+    /// World meters covered by one repeat of the texture.
+    #[serde(default = "default_material_scale")]
+    pub scale: f32,
+}
+
+fn default_material_scale() -> f32 {
+    1.0
 }
 
 /// Where a peon stands to start using an object, and where/how it is positioned while using it.
@@ -278,6 +296,19 @@ pub enum Outcome {
     Log { chance: f32, text: String },
     Dirty { amount: f32 },
     Break { chance: f32 },
+    /// A mishap: with `chance` (scaled down by `skill`, doubled for the Clumsy) `text` is logged and
+    /// `moodlet` applied; it is fatal (`cause` of death, Reaper permitting) with probability `fatal`.
+    Accident {
+        chance: f32,
+        cause: String,
+        text: String,
+        #[serde(default)]
+        moodlet: Option<String>,
+        #[serde(default)]
+        fatal: f32,
+        #[serde(default)]
+        skill: Option<Skill>,
+    },
 }
 
 fn yes() -> bool {
@@ -421,6 +452,9 @@ pub struct ObjectDef {
     /// Comfort multiplier hint for UI.
     #[serde(default = "one")]
     pub quality: f32,
+    /// Used up after this many completed uses (a cake), then removed.
+    #[serde(default)]
+    pub servings: Option<u32>,
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -508,6 +542,30 @@ pub struct SocialDef {
     /// Prop the initiator holds.
     #[serde(default)]
     pub prop: Option<String>,
+    /// Only between a woman and a man (engagements and weddings, for now).
+    #[serde(default)]
+    pub opposite_sex: bool,
+    /// Where the pair must stand with each other (see [`RelReq`]).
+    #[serde(default)]
+    pub requires: Option<RelReq>,
+    /// The target can't say no (breaking up takes one).
+    #[serde(default)]
+    pub certain: bool,
+}
+
+/// A relationship a social needs; when it isn't met the social isn't offered at all.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RelReq {
+    /// Neither is spoken for (by each other or anyone else alive).
+    Unattached,
+    /// Engaged to each other, no wedding planned yet.
+    Engaged,
+    /// Engaged to each other (the wedding itself).
+    Betrothed,
+    /// Partners, engaged or married to each other.
+    Together,
+    /// They live in different households.
+    LiveApart,
 }
 
 fn default_min_friendship() -> f32 {
@@ -560,6 +618,8 @@ pub enum CareerEffect {
     Log(String),
     /// Fired (or arrested) on the spot.
     Fired,
+    /// Dies at work with this probability, of the given cause (the Reaper may still be talked round).
+    Accident(f32, String),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -622,6 +682,7 @@ pub struct GameData {
     pub careers: Vec<CareerDef>,
     pub names: NameLists,
     pub props: Vec<PropDef>,
+    pub materials: Vec<MaterialDef>,
 }
 
 pub type ObjectId = usize;
@@ -632,7 +693,8 @@ macro_rules! embedded {
     };
 }
 
-const EMBEDDED: [(&str, &str); 8] = [
+const EMBEDDED: [(&str, &str); 9] = [
+    embedded!("materials.ron"),
     embedded!("objects.ron"),
     embedded!("traits.ron"),
     embedded!("quirks.ron"),
@@ -674,6 +736,11 @@ impl GameData {
             careers: parse("careers.ron", &get("careers.ron")?)?,
             names: parse("names.ron", &get("names.ron")?)?,
             props: parse("props.ron", &get("props.ron")?)?,
+            // optional so older data directories still load
+            materials: match get("materials.ron") {
+                Ok(text) => parse("materials.ron", &text)?,
+                Err(_) => Vec::new(),
+            },
         };
         data.validate()?;
         Ok(data)
@@ -685,6 +752,12 @@ impl GameData {
         let moodlet = |id: &str| self.moodlets.iter().any(|m| m.id == id);
         let has_trait = |id: &str| self.traits.iter().any(|t| t.id == id);
         let has_prop = |id: &Option<String>| id.as_ref().is_none_or(|id| self.props.iter().any(|p| &p.id == id));
+        let has_material = |id: &Option<String>| id.as_ref().is_none_or(|id| self.materials.iter().any(|m| &m.id == id));
+        for (owner, parts) in self.objects.iter().map(|o| (&o.id, &o.parts)).chain(self.props.iter().map(|p| (&p.id, &p.parts))) {
+            for p in parts.iter().filter(|p| !has_material(&p.material)) {
+                errs.push(format!("{owner}: unknown material {}", p.material.as_deref().unwrap_or_default()));
+            }
+        }
         let mut seen = std::collections::HashSet::new();
         for o in &self.objects {
             if !seen.insert(&o.id) {
@@ -692,7 +765,12 @@ impl GameData {
             }
             for i in &o.interactions {
                 for out in &i.outcomes {
-                    if let Outcome::Moodlet { id, .. } = out
+                    let id = match out {
+                        Outcome::Moodlet { id, .. } => Some(id),
+                        Outcome::Accident { moodlet, .. } => moodlet.as_ref(),
+                        _ => None,
+                    };
+                    if let Some(id) = id
                         && !moodlet(id) {
                             errs.push(format!("{}.{}: unknown moodlet {id}", o.id, i.id));
                         }
@@ -712,6 +790,9 @@ impl GameData {
                 if o.slots.is_empty() {
                     errs.push(format!("{}: has interactions but no slots", o.id));
                 }
+            }
+            if o.break_chance > 0.0 && !o.interactions.iter().any(|i| i.repairs) {
+                errs.push(format!("{}: can break but has no repair interaction", o.id));
             }
         }
         for t in &self.traits {

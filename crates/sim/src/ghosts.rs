@@ -2,24 +2,37 @@
 //! mostly harmless pranks: dirtying things, the odd breakage, and spooking the living.
 //! Selling the grave lets the ghost move on.
 
+use std::sync::Arc;
+
 use glam::{IVec2, Vec3};
 use hearth_ecs::{Entity, With, World};
 
 use crate::components::*;
 use crate::data::Need;
+use crate::economy::Household;
 use crate::log::LogKind;
 use crate::lot::{LEVEL_HEIGHT, Lot};
+use crate::neighborhood::{LotId, Neighborhood, active_lot, park_active, unpark};
 use crate::objects::ObjectInstance;
 use crate::rng::SimRng;
-use crate::sim::{add_moodlet, data, log, name_of, now, place_object, present_peons, set_bubble};
+use crate::sim::{Data, add_moodlet, data, log, name_of, now, place_object, present_peons, set_bubble};
 use crate::time::{Clock, Settings};
 
 pub const GRAVE_OBJECT: &str = "tombstone";
 /// Ghost drift speed, meters per minute (they don't bother with doors).
 const DRIFT_SPEED: f32 = 0.5;
 
-/// Puts a grave marker in the yard and turns the dead peon into a (dormant) ghost.
-pub fn bury(world: &mut World, e: Entity) {
+/// Puts a grave marker in the yard of the dead peon's home and turns them into a (dormant) ghost.
+/// If home is another lot than the live one, the grave goes into that parked lot and the ghost
+/// waits there (off-lot) until the lot is next live.
+pub fn bury(world: &mut World, e: Entity, home: Option<LotId>) {
+    match home {
+        Some(lot) if lot != active_lot(world) => bury_away(world, e, lot),
+        _ => bury_here(world, e),
+    }
+}
+
+fn bury_here(world: &mut World, e: Entity) {
     let Some(tile) = grave_spot(world) else {
         log(world, LogKind::Info, Some(e), format!("There was nowhere to put {}'s tombstone, so the urn went on the fridge.", name_of(world, e)));
         return;
@@ -27,6 +40,8 @@ pub fn bury(world: &mut World, e: Entity) {
     match place_object(world, GRAVE_OBJECT, 0, tile, 0, false) {
         Ok(grave) => {
             world.insert_one(e, Ghost { grave, visible_until: 0, drift_to: None, next_prank: 0 });
+            world.remove::<Visitor>(e);
+            world.remove::<Offlot>(e);
             let pos = world.res::<Lot>().ground_center(0, tile);
             if let Some(mut tf) = world.get_mut::<Transform>(e) {
                 tf.pos = pos;
@@ -34,6 +49,49 @@ pub fn bury(world: &mut World, e: Entity) {
             }
         }
         Err(why) => log::warn!("couldn't place grave: {why}"),
+    }
+}
+
+/// Buries `e` on parked `lot`: the lot is made live in a scratch world, the grave placed there, and
+/// the lot parked again with its objects' real-world handles (plus a fresh one for the grave).
+fn bury_away(world: &mut World, e: Entity, lot: LotId) {
+    let Some(parked) = world.res_mut::<Neighborhood>().lots[lot].parked.take() else { return };
+    let mut scratch = World::new();
+    scratch.insert_resource(Data(Arc::clone(&world.res::<Data>().0)));
+    scratch.insert_resource(Lot::new(1, 1));
+    scratch.insert_resource(Household::default());
+    let map = unpark(&mut scratch, parked);
+    scratch.res_mut::<Lot>().recompute_rooms();
+    let grave = grave_spot(&scratch).ok_or_else(|| "no room in the yard".to_string()).and_then(|t| place_object(&mut scratch, GRAVE_OBJECT, 0, t, 0, false));
+    let mut parked = park_active(&mut scratch);
+    // a handle no live entity will ever have, for the ghost to find its grave by
+    let handle = world.spawn_empty();
+    world.despawn(handle);
+    for o in &mut parked.objects {
+        o.id = match o.id {
+            Some(s) if grave.as_ref().ok() == Some(&s) => Some(handle),
+            Some(s) => map.iter().find(|(_, new)| *new == s).map(|(old, _)| *old),
+            None => None,
+        };
+    }
+    let address = {
+        let mut hood = world.res_mut::<Neighborhood>();
+        hood.lots[lot].value = parked.build_value();
+        hood.lots[lot].parked = Some(parked);
+        hood.lots[lot].address.clone()
+    };
+    let name = name_of(world, e);
+    match grave {
+        Ok(_) => {
+            world.insert_one(e, Ghost { grave: handle, visible_until: 0, drift_to: None, next_prank: 0 });
+            world.remove::<Visitor>(e);
+            world.insert_one(e, Offlot { visit_at: u64::MAX });
+            log(world, LogKind::Life, Some(e), format!("{name} was laid to rest in the yard at {address}."));
+        }
+        Err(why) => {
+            log::warn!("couldn't place grave at {address}: {why}");
+            log(world, LogKind::Info, Some(e), format!("There was nowhere to put {name}'s tombstone, so the urn went on a shelf at {address}."));
+        }
     }
 }
 
@@ -214,7 +272,9 @@ fn prank(world: &mut World, ghost: Entity) {
         }
     }
     let Some((_, oe)) = best else { return };
-    let breaks = world.res_mut::<SimRng>().chance(0.08);
+    // only things someone could fix (a broken bed would be broken for good)
+    let fixable = { let o = world.get::<ObjectInstance>(oe).unwrap(); data.object(o.def).interactions.iter().any(|i| i.repairs) };
+    let breaks = fixable && world.res_mut::<SimRng>().chance(0.08);
     let oname = {
         let mut o = world.get_mut::<ObjectInstance>(oe).unwrap();
         o.dirt = (o.dirt + 0.3).min(1.0);

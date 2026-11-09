@@ -411,6 +411,7 @@ pub fn build_cafe(world: &mut World) {
     place(w, "counter_basic", 0, 21, 8, 0);
     place(w, "kitchen_sink", 0, 22, 8, 0);
     place(w, "trash_can", 0, 24, 8, 0);
+    place(w, "vending_machine", 0, 24, 11, 3);
     // tables
     for (x, z) in [(8, 14), (12, 14), (8, 18), (12, 18)] {
         table_for_four(w, x, z);
@@ -486,6 +487,7 @@ pub fn build_gym(world: &mut World) {
     place(w, "fridge_basic", 0, 23, 12, 3);
     place(w, "espresso_bar", 0, 23, 13, 3);
     place(w, "trash_can", 0, 23, 14, 3);
+    place(w, "vending_machine", 0, 23, 17, 3);
     // lounge
     place(w, "tv_basic", 0, 10, 15, 0);
     place(w, "sofa_basic", 0, 10, 18, 2);
@@ -504,9 +506,11 @@ pub fn spawn_family(sim: &mut Sim) -> Vec<Entity> {
     // spawn each before generating the next so first names stay unique
     let mut a_spec = sim.random_spec(LifeStage::Adult, None);
     let last = a_spec.last.clone();
+    let a_spec_sex = a_spec.sex;
     a_spec.skills.push((crate::data::Skill::Cooking, 2.0));
     let a = sim.spawn_peon(a_spec, Lot::tile_center(0, v(11, 16)));
-    let b_spec = sim.random_spec(LifeStage::Adult, Some(&last));
+    let mut b_spec = sim.random_spec(LifeStage::Adult, Some(&last));
+    b_spec.sex = a_spec_sex.opposite();
     let b = sim.spawn_peon(b_spec, Lot::tile_center(0, v(13, 16)));
     let c_spec = sim.random_spec(LifeStage::Child, Some(&last));
     let c = sim.spawn_peon(c_spec, Lot::tile_center(0, v(12, 15)));

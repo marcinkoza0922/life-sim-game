@@ -103,27 +103,58 @@ pub fn grow_up(world: &mut World, e: Entity) {
     actions::abort_current(world, e);
 }
 
-/// Death, with a chance to haggle with the Reaper.
+/// Chance of a mishap: `base`, cut by up to 80% at `skill` 10, doubled for the Clumsy.
+pub fn accident_chance(world: &World, e: Entity, base: f32, skill: Option<Skill>) -> f32 {
+    let sk = skill.and_then(|s| world.get::<Skills>(e).map(|k| k.get(s))).unwrap_or(0.0);
+    let clumsy = world.get::<Personality>(e).is_some_and(|p| p.has("clumsy"));
+    (base * (1.0 - 0.08 * sk) * if clumsy { 2.0 } else { 1.0 }).clamp(0.0, 1.0)
+}
+
+/// A mishap that happened to `e`: logs `text`, applies `moodlet`, and with probability `fatal`
+/// kills them (deferred, so it is safe mid-system) of `cause`.
+pub fn mishap(world: &World, e: Entity, text: &str, moodlet: Option<&str>, fatal: f32, cause: &str) {
+    let t = crate::sim::fill(world, e, text);
+    log(world, LogKind::Funny, Some(e), t);
+    if let Some(m) = moodlet {
+        add_moodlet(world, e, m);
+    }
+    if world.res_mut::<SimRng>().chance(fatal) {
+        let cause = cause.to_string();
+        world.defer(move |w| die(w, e, &cause));
+    }
+}
+
+/// Death, with a chance to talk the Reaper out of it (Charisma) or beat him at rock-paper-scissors.
 pub fn die(world: &mut World, e: Entity, cause: &str) {
-    if world.has::<Dead>(e) {
+    if world.has::<Dead>(e) || !world.contains(e) {
         return;
     }
     let name = name_of(world, e);
-    // the Reaper is open to negotiation, once
+    let home = crate::neighborhood::home_of(world, e);
+    // the Reaper is open to negotiation, once in a while (never about old age)
     let charisma = world.get::<Skills>(e).map(|s| s.get(Skill::Charisma)).unwrap_or(0.0);
     let already = world.get::<Mood>(e).is_some_and(|m| m.moodlets.iter().any(|x| x.id == "cheated_death"));
-    let haggle = 0.1 + charisma * 0.04;
-    if !already && cause != "old age" && world.res_mut::<SimRng>().chance(haggle) {
-        log(world, LogKind::Funny, Some(e), format!("The Reaper came for {name} ({cause}), but lost at rock-paper-scissors. Best two out of three. Then three out of five."));
-        add_moodlet(world, e, "cheated_death");
-        if let Some(mut n) = world.get_mut::<Needs>(e) {
-            for k in Need::CORE {
-                let v = n.get(k).max(50.0);
-                n.set(k, v);
+    if !already && cause != "old age" {
+        let pleaded = world.res_mut::<SimRng>().chance(charisma * 0.05);
+        let reprieve = if pleaded {
+            Some(format!("The Reaper came for {name} ({cause}), but {name} talked him into a rain check. He left with a pamphlet and mixed feelings."))
+        } else if world.res_mut::<SimRng>().chance(0.1) {
+            Some(format!("The Reaper came for {name} ({cause}), but lost at rock-paper-scissors. Best two out of three. Then three out of five."))
+        } else {
+            None
+        };
+        if let Some(line) = reprieve {
+            log(world, LogKind::Funny, Some(e), line);
+            add_moodlet(world, e, "cheated_death");
+            if let Some(mut n) = world.get_mut::<Needs>(e) {
+                for k in Need::CORE {
+                    let v = n.get(k).max(50.0);
+                    n.set(k, v);
+                }
+                n.starving_minutes = 0;
             }
-            n.starving_minutes = 0;
+            return;
         }
-        return;
     }
     actions::abort_current(world, e);
     if let Some(mut q) = world.get_mut::<ActionQueue>(e) {
@@ -135,6 +166,9 @@ pub fn die(world: &mut World, e: Entity, cause: &str) {
         "old age" => format!("The Reaper arrived for {name}. They went peacefully, after asking the Reaper to wipe his feet."),
         "starvation" => format!("{name} has died of starvation. The fridge was RIGHT THERE."),
         "laughter" => format!("{name} laughed so hard they died. It was a really good joke."),
+        "electrocution" => format!("{name} was electrocuted fixing the wiring. Their hair will be standing up for all eternity."),
+        "vending machine" => format!("{name} was crushed by a vending machine. They got the chips, at least."),
+        "hubris" => format!("{name} turned their back on the hero to cackle, directly over the shark tank. Hubris."),
         other => format!("{name} has died ({other})."),
     };
     log(world, LogKind::Death, Some(e), line);
@@ -148,8 +182,12 @@ pub fn die(world: &mut World, e: Entity, cause: &str) {
     }
     crate::neighborhood::forget_member(world, e);
     world.remove::<Student>(e);
-    if world.has::<Member>(e) {
-        crate::ghosts::bury(world, e);
+    // dying at work or school ends the shift (and any decision waiting on them)
+    world.remove::<AtWork>(e);
+    world.res_mut::<crate::career::PendingChoices>().items.retain(|p| p.peon != e);
+    // everyone with a home is buried there; a household member without one, on the live lot
+    if world.has::<Member>(e) || home.is_some() {
+        crate::ghosts::bury(world, e, home);
     }
 }
 

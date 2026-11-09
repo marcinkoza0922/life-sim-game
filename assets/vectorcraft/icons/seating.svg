@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <rect x="11" y="48" width="5" height="9" rx="2" fill="#E08D5A" stroke="#3B2F5C" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <rect x="48" y="48" width="5" height="9" rx="2" fill="#E08D5A" stroke="#3B2F5C" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <rect x="14" y="8" width="36" height="32" rx="9" fill="#2EC4B6" stroke="#3B2F5C" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <rect x="14" y="34" width="36" height="14" rx="5" fill="#7BDDD4" stroke="#3B2F5C" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <rect x="5" y="26" width="13" height="25" rx="6.5" fill="#2EC4B6" stroke="#3B2F5C" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <rect x="46" y="26" width="13" height="25" rx="6.5" fill="#2EC4B6" stroke="#3B2F5C" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <rect x="19" y="12" width="15" height="4" rx="2.0" fill="#FFFFFF" fill-opacity="0.5"/>
+  <rect x="8" y="29" width="4" height="10" rx="2.0" fill="#FFFFFF" fill-opacity="0.45"/>
+</svg>
