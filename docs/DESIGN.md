@@ -345,7 +345,7 @@ Built in from day one:
 | **M8 Neighborhood** | Multiple lots, visitors, community lots |
 | **M9 Roofs & terrain polish**, saves, settings, audio |
 
-## 9. Status (2026-11-08)
+## 9. Status (2026-11-09)
 
 **M0 done, M1 done, parts of M2–M4 in.** Everything below is playable in `lifesim`:
 
@@ -464,5 +464,18 @@ Added since:
   (furnished first; on an empty plot they build), always leaving one lot for sale. Interaction costs are
   charged to the buyer's own household (`economy::debit`), not always the played one.
 
-**Known gaps / next up:** neighbors' graves when they die off-lot; walking between lots instead of
-appearing at the street; guests sleeping over in their hosts' beds (nothing sends them home at night).
+- **Walking between lots:** Visit, Go Out and Go Home are walks (`neighborhood::Trip`, run by `trips`): the
+  household heads out to the street and off down the sidewalk toward the destination (lots are numbered
+  along the street), the destination goes live once they've all left (or after two hours), and they walk
+  in from the end of the street they came from. Babies are carried (off-lot for the walk). The sidewalk
+  legs are `ActionKind::Walk` (fixed waypoints off the nav grid). Neighbors who drop by walk up the
+  sidewalk from their end of the street and leave the same way. Switching or moving households is
+  still instant (and calls off a walk underway). `Sim::finish_trip` runs the clock until a walk is over.
+- **No sleepovers:** guests (visiting neighbors, or the household away from home) can't use beds
+  (`autonomy::not_a_guest_bed`; cribs are fine), and at midnight the household is sent home from
+  wherever it is: the hosts hand them their coats, or the café/park closes.
+- **Graves at home:** whoever dies is buried on their home lot. If that lot is parked, it's made live in a
+  scratch world to place the tombstone and parked again with a fresh handle for the grave, so the ghost
+  (off-lot meanwhile) finds it when the lot is next live. A visitor who dies on someone else's lot goes
+  home to be buried, and the household dying while out no longer gets a grave at the park.
+  `simctl hood` lists graves per lot.

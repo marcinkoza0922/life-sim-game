@@ -350,6 +350,7 @@ impl Sim {
             .add_system("post", crate::school::run_school)
             .add_system("post", crate::family::pregnancies)
             .add_system("post", crate::ghosts::haunt)
+            .add_system("post", crate::neighborhood::trips)
             .add_system("post", crate::neighborhood::visits)
             .add_system("post", crate::neighborhood::offlot_daily)
             .add_system("post", crate::neighborhood::newcomers)
@@ -483,20 +484,37 @@ impl Sim {
         r
     }
 
-    /// Takes the household to a community lot.
+    /// Sends the household out to a community lot (on foot; see [`Sim::finish_trip`]).
     pub fn go_out(&mut self, lot: usize) -> Result<(), String> {
         let r = crate::neighborhood::go_out(&mut self.world, lot);
         self.world.flush();
         r
     }
 
-    /// Takes the household over to a neighbor's home.
+    /// Sends the household over to a neighbor's home (on foot; see [`Sim::finish_trip`]).
     pub fn visit(&mut self, lot: usize) -> Result<(), String> {
         let r = crate::neighborhood::visit(&mut self.world, lot);
         self.world.flush();
         r
     }
 
+    /// The household's walk to another lot, if one is underway.
+    pub fn trip(&self) -> Option<crate::neighborhood::Trip> {
+        crate::neighborhood::trip(&self.world)
+    }
+
+    /// Runs the clock until the household's walk (if any) is over: they've left, the destination
+    /// is live, and they've walked onto it. Returns the minutes it took.
+    pub fn finish_trip(&mut self) -> u32 {
+        let mut n = 0;
+        while self.trip().is_some() && n < 24 * 60 {
+            self.tick();
+            n += 1;
+        }
+        n
+    }
+
+    /// Sends the household home (on foot; see [`Sim::finish_trip`]).
     pub fn go_home(&mut self) -> Result<(), String> {
         let r = crate::neighborhood::go_home(&mut self.world);
         self.world.flush();

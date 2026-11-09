@@ -109,6 +109,7 @@ pub fn die(world: &mut World, e: Entity, cause: &str) {
         return;
     }
     let name = name_of(world, e);
+    let home = crate::neighborhood::home_of(world, e);
     // the Reaper is open to negotiation, once
     let charisma = world.get::<Skills>(e).map(|s| s.get(Skill::Charisma)).unwrap_or(0.0);
     let already = world.get::<Mood>(e).is_some_and(|m| m.moodlets.iter().any(|x| x.id == "cheated_death"));
@@ -148,8 +149,9 @@ pub fn die(world: &mut World, e: Entity, cause: &str) {
     }
     crate::neighborhood::forget_member(world, e);
     world.remove::<Student>(e);
-    if world.has::<Member>(e) {
-        crate::ghosts::bury(world, e);
+    // everyone with a home is buried there; a household member without one, on the live lot
+    if world.has::<Member>(e) || home.is_some() {
+        crate::ghosts::bury(world, e, home);
     }
 }
 

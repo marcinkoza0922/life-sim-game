@@ -231,6 +231,8 @@ pub enum ActionKind {
     /// Being the target of someone else's social interaction.
     Respond { initiator: Entity, social: usize, minutes: u32 },
     GoTo { level: i32, tile: IVec2 },
+    /// Follow these points as given, without pathfinding (along the sidewalk, off the lot grid).
+    Walk { path: Vec<Vec3> },
     GoToWork,
     GoToSchool,
     /// Collapse on the floor from exhaustion.

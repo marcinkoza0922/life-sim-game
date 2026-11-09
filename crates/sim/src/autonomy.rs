@@ -83,6 +83,14 @@ pub fn interaction_check(
     Ok(())
 }
 
+/// Guests don't sleep in their hosts' beds (infants and toddlers can still use a crib).
+pub fn not_a_guest_bed(world: &World, e: Entity, inter: &InteractionDef, stage: LifeStage) -> Result<(), String> {
+    if stage > LifeStage::Toddler && inter.tags.iter().any(|t| t == "sleep") && crate::neighborhood::is_guest(world, e) {
+        return Err("not their bed".into());
+    }
+    Ok(())
+}
+
 pub fn free_slots(def: &crate::data::ObjectDef, inter: &InteractionDef, inst: &ObjectInstance, me: Entity) -> Vec<usize> {
     (0..def.slots.len())
         .filter(|i| inter.slots.is_empty() || inter.slots.contains(i))
@@ -203,7 +211,7 @@ pub fn candidates(world: &World, e: Entity, data: &GameData) -> Vec<Candidate> {
     for (oe, inst) in world.query::<(Entity, &ObjectInstance)>().iter() {
         let def = data.object(inst.def);
         for (ii, inter) in def.interactions.iter().enumerate() {
-            if !inter.autonomous || interaction_check(data, inter, inst, stage, &pers, funds).is_err() {
+            if !inter.autonomous || interaction_check(data, inter, inst, stage, &pers, funds).is_err() || not_a_guest_bed(world, e, inter, stage).is_err() {
                 continue;
             }
             if inter.has_tag("homework") && !homework_due {
@@ -447,7 +455,7 @@ pub fn menu_options(world: &World, peon: Entity, target: Entity) -> Vec<(String,
             if inter.requires_trait.as_ref().is_some_and(|t| !pers.has(t)) || (inter.only_broken && !inst.broken) {
                 continue;
             }
-            let mut ok = interaction_check(&data, inter, &inst, stage, &pers, funds);
+            let mut ok = interaction_check(&data, inter, &inst, stage, &pers, funds).and_then(|()| not_a_guest_bed(world, peon, inter, stage));
             if ok.is_ok() && free_slots(def, inter, &inst, peon).is_empty() && !seat_free(world, &data, peon, target, &inst, inter) {
                 ok = Err("in use".into());
             }

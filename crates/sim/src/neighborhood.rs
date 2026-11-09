@@ -6,6 +6,7 @@
 //! and are simulated roughly once a day ([`offlot_daily`]: pay, promotions, grades, bills,
 //! births); aging runs for everyone on the shared clock. Neighbors drop by as [`Visitor`]s, and the
 //! played household can go and visit them ([`visit`]): the hosts are at home on their own lot.
+//! Getting anywhere is a walk down the sidewalk ([`Trip`], [`trips`]), and nobody sleeps over.
 //! When the street thins out, [`newcomers`] move into vacant lots.
 
 use std::sync::Arc;
@@ -97,6 +98,31 @@ pub struct Neighborhood {
     pub active: LotId,
     /// Households not being played (the played one is the [`Household`] resource), by home lot.
     pub households: Vec<Household>,
+    /// The played household walking to another lot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trip: Option<Trip>,
+}
+
+/// Why the household is walking somewhere.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TripKind {
+    Visit,
+    GoOut,
+    Home,
+}
+
+/// The played household walking from one lot to another: first out to the sidewalk and off down
+/// the street, then (once the destination is live) in from the end of the street they came from.
+/// Babies are carried: they're off-lot for the whole walk.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Trip {
+    pub kind: TripKind,
+    pub to: LotId,
+    pub travelers: Vec<Entity>,
+    /// false: leaving the old lot; true: walking onto the new one.
+    pub arriving: bool,
+    /// Stragglers are brought along at this tick.
+    pub until: u64,
 }
 
 impl Default for Neighborhood {
@@ -106,6 +132,7 @@ impl Default for Neighborhood {
             lots: vec![LotSlot { address: "12 Sycamore Lane".into(), name: None, kind: LotKind::Residential, land_price: 3000, parked: None, value: 0 }],
             active: 0,
             households: Vec::new(),
+            trip: None,
         }
     }
 }
@@ -188,6 +215,11 @@ pub fn neighbors(world: &World) -> Vec<Entity> {
     let mut v: Vec<Entity> = world.res::<Neighborhood>().households.iter().flat_map(|h| h.members.iter().copied()).filter(|e| world.contains(*e)).collect();
     v.sort();
     v
+}
+
+/// Is `e` a guest on the live lot (a visiting neighbor, or the household away from home)?
+pub fn is_guest(world: &World, e: Entity) -> bool {
+    world.has::<Visitor>(e) || (world.has::<Member>(e) && !at_home(world))
 }
 
 /// Guests currently on the lot.
@@ -491,14 +523,92 @@ fn freshen(world: &World, e: Entity) {
     }
 }
 
-/// A spot by the street for the `i`th arrival.
-fn arrival_spot(world: &World, i: usize) -> Vec3 {
+/// A tile by the street for the `i`th arrival.
+fn arrival_tile(world: &World, i: usize) -> IVec2 {
     let lot = world.res::<Lot>();
     let exit = actions::exit_tile(&lot);
     let i = i as i32;
     let t = exit + IVec2::new(i % 5 - 2, -(i / 5));
-    let t = if lot.walkable(0, t) { t } else { exit };
-    lot.ground_center(0, t)
+    if lot.walkable(0, t) { t } else { exit }
+}
+
+/// A spot by the street for the `i`th arrival.
+fn arrival_spot(world: &World, i: usize) -> Vec3 {
+    let t = arrival_tile(world, i);
+    world.res::<Lot>().ground_center(0, t)
+}
+
+// ------------------------------------------------------------------------------------------------
+// the sidewalk
+
+/// How far past the lot's street edge the middle of the sidewalk is.
+const SIDEWALK: f32 = 1.0;
+/// How far past the side of the lot people walk before they're out of sight.
+const OFFSTAGE: f32 = 10.0;
+/// Label of the actions that walk people between lots.
+pub const HEAD_OUT: &str = "Head Out";
+pub const HEAD_IN: &str = "Head In";
+
+/// Which way down the street `to` lies, seen from `from` (lots are numbered along the street).
+fn direction(from: LotId, to: LotId) -> f32 {
+    if to < from { -1.0 } else { 1.0 }
+}
+
+/// Walking side by side: two lanes on the sidewalk.
+fn lane(i: usize) -> f32 {
+    if i.is_multiple_of(2) { -0.3 } else { 0.3 }
+}
+
+/// From the front walk onto the sidewalk and off down the street toward `dir`.
+fn walk_out(world: &World, dir: f32, i: usize) -> Vec<Vec3> {
+    let lot = world.res::<Lot>();
+    let exit = actions::exit_tile(&lot);
+    let z = lot.depth as f32 + SIDEWALK + lane(i);
+    let end = if dir < 0.0 { -OFFSTAGE } else { lot.width as f32 + OFFSTAGE };
+    vec![Vec3::new(exit.x as f32 + 0.5, 0.0, z), Vec3::new(end, 0.0, z)]
+}
+
+/// Coming up the sidewalk from the end of the street on `side`: where to start (a little
+/// behind the one in front), and the way to the front walk.
+fn walk_in(world: &World, side: f32, i: usize) -> (Vec3, Vec<Vec3>) {
+    let lot = world.res::<Lot>();
+    let exit = actions::exit_tile(&lot);
+    let z = lot.depth as f32 + SIDEWALK + lane(i);
+    let edge = if side < 0.0 { -OFFSTAGE } else { lot.width as f32 + OFFSTAGE };
+    let start = Vec3::new(edge + side * 1.2 * (i / 2) as f32, 0.0, z);
+    (start, vec![Vec3::new(exit.x as f32 + 0.5, 0.0, z), lot.ground_center(0, exit)])
+}
+
+fn can_walk(world: &World, e: Entity) -> bool {
+    world.get::<Age>(e).is_some_and(|a| a.stage.can_walk())
+}
+
+/// Is `e` still walking to or from the street (an action labelled `label` queued or underway)?
+fn walking(world: &World, e: Entity, label: &str) -> bool {
+    world.get::<ActionQueue>(e).is_some_and(|q| {
+        q.current.as_ref().is_some_and(|c| c.action.label == label) || q.queue.iter().any(|a| a.label == label)
+    })
+}
+
+/// Sends `e` up the sidewalk from `side` onto the live lot, to the `i`th arrival tile.
+fn send_in(world: &mut World, e: Entity, side: f32, i: usize, label: &str) {
+    let (start, path) = walk_in(world, side, i);
+    place_at(world, e, start);
+    if let Some(mut tf) = world.get_mut::<Transform>(e) {
+        tf.yaw = (-side).atan2(0.0);
+        tf.prev_yaw = tf.yaw;
+    }
+    let tile = arrival_tile(world, i);
+    actions::push_back(world, e, ActionKind::Walk { path }, Source::System, label.into());
+    actions::push_back(world, e, ActionKind::GoTo { level: 0, tile }, Source::System, label.into());
+}
+
+/// Sends `e` out to the street and off down the sidewalk toward `dir`.
+fn send_out(world: &mut World, e: Entity, dir: f32, i: usize, label: &str) {
+    let exit = actions::exit_tile(&world.res::<Lot>());
+    let path = walk_out(world, dir, i);
+    actions::push_back(world, e, ActionKind::GoTo { level: 0, tile: exit }, Source::System, label.into());
+    actions::push_back(world, e, ActionKind::Walk { path }, Source::System, label.into());
 }
 
 fn place_at(world: &World, e: Entity, pos: Vec3) {
@@ -525,6 +635,13 @@ pub fn switch_lot(world: &mut World, target: LotId, travelers: &[Entity]) -> Res
     }
     if world.res::<Neighborhood>().lots.get(target).and_then(|l| l.parked.as_ref()).is_none() {
         return Err("no such lot".into());
+    }
+    // a walk that was underway is called off: whoever had walked off is back on the street
+    let cancelled = world.res_mut::<Neighborhood>().trip.take();
+    for e in cancelled.map(|t| t.travelers).unwrap_or_default() {
+        if world.contains(e) && !world.has::<Dead>(e) && !world.has::<AtWork>(e) {
+            world.remove::<Offlot>(e);
+        }
     }
     // everyone else leaves
     for e in crate::sim::present_peons(world) {
@@ -610,17 +727,19 @@ pub fn play_household(world: &mut World, home: LotId) -> Result<(), String> {
     Ok(())
 }
 
-/// Takes the household out to a community lot.
+/// Sends the household out to a community lot (on foot: see [`trips`]).
 pub fn go_out(world: &mut World, lot: LotId) -> Result<(), String> {
     if world.res::<Neighborhood>().lots.get(lot).map(|l| l.kind) != Some(LotKind::Community) {
         return Err("that's not somewhere to go out to".into());
     }
-    let travelers = travelers(world);
-    if travelers.is_empty() {
-        return Err("nobody's home to go".into());
-    }
-    switch_lot(world, lot, &travelers)?;
-    // a few neighbors are out and about too
+    start_trip(world, TripKind::GoOut, lot)?;
+    let (hh, place) = (world.res::<Household>().name.clone(), world.res::<Neighborhood>().lots[lot].title());
+    log(world, LogKind::Info, None, format!("{hh} headed out to {place}."));
+    Ok(())
+}
+
+/// A few neighbors are out and about too (they turn up over the next couple of hours).
+fn locals_turn_up(world: &mut World) {
     let tick = now(world);
     let mut locals: Vec<Entity> = world
         .query_filtered::<(Entity, &Age), (With<Offlot>, Without<Dead>, Without<AtWork>, Without<Member>)>()
@@ -636,13 +755,10 @@ pub fn go_out(world: &mut World, lot: LotId) -> Result<(), String> {
         let at = tick + 10 + world.res_mut::<SimRng>().below(150) as u64;
         world.get_mut::<Offlot>(e).unwrap().visit_at = at;
     }
-    let (hh, place) = (world.res::<Household>().name.clone(), world.res::<Neighborhood>().lots[lot].title());
-    log(world, LogKind::Info, None, format!("{hh} headed out to {place}."));
-    Ok(())
 }
 
-/// Takes the household over to a neighbor's: the hosts are at home (unless they're at work or
-/// school), and go about their evening while the guests are there.
+/// Sends the household over to a neighbor's (on foot: see [`trips`]). When they get there the
+/// hosts are at home (unless they're at work or school), and go about their evening.
 pub fn visit(world: &mut World, lot: LotId) -> Result<(), String> {
     let r = residents(world, lot).ok_or("nobody lives there")?;
     if r.played {
@@ -651,11 +767,20 @@ pub fn visit(world: &mut World, lot: LotId) -> Result<(), String> {
     if !(8..22).contains(&world.res::<Clock>().hour()) {
         return Err(format!("it's too late to drop in on {}", r.name));
     }
-    let travelers = travelers(world);
-    if travelers.is_empty() {
-        return Err("nobody's home to go".into());
-    }
-    switch_lot(world, lot, &travelers)?;
+    start_trip(world, TripKind::Visit, lot)?;
+    let hh = world.res::<Household>().name.clone();
+    log(world, LogKind::Social, None, format!("{hh} set off for {}'s place.", r.name));
+    Ok(())
+}
+
+/// The household has walked over to a neighbor's: the hosts are at home (unless they're at work or
+/// school) and indoors.
+fn hosts_at_home(world: &mut World, lot: LotId) {
+    let Some(r) = residents(world, lot) else {
+        let (hh, addr) = (world.res::<Household>().name.clone(), world.res::<Neighborhood>().lots[lot].address.clone());
+        log(world, LogKind::Social, None, format!("{hh} went over to {addr}, but nobody lives there anymore."));
+        return;
+    };
     let mut hosts: Vec<Entity> =
         r.members.iter().copied().filter(|&e| world.contains(e) && !world.has::<Dead>(e) && !world.has::<AtWork>(e) && world.has::<Offlot>(e)).collect();
     hosts.sort();
@@ -670,7 +795,6 @@ pub fn visit(world: &mut World, lot: LotId) -> Result<(), String> {
     let (hh, addr) = (world.res::<Household>().name.clone(), world.res::<Neighborhood>().lots[lot].address.clone());
     let line = if hosts.is_empty() { format!("{hh} went over to {addr}, but {} aren't home.", r.name) } else { format!("{hh} dropped in on {} at {addr}.", r.name) };
     log(world, LogKind::Social, None, line);
-    Ok(())
 }
 
 /// Is the household a guest at someone else's home?
@@ -692,13 +816,120 @@ fn indoor_spot(world: &World, i: usize) -> Vec3 {
     world.res::<Lot>().ground_center(0, t)
 }
 
-/// Brings the household back from an outing.
+/// Sends the household home from an outing (on foot: see [`trips`]).
 pub fn go_home(world: &mut World) -> Result<(), String> {
     let home = world.res::<Household>().home.ok_or("they have no home")?;
-    let travelers = travelers(world);
-    switch_lot(world, home, &travelers)?;
-    log(world, LogKind::Info, None, format!("{} went home.", world.res::<Household>().name));
+    if home == active_lot(world) {
+        return Err("they're already home".into());
+    }
+    start_trip(world, TripKind::Home, home)?;
+    log(world, LogKind::Info, None, format!("{} headed home.", world.res::<Household>().name));
     Ok(())
+}
+
+// ------------------------------------------------------------------------------------------------
+// trips
+
+/// The household's walk to another lot, if one is underway.
+pub fn trip(world: &World) -> Option<Trip> {
+    world.res::<Neighborhood>().trip.clone()
+}
+
+/// Sets the household walking to `to`: out to the street and off down the sidewalk. The lot
+/// switches once they've all left (see [`trips`]).
+fn start_trip(world: &mut World, kind: TripKind, to: LotId) -> Result<(), String> {
+    if world.res::<Neighborhood>().trip.is_some() {
+        return Err("they're already on their way somewhere".into());
+    }
+    if to == active_lot(world) {
+        return Err("they're already there".into());
+    }
+    let travelers = travelers(world);
+    if travelers.is_empty() {
+        return Err("nobody's home to go".into());
+    }
+    let dir = direction(active_lot(world), to);
+    for (i, &e) in travelers.iter().enumerate() {
+        reset(world, e);
+        if can_walk(world, e) {
+            send_out(world, e, dir, i, HEAD_OUT);
+        } else {
+            // carried
+            world.insert_one(e, Offlot { visit_at: u64::MAX });
+        }
+    }
+    let until = now(world) + 120;
+    world.res_mut::<Neighborhood>().trip = Some(Trip { kind, to, travelers, arriving: false, until });
+    Ok(())
+}
+
+/// Still part of the household's trip (not dead, gone to work, or moved out meanwhile)?
+fn on_trip(world: &World, e: Entity) -> bool {
+    world.contains(e) && !world.has::<Dead>(e) && !world.has::<AtWork>(e) && world.has::<Member>(e)
+}
+
+/// Walks the household between lots: whoever reaches the end of the street leaves the lot; when
+/// everyone has (or two hours are up), the destination goes live and they walk onto it.
+pub fn trips(world: &mut World) {
+    let Some(trip) = trip(world) else { return };
+    let tick = now(world);
+    let label = if trip.arriving { HEAD_IN } else { HEAD_OUT };
+    let mut underway = false;
+    for &e in &trip.travelers {
+        if !on_trip(world, e) || world.has::<Offlot>(e) {
+            continue;
+        }
+        if walking(world, e, label) {
+            underway = true;
+        } else if !trip.arriving {
+            world.insert_one(e, Offlot { visit_at: u64::MAX });
+        }
+    }
+    if underway && tick < trip.until {
+        return;
+    }
+    if trip.arriving {
+        world.res_mut::<Neighborhood>().trip = None;
+        // the babies are put down by the front door
+        let carried: Vec<Entity> = trip.travelers.iter().copied().filter(|&e| on_trip(world, e) && world.has::<Offlot>(e)).collect();
+        for (i, e) in carried.into_iter().enumerate() {
+            world.remove::<Offlot>(e);
+            let pos = arrival_spot(world, i);
+            place_at(world, e, pos);
+        }
+    } else {
+        reach(world, trip);
+    }
+    world.flush();
+}
+
+/// The household reaches the end of the street: the destination goes live and they walk onto it.
+fn reach(world: &mut World, trip: Trip) {
+    let from = active_lot(world);
+    let travelers: Vec<Entity> = trip.travelers.iter().copied().filter(|&e| on_trip(world, e)).collect();
+    world.res_mut::<Neighborhood>().trip = None;
+    for &e in &travelers {
+        world.remove::<Offlot>(e);
+    }
+    if let Err(why) = switch_lot(world, trip.to, &travelers) {
+        log::warn!("trip to lot {} called off: {why}", trip.to);
+        return;
+    }
+    let side = direction(trip.to, from);
+    for (i, &e) in travelers.iter().enumerate() {
+        if can_walk(world, e) {
+            send_in(world, e, side, i, HEAD_IN);
+        } else {
+            world.insert_one(e, Offlot { visit_at: u64::MAX });
+        }
+    }
+    match trip.kind {
+        TripKind::GoOut => locals_turn_up(world),
+        TripKind::Visit => hosts_at_home(world, trip.to),
+        TripKind::Home => log(world, LogKind::Info, None, format!("{} got home.", world.res::<Household>().name)),
+    }
+    let until = now(world) + 90;
+    world.res_mut::<Neighborhood>().trip = Some(Trip { arriving: true, until, travelers, ..trip });
 }
 
 /// Sells the current home and buys a vacant lot (with whatever is built on it).
@@ -786,6 +1017,9 @@ pub fn visits(world: &mut World) {
             arrive(world, e, tick, community);
         }
     }
+    if world.res::<Clock>().minute_of_day() == 0 {
+        closing_time(world);
+    }
     if world.res::<Clock>().minute_of_day() == 23 * 60 && visiting(world) {
         let hosts = residents(world, active_lot(world)).map(|r| r.members).unwrap_or_default();
         if let Some(&h) = hosts.iter().find(|&&h| world.contains(h) && !world.has::<Dead>(h) && !crate::components::is_away(world, h)) {
@@ -795,21 +1029,38 @@ pub fn visits(world: &mut World) {
     }
     let mut guests: Vec<(Entity, Visitor)> = world.query_filtered::<(Entity, &Visitor), Without<Dead>>().iter().map(|(e, v)| (e, v.clone())).collect();
     guests.sort_by_key(|(e, _)| *e);
-    let street = {
-        let lot = world.res::<Lot>();
-        lot.ground_center(0, actions::exit_tile(&lot))
-    };
     for (e, v) in guests {
         let needs_home = world.get::<Needs>(e).is_some_and(|n| !n.critical_physical(15.0).is_empty());
         if !v.leaving && (tick >= v.leave_at || needs_home || !(8..22).contains(&hour)) {
             start_leaving(world, e, needs_home && !community);
         } else if v.leaving {
-            let at_street = world.get::<Transform>(e).is_some_and(|tf| (tf.pos - street).length() < 0.6);
-            let idle = world.get::<ActionQueue>(e).is_some_and(|q| q.current.is_none() && q.queue.is_empty());
-            if at_street || idle || tick > v.leave_at + 120 {
+            // gone once they're off down the street
+            if !walking(world, e, "Go Home") || tick > v.leave_at + 120 {
                 leave(world, e);
             }
         }
+    }
+}
+
+/// Midnight: nobody's staying over. Hosts show the household the door, and community lots close.
+fn closing_time(world: &mut World) {
+    let Some(home) = world.res::<Household>().home else { return };
+    if home == active_lot(world) || world.res::<Neighborhood>().trip.is_some() || travelers(world).is_empty() {
+        return;
+    }
+    let hh = world.res::<Household>().name.clone();
+    let line = match residents(world, active_lot(world)) {
+        Some(r) => {
+            let host = r.members.iter().copied().find(|&h| world.contains(h) && !world.has::<Dead>(h) && !is_away(world, h));
+            match host {
+                Some(h) => format!("{} handed {hh} their coats. It's past midnight, and the guest room is 'being painted'.", name_of(world, h)),
+                None => format!("It's past midnight; {hh} let themselves out of {}'s place.", r.name),
+            }
+        }
+        None => format!("{} is closing for the night; {hh} headed home.", world.res::<Neighborhood>().lots[active_lot(world)].title()),
+    };
+    if start_trip(world, TripKind::Home, home).is_ok() {
+        log(world, LogKind::Funny, None, line);
     }
 }
 
@@ -818,8 +1069,10 @@ fn arrive(world: &mut World, e: Entity, tick: u64, community: bool) {
     reset(world, e);
     let stay = 120 + world.res_mut::<SimRng>().below(180) as u64;
     world.insert_one(e, Visitor { leave_at: tick + stay, leaving: false });
-    let pos = arrival_spot(world, world.res_mut::<SimRng>().below(5));
-    place_at(world, e, pos);
+    // up the sidewalk from their end of the street
+    let side = home_of(world, e).map(|h| direction(active_lot(world), h)).unwrap_or(1.0);
+    let i = world.res_mut::<SimRng>().below(5);
+    send_in(world, e, side, i, "Come Over");
     freshen(world, e);
     let address = home_of(world, e).map(|l| world.res::<Neighborhood>().lots[l].address.clone()).unwrap_or_else(|| "down the street".into());
     let name = name_of(world, e);
@@ -846,8 +1099,9 @@ fn start_leaving(world: &mut World, e: Entity, needs_home: bool) {
     if let Some(mut q) = world.get_mut::<ActionQueue>(e) {
         q.queue.clear();
     }
-    let exit = actions::exit_tile(&world.res::<Lot>());
-    actions::push_front(world, e, ActionKind::GoTo { level: 0, tile: exit }, Source::System, "Go Home".into());
+    let dir = home_of(world, e).map(|h| direction(active_lot(world), h)).unwrap_or(1.0);
+    let i = world.res_mut::<SimRng>().below(2);
+    send_out(world, e, dir, i, "Go Home");
     world.get_mut::<Visitor>(e).unwrap().leaving = true;
     if needs_home {
         log(world, LogKind::Funny, Some(e), format!("{} suddenly remembered they left the oven on. (They need their own bathroom.)", name_of(world, e)));
@@ -932,7 +1186,7 @@ pub fn offlot_daily(world: &mut World) {
     // births off the lot
     let tick = clock.tick;
     let mut due: Vec<(Entity, Entity)> = world
-        .query_filtered::<(Entity, &Pregnant), (With<Offlot>, Without<Dead>)>()
+        .query_filtered::<(Entity, &Pregnant), (With<Offlot>, Without<Dead>, Without<Member>)>()
         .iter()
         .filter(|(_, p)| tick >= p.due)
         .map(|(e, p)| (e, p.other))

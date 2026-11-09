@@ -45,6 +45,7 @@ pub fn label_for(world: &World, data: &GameData, kind: &ActionKind) -> String {
         ActionKind::Social { target, social } => format!("{} {}", data.socials[*social].name, name_of(world, *target)),
         ActionKind::Respond { initiator, .. } => format!("Talking with {}", name_of(world, *initiator)),
         ActionKind::GoTo { .. } => "Go Here".into(),
+        ActionKind::Walk { .. } => "Walk".into(),
         ActionKind::GoToWork => "Go to Work".into(),
         ActionKind::GoToSchool => "Catch the School Bus".into(),
         ActionKind::PassOut => "Pass Out".into(),
@@ -196,6 +197,7 @@ pub fn player_order(world: &mut World, e: Entity, kind: ActionKind) -> Result<()
             let def = data.object(inst.def);
             let inter = def.interactions.get(*interaction).ok_or("no such interaction")?;
             interaction_check(&data, inter, &inst, stage, &pers, funds)?;
+            autonomy::not_a_guest_bed(world, e, inter, stage)?;
             (inter.tags.clone(), crate::data::Need::ALL.iter().map(|n| (*n, inter.ad(*n))).collect())
         }
         ActionKind::Social { target, social } => {
@@ -621,6 +623,7 @@ fn begin(world: &World, e: Entity, data: &GameData, cur: &mut CurrentAction) -> 
                 let def = data.object(inst.def);
                 let inter = &def.interactions[interaction];
                 interaction_check(data, inter, &inst, stage, &pers, funds)?;
+                autonomy::not_a_guest_bed(world, e, inter, stage)?;
                 inter.seat.as_ref().and_then(|sd| autonomy::nearest_seat(world, data, e, obj, &inst, sd, &field))
             };
             if let Some((seat, slot, node)) = seat {
@@ -678,6 +681,10 @@ fn begin(world: &World, e: Entity, data: &GameData, cur: &mut CurrentAction) -> 
         ActionKind::GoTo { level, tile } => {
             let path = path_to(world, e, NavNode::new(level, tile)).ok_or("can't get there")?;
             cur.phase = Phase::Walking { path, idx: 0, slot: None, retries: 0, blocked: 0 };
+            Ok(())
+        }
+        ActionKind::Walk { path } => {
+            cur.phase = Phase::Walking { path: path.clone(), idx: 0, slot: None, retries: 0, blocked: 0 };
             Ok(())
         }
         ActionKind::GoToWork | ActionKind::GoToSchool => {

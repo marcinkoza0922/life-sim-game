@@ -425,7 +425,9 @@ fn visit_lot(sim: &mut Sim, lot: usize) {
     }
     let kind = sim.world.res::<nh::Neighborhood>().lots.get(lot).map(|l| l.kind).unwrap_or_else(|| panic!("no lot {lot}"));
     let r = match (kind, nh::residents(&sim.world, lot)) {
-        (LotKind::Community, _) => sim.go_out(lot),
+        (LotKind::Community, _) => sim.go_out(lot).map(|()| {
+            sim.finish_trip();
+        }),
         (LotKind::Residential, Some(_)) => sim.play_household(lot),
         (LotKind::Residential, None) => {
             let r = nh::switch_lot(&mut sim.world, lot, &[]);
@@ -454,7 +456,12 @@ fn print_street(sim: &Sim) {
             None => format!("{:?}, vacant", lot.kind),
         };
         let here = if i == hood.active { "*" } else { " " };
-        println!("{here}{i:>2} {:<34} value ${:>6}  {who}", lot.title(), nh::build_value(w, i));
+        let graves = match &lot.parked {
+            Some(p) => p.objects.iter().filter(|o| o.def == sim::ghosts::GRAVE_OBJECT).count(),
+            None => sim.objects().iter().filter(|&&o| w.get::<sim::objects::ObjectInstance>(o).is_some_and(|x| sim.data().object(x.def).id == sim::ghosts::GRAVE_OBJECT)).count(),
+        };
+        let graves = if graves > 0 { format!("  ✝×{graves}") } else { String::new() };
+        println!("{here}{i:>2} {:<34} value ${:>6}  {who}{graves}", lot.title(), nh::build_value(w, i));
     }
 }
 
@@ -482,8 +489,9 @@ fn hood_tour(seed: u64, days: u64) {
                     println!("day {day}: no outing ({e})");
                 }
                 until(&mut sim, 15);
-                if !nh::at_home(&sim.world) {
+                if !nh::at_home(&sim.world) && sim.trip().is_none() {
                     sim.go_home().unwrap();
+                    sim.finish_trip();
                 }
             }
             1 => {
@@ -499,6 +507,7 @@ fn hood_tour(seed: u64, days: u64) {
                         Ok(()) => {
                             until(&mut sim, 15);
                             sim.go_home().unwrap();
+                            sim.finish_trip();
                         }
                         Err(e) => println!("day {day}: no visit ({e})"),
                     }

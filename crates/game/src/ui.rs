@@ -99,7 +99,13 @@ fn top_bar(ui: &mut Ui, g: &mut Game) {
                 hood.lots[hood.active].title()
             };
             let home = sim::neighborhood::at_home(&g.sim.world);
-            let at = if home {
+            let trip = g.sim.trip();
+            let at = if let Some(t) = trip.as_ref().filter(|t| !t.arriving) {
+                let to = g.sim.world.res::<sim::neighborhood::Neighborhood>().lots[t.to].title();
+                format!("{here}, walking over to {to}")
+            } else if trip.is_some() {
+                format!("arriving at {here}")
+            } else if home {
                 here
             } else if sim::neighborhood::visiting(&g.sim.world) {
                 format!("visiting {here}")
@@ -107,7 +113,7 @@ fn top_bar(ui: &mut Ui, g: &mut Game) {
                 format!("out at {here}")
             };
             ui.label(RichText::new(at).weak());
-            if !home && ui.small_button("🏠 Go Home").clicked() {
+            if !home && trip.is_none() && ui.small_button("🏠 Go Home").clicked() {
                 match g.sim.go_home() {
                     Ok(()) => g.check_lot_change(),
                     Err(e) => g.say(e),
@@ -376,9 +382,9 @@ fn neighborhood_window(ui: &mut Ui, g: &mut Game) {
     let Some(action) = action else { return };
     let result = match action {
         HoodAction::Play(l) => g.sim.play_household(l).map(|_| "Switched households."),
-        HoodAction::Visit(l) => g.sim.visit(l).map(|_| "Knock knock!"),
+        HoodAction::Visit(l) => g.sim.visit(l).map(|_| "They're walking over."),
         HoodAction::GoOut(l) => g.sim.go_out(l).map(|_| "Off they go!"),
-        HoodAction::GoHome => g.sim.go_home().map(|_| "Home sweet home."),
+        HoodAction::GoHome => g.sim.go_home().map(|_| "Heading home."),
         HoodAction::Move(l) => g.sim.move_household(l).map(|_| "Moved in!"),
         HoodAction::NewHousehold => {
             g.show_neighborhood = false;

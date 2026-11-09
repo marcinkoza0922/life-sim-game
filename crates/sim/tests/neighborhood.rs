@@ -118,6 +118,7 @@ fn outings_to_the_park() {
     let park = lot_of_kind(&sim, LotKind::Community, true)[0];
     let going = hood::travelers(&sim.world);
     sim.go_out(park).unwrap();
+    sim.finish_trip();
     assert!(!hood::at_home(&sim.world));
     for &e in &going {
         assert!(!sim.world.has::<Offlot>(e), "the family came along");
@@ -130,6 +131,7 @@ fn outings_to_the_park() {
     assert!(saw_locals, "neighbors turn up at the park");
     assert!(sim.world.res::<SimLog>().contains("too."));
     sim.go_home().unwrap();
+    sim.finish_trip();
     assert!(hood::at_home(&sim.world));
     assert_eq!(shape(&sim), home_shape);
     assert!(hood::visitors(&sim.world).is_empty(), "nobody followed them home");
@@ -215,11 +217,14 @@ fn ghosts_stay_with_their_graves() {
     let grave = sim.world.get::<Ghost>(grandpa).expect("buried in the yard").grave;
     assert!(sim.world.has::<sim::objects::ObjectInstance>(grave));
     let park = lot_of_kind(&sim, LotKind::Community, true)[0];
+    run_until_hour(&mut sim, 9);
     sim.go_out(park).unwrap();
-    sim.run_days(1);
+    sim.finish_trip();
+    sim.run_minutes(8 * 60);
     assert!(sim.world.has::<Ghost>(grandpa), "didn't move on while the grave was parked");
     assert!(sim.world.has::<Offlot>(grandpa));
     sim.go_home().unwrap();
+    sim.finish_trip();
     let grave = sim.world.get::<Ghost>(grandpa).unwrap().grave;
     assert!(sim.world.has::<sim::objects::ObjectInstance>(grave), "the ghost found its grave again");
     assert!(!sim.world.has::<Offlot>(grandpa));
@@ -318,21 +323,26 @@ fn visiting_the_neighbors() {
     };
     let going = hood::travelers(&sim.world);
     sim.visit(lot).unwrap();
-    assert_eq!(hood::active_lot(&sim.world), lot);
-    assert!(hood::visiting(&sim.world) && !hood::at_home(&sim.world));
-    let present = sim::sim::present_peons(&sim.world);
-    for e in going.iter().chain(&hosts) {
-        assert!(present.contains(e), "guests and hosts are both there");
+    assert_eq!(hood::active_lot(&sim.world), 0, "they walk over");
+    while hood::active_lot(&sim.world) != lot {
+        sim.tick();
     }
     for &e in &hosts {
         assert!(!sim.world.has::<Visitor>(e), "hosts aren't visitors in their own home");
         let pos = sim.world.get::<Transform>(e).unwrap().pos;
         assert!(sim.world.res::<Lot>().has_floor(0, glam::IVec2::new(pos.x as i32, pos.z as i32)), "hosts start indoors");
     }
+    sim.finish_trip();
+    assert!(hood::visiting(&sim.world) && !hood::at_home(&sim.world));
+    let present = sim::sim::present_peons(&sim.world);
+    for e in going.iter().chain(&hosts) {
+        assert!(present.contains(e), "guests and hosts are both there");
+    }
     assert!(sim.world.res::<SimLog>().contains("dropped in on"));
     assert!(sim.visit(lot).is_err(), "already there");
     sim.run_minutes(3 * 60);
     sim.go_home().unwrap();
+    sim.finish_trip();
     assert_eq!(shape(&sim), home_shape);
     for &e in &hosts {
         assert!(sim.world.has::<Offlot>(e), "hosts stay home when the guests leave");
@@ -352,9 +362,11 @@ fn hosts_at_work_come_home_to_their_own_lot() {
         (h.home.unwrap(), h.members[0])
     };
     sim.visit(lot).unwrap();
-    let until = sim.clock().tick + 30;
+    sim.finish_trip();
+    let until = sim.clock().tick + 300;
     sim.world.insert_one(host, AtWork { until, event_at: u64::MAX, event_done: true, school: false });
     sim.go_home().unwrap();
+    sim.finish_trip();
     assert!(sim.world.has::<Offlot>(host), "they'll come home to their place, not ours");
     sim.run_minutes(90);
     assert!(!sim::sim::present_peons(&sim.world).contains(&host) || sim.world.has::<Visitor>(host));
@@ -406,8 +418,10 @@ fn lattes_at_the_cafe_and_reps_at_the_gym() {
         if hood::active_lot(&sim.world) != lot {
             if !hood::at_home(&sim.world) {
                 sim.go_home().unwrap();
+                sim.finish_trip();
             }
             sim.go_out(lot).unwrap();
+            sim.finish_trip();
         }
         let o = find_object(&sim, obj);
         let i = {
@@ -462,4 +476,188 @@ fn old_streets_get_the_new_community_lots() {
     let b = sim::save::restore(save, GameData::embedded()).unwrap();
     let names: Vec<String> = b.world.res::<Neighborhood>().lots.iter().filter_map(|l| l.name.clone()).collect();
     assert_eq!(names, ["Gulch Green", "The Grumpy Bean", "Sweat Equity Gym"]);
+}
+
+fn tombstones(sim: &Sim, lot: usize) -> Vec<Option<Entity>> {
+    let hood = sim.world.res::<Neighborhood>();
+    hood.lots[lot].parked.as_ref().map(|p| p.objects.iter().filter(|o| o.def == "tombstone").map(|o| o.id).collect()).unwrap_or_default()
+}
+
+fn tombstones_here(sim: &Sim) -> usize {
+    sim.objects().iter().filter(|&&o| {
+        let inst = sim.world.get::<sim::objects::ObjectInstance>(o).unwrap();
+        sim.data().object(inst.def).id == "tombstone"
+    }).count()
+}
+
+#[test]
+fn neighbors_are_buried_at_home() {
+    let mut sim = street(71);
+    run_until_hour(&mut sim, 10);
+    let (lot, gran) = {
+        let h = sim.world.res::<Neighborhood>().households.iter().find(|h| h.members.len() >= 2).cloned().unwrap();
+        (h.home.unwrap(), h.members[0])
+    };
+    assert!(sim.world.has::<Offlot>(gran));
+    sim::life::die(&mut sim.world, gran, "old age");
+    sim.world.flush();
+    let ghost = sim.world.get::<Ghost>(gran).expect("a neighbor who dies off-lot still gets a ghost").clone();
+    assert!(sim.world.has::<Offlot>(gran), "haunting their own place, not ours");
+    assert_eq!(tombstones(&sim, lot), vec![Some(ghost.grave)], "the grave is in their yard");
+    assert_eq!(tombstones_here(&sim), 0);
+    // visit: the ghost is home with its grave
+    sim.visit(lot).unwrap();
+    sim.finish_trip();
+    let grave = sim.world.get::<Ghost>(gran).unwrap().grave;
+    assert!(sim.world.has::<sim::objects::ObjectInstance>(grave), "found its grave on the live lot");
+    assert!(!sim.world.has::<Offlot>(gran));
+    assert_eq!(tombstones_here(&sim), 1);
+    // and it survives a save
+    let text = sim.save_to_string().unwrap();
+    let loaded = Sim::load_from_str(&text, GameData::embedded()).unwrap();
+    let g = loaded.world.get::<Ghost>(gran).unwrap().grave;
+    assert!(loaded.world.has::<sim::objects::ObjectInstance>(g));
+}
+
+#[test]
+fn a_visitor_who_dies_here_is_buried_at_home() {
+    let mut sim = street(73);
+    run_until_hour(&mut sim, 10);
+    let n = hood::neighbors(&sim.world).into_iter().find(|&e| sim.world.get::<Age>(e).unwrap().stage >= LifeStage::Teen).unwrap();
+    let home = hood::home_of(&sim.world, n).unwrap();
+    sim.invite(n);
+    sim.tick();
+    assert!(sim.world.has::<Visitor>(n));
+    let before = tombstones_here(&sim);
+    sim::life::die(&mut sim.world, n, "old age");
+    sim.world.flush();
+    assert_eq!(tombstones_here(&sim), before, "not in our yard");
+    assert_eq!(tombstones(&sim, home).len(), 1, "in theirs");
+    assert!(sim.world.has::<Offlot>(n) && !sim.world.has::<Visitor>(n));
+}
+
+#[test]
+fn the_household_walks_between_lots() {
+    let mut sim = street(77);
+    run_until_hour(&mut sim, 10);
+    let park = community(&sim, "Gulch Green");
+    let going = hood::travelers(&sim.world);
+    let (walkers, babies): (Vec<Entity>, Vec<Entity>) = going.iter().partition(|&&e| sim.world.get::<Age>(e).unwrap().stage.can_walk());
+    assert!(!walkers.is_empty() && !babies.is_empty(), "starter family has a baby to carry");
+    let depth = sim.world.res::<Lot>().depth as f32;
+    sim.go_out(park).unwrap();
+    for &b in &babies {
+        assert!(sim.world.has::<Offlot>(b), "babies are carried");
+    }
+    // out to the sidewalk first; the lot only switches once they're off down the street
+    let mut on_sidewalk = false;
+    let mut minutes = 0;
+    while hood::active_lot(&sim.world) != park {
+        sim.tick();
+        minutes += 1;
+        on_sidewalk |= walkers.iter().any(|&e| sim.world.get::<Transform>(e).unwrap().pos.z > depth + 0.5 && !sim.world.has::<Offlot>(e));
+        assert!(minutes < 180, "they got there");
+    }
+    assert!(on_sidewalk, "walked out along the sidewalk");
+    assert!(minutes > 10, "it's a walk, not a teleport ({minutes} min)");
+    // in from the end of the street
+    let width = sim.world.res::<Lot>().width as f32;
+    for &e in &walkers {
+        let p = sim.world.get::<Transform>(e).unwrap().pos;
+        assert!(p.x < 0.0 || p.x > width, "starts down the street, out of sight ({p})");
+        assert!(sim::sim::present_peons(&sim.world).contains(&e));
+    }
+    assert!(sim.trip().is_some_and(|t| t.arriving));
+    assert!(sim.go_home().is_err(), "one trip at a time");
+    sim.finish_trip();
+    for &e in &going {
+        let p = sim.world.get::<Transform>(e).unwrap().pos;
+        assert!(!sim.world.has::<Offlot>(e) && p.z < depth && p.x > 0.0 && p.x < width, "everyone's on the lot ({p})");
+    }
+    assert!(sim.world.res::<SimLog>().contains("headed out to"));
+}
+
+#[test]
+fn neighbors_walk_over_and_back() {
+    let mut sim = street(79);
+    run_until_hour(&mut sim, 10);
+    let n = hood::neighbors(&sim.world).into_iter().find(|&e| sim.world.get::<Age>(e).unwrap().stage >= LifeStage::Teen).unwrap();
+    let (width, depth) = {
+        let lot = sim.world.res::<Lot>();
+        (lot.width as f32, lot.depth as f32)
+    };
+    sim.invite(n);
+    sim.tick();
+    let p = sim.world.get::<Transform>(n).unwrap().pos;
+    assert!((p.x < 0.0 || p.x > width) && p.z > depth, "turns up down the street ({p})");
+    sim.run_minutes(60);
+    let p = sim.world.get::<Transform>(n).unwrap().pos;
+    assert!(p.z < depth, "walked onto the lot ({p})");
+    // send them home: off down the sidewalk, then gone
+    sim.world.get_mut::<Visitor>(n).unwrap().leave_at = sim.clock().tick;
+    let mut left_by_sidewalk = false;
+    for _ in 0..120 {
+        sim.tick();
+        if sim.world.has::<Offlot>(n) {
+            break;
+        }
+        left_by_sidewalk |= sim.world.get::<Transform>(n).unwrap().pos.z > depth + 0.5;
+    }
+    assert!(sim.world.has::<Offlot>(n), "went home");
+    assert!(left_by_sidewalk);
+}
+
+#[test]
+fn guests_dont_sleep_over() {
+    let mut sim = street(83);
+    run_until_hour(&mut sim, 21);
+    let lot = sim.world.res::<Neighborhood>().households.iter().find(|h| h.members.len() >= 2).unwrap().home.unwrap();
+    sim.visit(lot).unwrap();
+    sim.finish_trip();
+    assert!(hood::visiting(&sim.world));
+    let guests = hood::travelers(&sim.world);
+    for &g in &guests {
+        sim.world.get_mut::<Needs>(g).unwrap().set(sim::data::Need::Energy, 12.0);
+    }
+    // the pie menu says no to the hosts' beds
+    let bed = sim.objects().into_iter().find(|&o| {
+        let inst = sim.world.get::<sim::objects::ObjectInstance>(o).unwrap();
+        sim.data().object(inst.def).interactions.iter().any(|i| i.id == "sleep" && i.allowed_stage(LifeStage::Adult))
+    }).unwrap();
+    let guest = guests.iter().copied().find(|e| sim.world.get::<Age>(*e).unwrap().stage > LifeStage::Toddler).unwrap();
+    let opts = sim::autonomy::menu_options(&sim.world, guest, bed);
+    assert!(opts.iter().any(|(n, _, r)| n == "Sleep" && r.as_ref().is_err_and(|e| e == "not their bed")), "{opts:?}");
+    // and nobody climbs in on their own; at midnight they're shown the door
+    let data = sim.data();
+    while sim.trip().is_none() {
+        sim.tick();
+        for &g in &guests {
+            let q = sim.world.get::<ActionQueue>(g).unwrap();
+            if let Some(CurrentAction { action: QueuedAction { kind: ActionKind::Object { obj, interaction }, .. }, .. }) = &q.current
+                && let Some(inst) = sim.world.get::<sim::objects::ObjectInstance>(*obj)
+            {
+                let tags = &data.object(inst.def).interactions[*interaction].tags;
+                assert!(!tags.iter().any(|t| t == "sleep"), "a guest went to bed");
+            }
+        }
+        assert!(sim.clock().hour() >= 21 || sim.clock().hour() == 0, "sent home by midnight");
+    }
+    assert_eq!(sim.clock().hour(), 0);
+    assert!(sim.world.res::<SimLog>().contains("their coats") || sim.world.res::<SimLog>().contains("let themselves out"));
+    sim.finish_trip();
+    assert!(hood::at_home(&sim.world));
+}
+
+#[test]
+fn the_park_closes_at_midnight() {
+    let mut sim = street(89);
+    run_until_hour(&mut sim, 20);
+    sim.go_out(community(&sim, "Gulch Green")).unwrap();
+    sim.finish_trip();
+    while sim.trip().is_none() {
+        sim.tick();
+    }
+    assert!(sim.world.res::<SimLog>().contains("closing for the night"));
+    sim.finish_trip();
+    assert!(hood::at_home(&sim.world));
 }
