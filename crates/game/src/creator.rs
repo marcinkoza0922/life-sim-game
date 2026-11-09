@@ -1,6 +1,6 @@
 //! Create-a-Household: edit names, life stages, genes/looks, personality and careers, then move
-//! the family into a house. Bodies are still the greybox placeholders; rigged per-stage base
-//! meshes will replace `scene::body_draws` without changing anything here.
+//! the family into a house. The line-up preview draws the rigged bodies from [`crate::peons`]
+//! (looks, height, build and hair style all apply live).
 
 use std::sync::Arc;
 

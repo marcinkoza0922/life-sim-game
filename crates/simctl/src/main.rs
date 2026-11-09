@@ -8,8 +8,12 @@
 //!     Runs many seeds and fails (exit 1) on invariants: nobody starves, needs don't flatline,
 //!     peons don't idle forever, the household doesn't go bankrupt immediately.
 //! simctl render [--seed S] [--minutes M] [--hour H] [--level L] [--yaw D] [--pitch D] [--dist M]
-//!               [--target X,Z] [--mode cutaway|up|down] [--size WxH] [--rooms] [--out FILE]
+//!               [--target X,Z] [--mode cutaway|up|down] [--size WxH] [--rooms] [--greybox] [--out FILE]
 //!     Runs the starter household for M minutes and renders the lot offscreen to a PNG.
+//! simctl lineup [--pose stand|walk|sit|lie|use|dance|exercise] [--time T] [--yaw D] [--pitch D]
+//!               [--dist M] [--size WxH] [--out FILE]
+//!     Renders every life stage's rigged body side by side (slim, average and heavy builds, all
+//!     hair styles) in one pose at clip time T seconds.
 //! ```
 
 use std::collections::BTreeMap;
@@ -44,12 +48,17 @@ struct RenderArgs {
     mode: String,
     size: (u32, u32),
     rooms: bool,
+    /// Draw greybox peons instead of the rigged models.
+    greybox: bool,
     out: String,
+    /// `lineup`: posture to show and clip time.
+    pose: String,
+    time: f32,
 }
 
 fn parse() -> Args {
     let mut a = Args { cmd: "run".into(), days: 3, seed: 1, seeds: 8, echo: false, log: None, manual: false, trace: None,
-        render: RenderArgs { minutes: 60, hour: None, level: 0, yaw: 35.0, pitch: 45.0, dist: 30.0, target: None, mode: "cutaway".into(), size: (1600, 1000), rooms: false, out: "out/render.png".into() } };
+        render: RenderArgs { minutes: 60, hour: None, level: 0, yaw: 35.0, pitch: 45.0, dist: 30.0, target: None, mode: "cutaway".into(), size: (1600, 1000), rooms: false, greybox: false, out: "out/render.png".into(), pose: "stand".into(), time: 0.0 } };
     let mut it = std::env::args().skip(1);
     if let Some(c) = it.next() {
         a.cmd = c;
@@ -79,6 +88,9 @@ fn parse() -> Args {
                 a.render.size = (v[0], v[1]);
             }
             "--rooms" => a.render.rooms = true,
+            "--greybox" => a.render.greybox = true,
+            "--pose" => a.render.pose = it.next().unwrap(),
+            "--time" => a.render.time = it.next().unwrap().parse().unwrap(),
             "--out" => a.render.out = it.next().unwrap(),
             other => {
                 eprintln!("unknown arg {other}");
@@ -260,11 +272,67 @@ fn main() {
             }
         }
         "render" => render(&a),
+        "lineup" => lineup(&a.render),
         other => {
-            eprintln!("unknown command {other}; try `run`, `check` or `render`");
+            eprintln!("unknown command {other}; try `run`, `check`, `render` or `lineup`");
             std::process::exit(2);
         }
     }
+}
+
+fn lineup(ra: &RenderArgs) {
+    use glam::{Mat4, Vec3};
+    use sim::components::{Appearance, Posture};
+    use sim::data::{LifeStage, Pose};
+    let gpu = hearth_render::Gpu::headless().expect("no GPU adapter");
+    let mut r = hearth_render::Renderer::new(gpu, hearth_render::wgpu::TextureFormat::Rgba8UnormSrgb);
+    let art = game::peons::PeonArt::load(&mut r).expect("peon models");
+    let (pose, walking) = match ra.pose.as_str() {
+        "walk" => (Pose::Stand, true),
+        "sit" => (Pose::Sit, false),
+        "lie" => (Pose::Lie, false),
+        "use" => (Pose::Use, false),
+        "dance" => (Pose::Dance, false),
+        "exercise" => (Pose::Exercise, false),
+        _ => (Pose::Stand, false),
+    };
+    let posture = Posture { pose, walking };
+    let stages = [LifeStage::Infant, LifeStage::Toddler, LifeStage::Child, LifeStage::Teen, LifeStage::Adult, LifeStage::Adult, LifeStage::Elder];
+    // skin, hair, shirt, pants
+    let looks: [[[f32; 3]; 4]; 4] = [
+        [[0.96, 0.8, 0.69], [0.35, 0.22, 0.12], [0.85, 0.3, 0.3], [0.25, 0.3, 0.5]],
+        [[0.55, 0.36, 0.24], [0.08, 0.06, 0.05], [0.3, 0.6, 0.4], [0.35, 0.3, 0.25]],
+        [[0.8, 0.6, 0.45], [0.85, 0.7, 0.35], [0.95, 0.85, 0.4], [0.2, 0.2, 0.22]],
+        [[0.36, 0.24, 0.17], [0.6, 0.2, 0.1], [0.4, 0.5, 0.9], [0.6, 0.55, 0.45]],
+    ];
+    let spacing = 1.2;
+    let n = stages.len() as f32;
+    let (w, h) = ra.size;
+    let target = Vec3::new(0.0, 0.7, 0.0);
+    // `render`'s camera defaults (yaw 35, pitch 45, dist 30) mean "not given": frame the whole row
+    let yaw = if ra.yaw == 35.0 { 0.0 } else { ra.yaw };
+    let pitch = if ra.pitch == 45.0 { 12.0 } else { ra.pitch };
+    let dist = if ra.dist == 30.0 { 9.0 } else { ra.dist };
+    let camera = hearth_render::Camera::orbit(target, yaw.to_radians(), pitch.to_radians(), dist, w as f32 / h as f32);
+    let mut frame = hearth_render::Frame::new(camera);
+    frame.shadow_radius = 6.0;
+    frame.draws.push(hearth_render::Draw::new(r.builtins.cube, Mat4::from_scale_rotation_translation(Vec3::new(12.0, 0.1, 6.0), glam::Quat::IDENTITY, Vec3::new(0.0, -0.05, 0.0)), [0.75, 0.72, 0.68]).rough(0.9));
+    for (i, stage) in stages.iter().enumerate() {
+        let x = (i as f32 - (n - 1.0) * 0.5) * spacing;
+        let [skin, hair, shirt, pants] = looks[i % looks.len()];
+        let app = Appearance { skin, hair, shirt, pants, height: 1.0, build: [0.5, 0.2, 0.5, 0.0, 0.5, 1.0, 0.6][i], hair_style: (i % 4) as u8 };
+        let y = if pose == Pose::Sit && *stage != LifeStage::Infant { 0.45 } else { 0.0 };
+        if pose == Pose::Sit && *stage != LifeStage::Infant {
+            frame.draws.push(hearth_render::Draw::new(r.builtins.cube, Mat4::from_scale_rotation_translation(Vec3::new(0.5, 0.45, 0.5), glam::Quat::IDENTITY, Vec3::new(x, 0.225, -0.05)), [0.55, 0.4, 0.3]));
+        }
+        let yaw = 0.0;
+        art.draw((&mut frame.skinned, &mut frame.joints), Vec3::new(x, y, 0.0), yaw, *stage, &app, &posture, &mut game::peons::AnimState::default(), ra.time, game::peons::Look::Normal);
+    }
+    if let Some(dir) = std::path::Path::new(&ra.out).parent() {
+        std::fs::create_dir_all(dir).ok();
+    }
+    r.save_png(&frame, w, h, std::path::Path::new(&ra.out)).expect("save png");
+    println!("{} skinned draws -> {}", r.stats.skinned, ra.out);
 }
 
 fn render(a: &Args) {
@@ -307,7 +375,8 @@ fn render(a: &Args) {
         focus: cam.focus(ra.level),
         ..Default::default()
     };
-    let out = build(&sim, &r.builtins, camera, &opts);
+    let peons = if ra.greybox { None } else { Some(game::peons::PeonArt::load(&mut r).expect("peon models")) };
+    let out = build(&sim, &r.builtins, peons.as_ref(), &mut game::peons::Animator::default(), camera, &opts);
     if let Some(dir) = std::path::Path::new(&ra.out).parent() {
         std::fs::create_dir_all(dir).ok();
     }
