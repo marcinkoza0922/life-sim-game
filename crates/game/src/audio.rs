@@ -1,10 +1,17 @@
+//! Game audio: one output with Voices, SFX and Music volumes under a master volume.
+//!
 //! Gibberish voices. Speech bubbles are synthesized on the fly (no audio assets): each syllable is
 //! a consonant (noise burst, plosive click or nasal hum) followed by a vowel made from a glottal
 //! pulse train run through two formant resonators. Pitch comes from life stage plus a per-peon
 //! offset; '!' raises it and '?' bends the end upward.
 
 use std::collections::HashMap;
+use std::io::Cursor;
 use std::num::NonZero;
+use std::sync::Arc;
+
+use rodio::Source;
+use serde::{Deserialize, Serialize};
 
 use sim::Entity;
 use sim::data::LifeStage;
@@ -206,14 +213,88 @@ pub fn synth(text: &str, voice: Voice) -> Vec<f32> {
     out
 }
 
-/// Plays voice lines on the default output device. Silently does nothing without one.
+/// Encoded sound file (Ogg Vorbis or WAV), shared between plays.
+pub type Clip = Arc<[u8]>;
+
+/// Player volume settings, kept in `settings.ron` next to `saves/`.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Volumes {
+    pub master: f32,
+    pub voices: f32,
+    pub sfx: f32,
+    pub music: f32,
+}
+
+impl Default for Volumes {
+    fn default() -> Self {
+        Volumes { master: 0.8, voices: 0.75, sfx: 0.8, music: 0.5 }
+    }
+}
+
+impl Volumes {
+    pub const FILE: &'static str = "settings.ron";
+
+    pub fn load() -> Volumes {
+        std::fs::read_to_string(Self::FILE).ok().and_then(|s| ron::from_str(&s).ok()).unwrap_or_default()
+    }
+
+    pub fn save(&self) {
+        if let Ok(s) = ron::ser::to_string_pretty(self, Default::default())
+            && let Err(e) = std::fs::write(Self::FILE, s)
+        {
+            log::warn!("couldn't save {}: {e}", Self::FILE);
+        }
+    }
+}
+
+/// Seconds for a loop or music track to fade in or out.
+const LOOP_FADE: f32 = 0.4;
+const MUSIC_FADE: f32 = 2.0;
+
+/// A playing loop (or music track) with its own player so it can be faded and stopped.
+struct Fader {
+    player: rodio::Player,
+    gain: f32,
+    level: f32,
+    /// Fading out; dropped at silence.
+    leaving: bool,
+}
+
+impl Fader {
+    fn new(sink: &rodio::MixerDeviceSink, clip: &Clip, gain: f32) -> Option<Fader> {
+        let dec = rodio::Decoder::new_looped(Cursor::new(clip.clone()))
+            .map_err(|e| log::warn!("bad sound clip: {e}"))
+            .ok()?;
+        let player = rodio::Player::connect_new(sink.mixer());
+        player.set_volume(0.0);
+        player.append(dec);
+        Some(Fader { player, gain, level: 0.0, leaving: false })
+    }
+
+    /// Steps the fade; false once it has faded out.
+    fn step(&mut self, dt: f32, fade: f32, bus: f32) -> bool {
+        let d = dt / fade;
+        self.level = if self.leaving { self.level - d } else { self.level + d }.clamp(0.0, 1.0);
+        self.player.set_volume(self.level * self.gain * bus);
+        !(self.leaving && self.level <= 0.0)
+    }
+}
+
+/// Plays voices, sound effects, looping sounds and music on the default output device.
+/// Silently does nothing without one.
 pub struct Audio {
     sink: Option<rodio::MixerDeviceSink>,
-    pub volume: f32,
+    pub volumes: Volumes,
+    /// Everything silent (M).
     pub muted: bool,
+    /// World sounds (voices, loops) silent; music keeps playing.
+    pub paused: bool,
     /// Last spoken line per peon, so each bubble is voiced once.
     said: HashMap<Entity, String>,
     budget: f32,
+    loops: HashMap<u64, Fader>,
+    music: Vec<(Clip, Fader)>,
 }
 
 impl Audio {
@@ -228,16 +309,29 @@ impl Audio {
                 None
             }
         };
-        Audio { sink, volume: 0.6, muted: false, said: HashMap::new(), budget: 3.0 }
+        Audio { sink, ..Self::disabled() }
     }
 
-    /// A muted instance that never touches the audio device (tests, screenshots).
+    /// A silent instance that never touches the audio device (tests, screenshots).
     pub fn disabled() -> Audio {
-        Audio { sink: None, volume: 0.0, muted: true, said: HashMap::new(), budget: 0.0 }
+        Audio {
+            sink: None,
+            volumes: Volumes::default(),
+            muted: false,
+            paused: false,
+            said: HashMap::new(),
+            budget: 3.0,
+            loops: HashMap::new(),
+            music: Vec::new(),
+        }
     }
 
     pub fn available(&self) -> bool {
         self.sink.is_some()
+    }
+
+    fn bus(&self, bus: f32, world: bool) -> f32 {
+        if self.muted || (world && self.paused) { 0.0 } else { self.volumes.master * bus }
     }
 
     /// Call once per frame with every visible speaker: (peon, stage, line, loudness 0..1).
@@ -245,12 +339,13 @@ impl Audio {
     pub fn update(&mut self, dt: f32, speakers: &[(Entity, LifeStage, String, f32)]) {
         self.budget = (self.budget + dt * 2.0).min(3.0);
         self.said.retain(|e, _| speakers.iter().any(|s| s.0 == *e));
+        let silent = self.bus(self.volumes.voices, true) <= 0.0;
         for (e, stage, line, loud) in speakers {
             if self.said.get(e) == Some(line) {
                 continue;
             }
             self.said.insert(*e, line.clone());
-            if self.muted || self.budget < 1.0 || *loud <= 0.05 {
+            if silent || self.budget < 1.0 || *loud <= 0.05 {
                 continue;
             }
             self.budget -= 1.0;
@@ -261,7 +356,7 @@ impl Audio {
     pub fn say(&self, line: &str, voice: Voice, loudness: f32) {
         let Some(sink) = &self.sink else { return };
         let mut samples = synth(line, voice);
-        let g = self.volume * loudness.clamp(0.0, 1.0);
+        let g = self.bus(self.volumes.voices, true) * loudness.clamp(0.0, 1.0);
         for s in &mut samples {
             *s *= g;
         }
@@ -270,6 +365,70 @@ impl Audio {
         }
         let buf = rodio::buffer::SamplesBuffer::new(NonZero::new(1).unwrap(), NonZero::new(SAMPLE_RATE).unwrap(), samples);
         sink.mixer().add(buf);
+    }
+
+    /// Plays a one-shot sound effect at `gain` (0..1, e.g. by camera distance).
+    pub fn play(&self, clip: &Clip, gain: f32) {
+        let Some(sink) = &self.sink else { return };
+        let g = self.bus(self.volumes.sfx, false) * gain.clamp(0.0, 1.0);
+        if g <= 0.01 {
+            return;
+        }
+        match rodio::Decoder::new(Cursor::new(clip.clone())) {
+            Ok(dec) => sink.mixer().add(dec.amplify(g)),
+            Err(e) => log::warn!("bad sound clip: {e}"),
+        }
+    }
+
+    /// Sets the looping sounds that should be playing this frame: (key, clip, gain). Keys are
+    /// stable per source (e.g. a peon's entity bits); new keys fade in, missing ones fade out.
+    pub fn update_loops(&mut self, dt: f32, wanted: &[(u64, Clip, f32)]) {
+        if let Some(sink) = &self.sink {
+            for (key, clip, gain) in wanted {
+                match self.loops.get_mut(key) {
+                    Some(f) => {
+                        f.gain = *gain;
+                        f.leaving = false;
+                    }
+                    None => {
+                        if let Some(f) = Fader::new(sink, clip, *gain) {
+                            self.loops.insert(*key, f);
+                        }
+                    }
+                }
+            }
+        }
+        for (key, f) in &mut self.loops {
+            if !wanted.iter().any(|w| w.0 == *key) {
+                f.leaving = true;
+            }
+        }
+        let bus = self.bus(self.volumes.sfx, true);
+        self.loops.retain(|_, f| f.step(dt, LOOP_FADE, bus));
+    }
+
+    /// Cross-fades to `track` (None = silence). Calling again with the same track does nothing.
+    pub fn update_music(&mut self, dt: f32, track: Option<&Clip>) {
+        let current = self.music.iter().find(|(_, f)| !f.leaving).map(|(c, _)| c.clone());
+        if current.as_ref().map(|c| c.as_ptr()) != track.map(|c| c.as_ptr()) {
+            for (_, f) in &mut self.music {
+                f.leaving = true;
+            }
+            if let (Some(sink), Some(clip)) = (&self.sink, track) {
+                if let Some(i) = self.music.iter().position(|(c, _)| Arc::ptr_eq(c, clip)) {
+                    self.music[i].1.leaving = false;
+                } else if let Some(f) = Fader::new(sink, clip, 1.0) {
+                    self.music.push((clip.clone(), f));
+                }
+            }
+        }
+        let bus = self.bus(self.volumes.music, false);
+        self.music.retain_mut(|(_, f)| f.step(dt, MUSIC_FADE, bus));
+    }
+
+    /// Number of loops and music tracks currently held (playing or fading).
+    pub fn active(&self) -> (usize, usize) {
+        (self.loops.len(), self.music.len())
     }
 }
 
@@ -319,5 +478,67 @@ mod tests {
         let b = synth("aaaa", Voice { speed: 1.0, wobble: 0.0, ..baby });
         let rate = |s: &[f32]| zero_crossings(s) as f32 / s.len() as f32;
         assert!(rate(&b) > rate(&a), "{} vs {}", rate(&b), rate(&a));
+    }
+
+    #[test]
+    fn volumes_round_trip_and_fill_missing_fields() {
+        let v = Volumes { master: 0.3, voices: 0.1, sfx: 0.9, music: 0.0 };
+        let s = ron::to_string(&v).unwrap();
+        assert_eq!(ron::from_str::<Volumes>(&s).unwrap(), v);
+        let partial: Volumes = ron::from_str("(music: 0.2)").unwrap();
+        assert_eq!(partial, Volumes { music: 0.2, ..Volumes::default() });
+    }
+
+    #[test]
+    fn muting_and_pausing_silence_the_right_buses() {
+        let mut a = Audio::disabled();
+        assert!(a.bus(1.0, true) > 0.0);
+        a.paused = true;
+        assert_eq!(a.bus(1.0, true), 0.0, "world sounds stop while paused");
+        assert!(a.bus(1.0, false) > 0.0, "music keeps playing while paused");
+        a.muted = true;
+        assert_eq!(a.bus(1.0, false), 0.0);
+    }
+
+    #[test]
+    fn without_a_device_nothing_is_held() {
+        let mut a = Audio::disabled();
+        let clip: Clip = Arc::from(&b"not a sound"[..]);
+        a.play(&clip, 1.0);
+        a.update_loops(0.1, &[(1, clip.clone(), 1.0)]);
+        a.update_music(0.1, Some(&clip));
+        assert_eq!(a.active(), (0, 0));
+    }
+
+    /// 16-bit mono PCM WAV of `n` samples of a 440 Hz tone.
+    pub(crate) fn wav(n: u32) -> Vec<u8> {
+        let mut b = Vec::new();
+        let data = n * 2;
+        b.extend_from_slice(b"RIFF");
+        b.extend_from_slice(&(36 + data).to_le_bytes());
+        b.extend_from_slice(b"WAVEfmt ");
+        b.extend_from_slice(&16u32.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes());
+        b.extend_from_slice(&SAMPLE_RATE.to_le_bytes());
+        b.extend_from_slice(&(SAMPLE_RATE * 2).to_le_bytes());
+        b.extend_from_slice(&2u16.to_le_bytes());
+        b.extend_from_slice(&16u16.to_le_bytes());
+        b.extend_from_slice(b"data");
+        b.extend_from_slice(&data.to_le_bytes());
+        for i in 0..n {
+            let v = (i as f32 * 440.0 * std::f32::consts::TAU / SAMPLE_RATE as f32).sin() * 8000.0;
+            b.extend_from_slice(&(v as i16).to_le_bytes());
+        }
+        b
+    }
+
+    #[test]
+    fn wav_clips_decode_and_loop() {
+        let clip: Clip = Arc::from(wav(100));
+        let once = rodio::Decoder::new(Cursor::new(clip.clone())).unwrap().count();
+        assert_eq!(once, 100);
+        let looped = rodio::Decoder::new_looped(Cursor::new(clip)).unwrap().take(250).count();
+        assert_eq!(looped, 250, "a looped clip keeps going");
     }
 }

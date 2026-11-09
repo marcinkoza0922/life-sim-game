@@ -20,7 +20,7 @@ Written in Rust on a custom, fit-to-purpose ECS.
 
 | Area | Decision |
 |---|---|
-| Engine | Custom archetype ECS + wgpu 30 + winit 0.30; crates for math (glam), glTF, audio (kira); game UI is our own `hearth_ui` (egui 0.36 only for developer windows) |
+| Engine | Custom archetype ECS + wgpu 30 + winit 0.30; crates for math (glam), glTF, audio (rodio: Ogg Vorbis/WAV decoding, mixing); game UI is our own `hearth_ui` (egui 0.36 only for developer windows) |
 | Platform | Linux first (Vulkan). Cross-platform later — avoid platform-specific code |
 | Visual style | Semi-realistic PBR; greybox placeholders first, glTF art later |
 | Camera | Free orbit/zoom/pan, wall cutaway, upper-floor hiding |
@@ -68,6 +68,10 @@ assets/
   blender/       make_peons.py: builds the bodies, rig, hair and clips headlessly
   vectorcraft/   make_icons.py: UI icon SVGs (icons/, sheet.svg) rasterised by vectorcraft-cli
   ui/icons/      <name>.png 128 px UI icons (generated; embedded by game/src/icons.rs)
+  audio/sfx/     <id>.ogg sound effects (embedded by game/src/sounds.rs)
+  audio/music/   <id>.ogg Kenney Music Loops (CC0; embedded by game/src/sounds.rs)
+  audio/         fetch_sfx.py: downloads pinned CC0 sounds and cuts them; CREDITS.md
+  soundcraft/    make_sfx.py: builds each sound as a SoundCraft session headlessly
   fonts/         Nunito, Fredoka, Noto Emoji (OFL, licences alongside; embedded by hearth_ui)
 docs/
 ```
@@ -526,3 +530,18 @@ Added since:
   (Charisma × 5%) or beaten at rock-paper-scissors (10%), not for old age, and not again within 24 h.
   Everything that can break now has a Repair, and ghosts only break things that can be fixed. Over 30
   seeds × 40 days, accidents caused one death; old age caused the rest.
+
+- **Audio engine & sound effects:** `game::audio::Audio` mixes voices, one-shots, fading loops and
+  cross-faded music under Master/Voices/Effects/Music volumes (☰ Game menu, saved to `settings.ron`);
+  pause silences the world but not music, M mutes all. 23 effects, embedded by `game::sounds`:
+  18 are CC0 recordings (Kenney, rubberduck, Bret Bernhoft, Unicae Games; `assets/audio/fetch_sfx.py`,
+  credits in `assets/audio/CREDITS.md`), and the 5 with no good recording (TV, stir, scrub, treadmill,
+  snore) are synthesized by `assets/soundcraft/make_sfx.py`. Interactions loop a sound while performed (`sfx:` on the interaction, else
+  implied by the body clip: chop, stir, scrub, type, TV, shower, snore), one voice per sound at the
+  loudest source's distance; walkers get footsteps at 1x/2x; Build/Buy actions thunk or crumble by
+  whether they cost or refunded money; Sell jingles; Money/Career/Life/Death log entries chime; UI
+  clicks tick. `door_open`/`door_close`/`pickup` are built but unused until doors animate.
+- **Music:** 13 Kenney Music Loops (CC0). `sounds::Jukebox` plays a playlist per scene (Day, Night 22:00–6:00,
+  Build/Buy, Create-a-Household); a track loops for 60–100 s then the next cross-fades in, with a 30% chance
+  of a 30–90 s quiet break between tracks; changing scene switches playlist at once. Music keeps playing
+  while paused and has its own volume slider.

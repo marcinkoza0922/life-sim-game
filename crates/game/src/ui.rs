@@ -456,6 +456,7 @@ fn game_menu(ui: &mut Ui, g: &mut Game, anchor: Rect) {
     let has_save = std::path::Path::new(QUICKSAVE).exists();
     let mut roofs = g.show_roofs;
     let mut mute = g.mute;
+    let mut vol = g.volumes;
     let keep = popup_card(ui, "game-menu", pos, w, anchor, |ui| {
         for (key, label, color, enabled) in [
             ("save", "💾 Quick save", TEAL, true),
@@ -477,7 +478,11 @@ fn game_menu(ui: &mut Ui, g: &mut Game, anchor: Rect) {
                 mute = !mute;
             }
         });
+        for (label, v) in [("Volume", &mut vol.master), ("Voices", &mut vol.voices), ("Effects", &mut vol.sfx), ("Music", &mut vol.music)] {
+            ui.slider(label, v, 0.0, 1.0, 0.05, w - 20.0);
+        }
     });
+    g.volumes = vol;
     g.show_roofs = roofs;
     g.mute = mute;
     match act {

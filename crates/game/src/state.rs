@@ -123,6 +123,10 @@ pub struct Game {
     /// Day of the last autosave (`None` until the first day change is seen).
     pub autosave_day: Option<u64>,
     pub mute: bool,
+    /// Sound volumes (☰ Game menu); saved to `settings.ron` when changed.
+    pub volumes: crate::audio::Volumes,
+    /// One-shot sound effects requested this frame (ids in `sounds::IDS`), played by the app.
+    pub sfx: Vec<&'static str>,
     /// The lot that was live last frame (see [`Game::check_lot_change`]).
     pub shown_lot: usize,
     /// Interface-only state (open menus, tabs).
@@ -171,6 +175,8 @@ impl Game {
             save_name: String::new(),
             autosave_day: None,
             mute: false,
+            volumes: Default::default(),
+            sfx: Vec::new(),
             shown_lot,
             hud: Default::default(),
         }
@@ -222,6 +228,9 @@ impl Game {
             let new = (total - self.log_seen) as usize;
             let skip = log.entries.len().saturating_sub(new);
             for e in &log.entries[skip..] {
+                if let Some(s) = crate::sounds::for_log(e.kind) {
+                    self.sfx.push(s);
+                }
                 if e.kind != sim::log::LogKind::Debug {
                     self.toasts.push(Toast { text: e.text.clone(), kind: e.kind, born: self.time });
                 }
@@ -541,6 +550,32 @@ impl Game {
 
     /// Mouse press on the world with the current tool.
     pub fn tool_press(&mut self, p: Vec3) {
+        let before = self.funds();
+        self.tool_press_inner(p);
+        self.build_sfx(before);
+    }
+
+    pub fn tool_release(&mut self, p: Vec3) {
+        let before = self.funds();
+        self.tool_release_inner(p);
+        self.build_sfx(before);
+    }
+
+    fn funds(&self) -> i64 {
+        self.sim.world.res::<sim::economy::Household>().funds
+    }
+
+    /// Build/Buy feedback: anything that cost money thunks into place, refunds crumble.
+    fn build_sfx(&mut self, before: i64) {
+        let after = self.funds();
+        if after < before {
+            self.sfx.push(if matches!(self.tool, Tool::Place { .. }) { "place" } else { "build_wall" });
+        } else if after > before {
+            self.sfx.push("demolish");
+        }
+    }
+
+    fn tool_press_inner(&mut self, p: Vec3) {
         let tile = Lot::tile_of(p);
         let corner = IVec2::new(p.x.round() as i32, p.z.round() as i32);
         match self.tool.clone() {
@@ -591,7 +626,7 @@ impl Game {
     }
 
     /// Mouse release: finish drag tools.
-    pub fn tool_release(&mut self, p: Vec3) {
+    fn tool_release_inner(&mut self, p: Vec3) {
         self.sculpting = None;
         let Some(start) = self.drag_start.take() else { return };
         let tile = Lot::tile_of(p);

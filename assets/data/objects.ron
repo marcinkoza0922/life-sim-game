@@ -78,8 +78,8 @@
         ],
         slots: [(stand: (0.5, 1.5), use_at: (0.5, 0.0, 1.2), facing: 180.0)],
         interactions: [
-            (id: "wash_hands", name: "Wash Hands", anim: "scrub", rates: {Hygiene: 120.0}, duration: Minutes(6), pose: Use, tags: ["hygiene"], bubble: "soap"),
-            (id: "wash_dishes", name: "Do the Dishes", anim: "scrub", prop: "sponge", rates: {Environment: 30.0, Fun: -15.0}, ads: {Environment: 10.0}, duration: Minutes(20), pose: Use,
+            (id: "wash_hands", name: "Wash Hands", anim: "scrub", sfx: "faucet", rates: {Hygiene: 120.0}, duration: Minutes(6), pose: Use, tags: ["hygiene"], bubble: "soap"),
+            (id: "wash_dishes", name: "Do the Dishes", anim: "scrub", sfx: "faucet", prop: "sponge", rates: {Environment: 30.0, Fun: -15.0}, ads: {Environment: 10.0}, duration: Minutes(20), pose: Use,
              tags: ["chore", "neat"], min_dirt: 0.2, cleans: true, bubble: "plate"),
         ],
         dirt_per_use: 0.03,
@@ -549,7 +549,7 @@
         ],
         slots: [(stand: (0.5, 2.5), use_at: (0.5, 0.14, 1.1), facing: 180.0)],
         interactions: [
-            (id: "run", name: "Run Nowhere", rates: {Fun: 15.0, Hygiene: -30.0, Energy: -20.0}, ads: {Fun: 20.0}, duration: Minutes(45), pose: Exercise,
+            (id: "run", name: "Run Nowhere", sfx: "treadmill", rates: {Fun: 15.0, Hygiene: -30.0, Energy: -20.0}, ads: {Fun: 20.0}, duration: Minutes(45), pose: Exercise,
              stages: [Teen, YoungAdult, Adult, Elder], tags: ["exercise"], skill: (Fitness, 5.0), bubble: "sweat",
              outcomes: [Log(chance: 0.05, text: "{name} ran a 10k on the treadmill and celebrated by taking the elevator.")]),
             (id: "repair", name: "Repair", anim: "fix", prop: "wrench", rates: {Fun: -10.0}, duration: Minutes(50), pose: Use, tags: ["repair"], skill: (Handiness, 4.0),

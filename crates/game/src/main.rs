@@ -5,12 +5,12 @@
 //! Home focus · L story log · F1 inspector · F2 autonomy · F3 overlays · F4 profiler · F8 settings ·
 //! F12 screenshot · Esc cancel.
 //!
-//! Ctrl+S quick save · Ctrl+O quick load · ☰ Game → Saves… · `--continue` resumes the newest save · T roofs · M mute voices.
+//! Ctrl+S quick save · Ctrl+O quick load · ☰ Game → Saves… · `--continue` resumes the newest save · T roofs · M mute.
 //!
 //! Test hooks: `--seed N --minutes M --screenshot-after FRAMES PATH --mode live|buy|build --level L
 //! --debug --size WxH --cam YAW,PITCH,DIST --menu-on OBJECT_ID --speed I --load SAVE --creator --walls up|cutaway|down --show saves|neighborhood`
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -141,9 +141,94 @@ struct App {
     last: Instant,
     frames: u32,
     audio: game::audio::Audio,
+    /// Seconds until changed volumes are written to `settings.ron` (debounces slider drags).
+    volumes_save_in: Option<f32>,
+    /// Seconds until each walking peon's next footstep.
+    steps: HashMap<sim::Entity, f32>,
+    /// When each one-shot last played (app seconds), so bursts don't stack.
+    last_sfx: HashMap<&'static str, f32>,
+    clock: f32,
+    jukebox: game::sounds::Jukebox,
 }
 
 impl App {
+    /// Interaction loops, footsteps and queued one-shots (Build/Buy, notifications).
+    fn world_sounds(&mut self, dt: f32, eye: glam::Vec3) {
+        use game::sounds;
+        use sim::components::{AtWork, Offlot, Posture, Transform};
+        self.clock += dt;
+        let speed = SPEEDS[self.game.speed].0;
+        let w = &self.game.sim.world;
+        let mut loops: Vec<(u64, game::audio::Clip, f32)> = Vec::new();
+        let mut steps = Vec::new();
+        for (e, tf, posture) in w.query_filtered::<(sim::Entity, &Transform, &Posture), (hearth_ecs::Without<AtWork>, hearth_ecs::Without<Offlot>)>().iter() {
+            if tf.level() > self.game.level {
+                continue;
+            }
+            let dist = (tf.pos - eye).length();
+            if posture.walking {
+                let gain = sounds::falloff(dist);
+                if gain > 0.0 {
+                    steps.push((e, gain));
+                }
+            } else if let Some(id) = sounds::loop_for(posture.sfx.as_deref(), posture.anim.as_deref()) {
+                let gain = sounds::loop_gain(id, dist);
+                if gain <= 0.0 {
+                    continue;
+                }
+                // one voice per sound, at the loudest source (three people watching one TV)
+                let key = id.bytes().fold(0u64, |h, b| h.wrapping_mul(31).wrapping_add(b as u64));
+                match loops.iter_mut().find(|l| l.0 == key) {
+                    Some(l) => l.2 = l.2.max(gain),
+                    None => loops.extend(sounds::clip(id).map(|c| (key, c, gain))),
+                }
+            }
+        }
+        self.audio.update_loops(dt, &loops);
+
+        let scene = if self.game.creator.is_some() {
+            sounds::Scene::Creator
+        } else if matches!(self.game.mode, Mode::Build | Mode::Buy) {
+            sounds::Scene::Build
+        } else {
+            let h = w.res::<sim::time::Clock>().hour();
+            if !(6..22).contains(&h) { sounds::Scene::Night } else { sounds::Scene::Day }
+        };
+        let track = self.jukebox.update(dt, scene).and_then(sounds::track);
+        self.audio.update_music(dt, track.as_ref());
+
+        // footsteps: a step every 0.42 s of game-speed time, only at 1x/2x so ultra isn't a stampede
+        self.steps.retain(|e, _| steps.iter().any(|s| s.0 == *e));
+        if speed <= 3.0 && !self.game.paused {
+            let mut budget = 4;
+            for (e, gain) in steps {
+                let t = self.steps.entry(e).or_insert((e.to_bits() % 7) as f32 * 0.06);
+                *t -= dt * speed;
+                if *t <= 0.0 {
+                    *t += 0.42;
+                    if budget > 0 {
+                        budget -= 1;
+                        let id = if e.to_bits() % 2 == 0 { "step_a" } else { "step_b" };
+                        if let Some(c) = sounds::clip(id) {
+                            self.audio.play(&c, gain * 0.35);
+                        }
+                    }
+                }
+            }
+        }
+
+        for id in std::mem::take(&mut self.game.sfx) {
+            let gap = if matches!(id, "notify" | "cash") { 0.6 } else { 0.08 };
+            if self.last_sfx.get(id).is_some_and(|t| self.clock - t < gap) {
+                continue;
+            }
+            self.last_sfx.insert(id, self.clock);
+            if let Some(c) = sounds::clip(id) {
+                self.audio.play(&c, 1.0);
+            }
+        }
+    }
+
     fn new(args: Args) -> App {
         let load = args.load.clone().or_else(|| {
             if !args.resume {
@@ -197,8 +282,13 @@ impl App {
         }
         game.log_seen = game.sim.world.res::<sim::log::SimLog>().total;
         // automated captures stay silent
-        let audio = if args.screenshot_after.is_some() { game::audio::Audio::disabled() } else { game::audio::Audio::new() };
-        App { args, game, gfx: None, cursor: (0.0, 0.0), keys: HashSet::new(), rmb: false, mmb: false, lmb_down_at: None, last: Instant::now(), frames: 0, audio }
+        let audio = if args.screenshot_after.is_some() {
+            game::audio::Audio::disabled()
+        } else {
+            game.volumes = game::audio::Volumes::load();
+            game::audio::Audio::new()
+        };
+        App { args, game, gfx: None, cursor: (0.0, 0.0), keys: HashSet::new(), rmb: false, mmb: false, lmb_down_at: None, last: Instant::now(), frames: 0, audio, volumes_save_in: None, steps: HashMap::new(), last_sfx: HashMap::new(), clock: 0.0, jukebox: Default::default() }
     }
 
     fn ndc(&self) -> Option<(f32, f32)> {
@@ -282,6 +372,7 @@ impl App {
                     && let Some(Pick::Object(e)) = g.hover_pick.clone()
                         && let Some(v) = g.sim.sell_object(e) {
                             g.say(format!("Sold for ${v}"));
+                            g.sfx.push("sell");
                         }
             }
             KeyCode::F12 => {
@@ -328,6 +419,7 @@ impl App {
                     if let Some(Pick::Object(e)) = g.pick(&cam, ndc)
                         && let Some(v) = g.sim.sell_object(e) {
                             g.say(format!("Sold for ${v}"));
+                            g.sfx.push("sell");
                         }
                 }
                 Tool::Place { .. } => {
@@ -415,7 +507,19 @@ impl App {
 
         // voices for visible speakers (louder when the camera is close)
         {
-            self.audio.muted = self.game.mute || self.game.paused;
+            self.audio.muted = self.game.mute;
+            self.audio.paused = self.game.paused;
+            if self.audio.available() && self.audio.volumes != self.game.volumes {
+                self.volumes_save_in = Some(1.0);
+            }
+            self.audio.volumes = self.game.volumes;
+            if let Some(t) = self.volumes_save_in.as_mut() {
+                *t -= dt;
+                if *t <= 0.0 {
+                    self.game.volumes.save();
+                    self.volumes_save_in = None;
+                }
+            }
             let w = &self.game.sim.world;
             let eye = cam.eye;
             let mut speakers = Vec::new();
@@ -434,6 +538,7 @@ impl App {
                 speakers.clear();
             }
             self.audio.update(dt, &speakers);
+            self.world_sounds(dt, eye);
         }
 
         if let Some(gfx) = self.gfx.as_mut() {
@@ -466,6 +571,9 @@ impl App {
         gfx.ui.begin_frame(dt, size_px);
         ui::draw(&mut gfx.ui, &mut self.game, &cx);
         gfx.ui.end_frame();
+        if gfx.ui.clicks > 0 {
+            self.game.sfx.push("ui_click");
+        }
         gfx.ui_renderer.prepare(&gfx.renderer.gpu.device, &gfx.renderer.gpu.queue, &mut gfx.ui, size_px);
         // developer windows
         let raw = gfx.egui_state.take_egui_input(&gfx.window);

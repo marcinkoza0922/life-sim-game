@@ -235,11 +235,14 @@ pub struct Posture {
     /// Prop id held (see `PropDef`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prop: Option<String>,
+    /// Looping sound id for the current interaction (see `InteractionDef::sfx`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sfx: Option<String>,
 }
 
 impl Posture {
     pub fn performing(pose: Pose, anim: Option<String>, prop: Option<String>) -> Posture {
-        Posture { pose, walking: false, anim, prop }
+        Posture { pose, walking: false, anim, prop, sfx: None }
     }
 }
 

@@ -24,7 +24,8 @@ Current pipeline: object art is greybox primitives with flat PBR values in `asse
 `assets/models/*.glb` (embedded via `include_bytes!`); voices are synthesized in `game/src/audio.rs`;
 UI is our own `hearth_ui` crate (egui only for F1–F8 developer windows), with fonts bundled from
 `assets/fonts/`. Material textures (`assets/textures/<id>/`, see its README) are box-projected, so they
-need no UVs. UI icon art lives in `assets/ui/icons/` (see VectorCraft below); no audio files exist yet.
+need no UVs. UI icon art lives in `assets/ui/icons/` (see VectorCraft below); sound effects are `assets/audio/sfx/*.ogg`
+(see SoundCraft below).
 
 - **Blender** (`blender` MCP, or `blender -b -P <script>`): meshes, rigs, animation clips. Prefer
   extending a checked-in generator script over hand-editing a .blend, so models stay reproducible.
@@ -51,7 +52,17 @@ need no UVs. UI icon art lives in `assets/ui/icons/` (see VectorCraft below); no
   `icons!` list in `game/src/icons.rs`, which embeds them and registers each at its drawn pixel size
   (`IconSize`) because the UI image atlas has no mipmaps. Build tools, Buy categories and Sell use
   them; the remaining HUD/menu icons are still Noto Emoji.
-- **SoundCraft**: music and SFX when audio assets land (M9); speech stays synthesized.
+- **Sounds: CC0 first.** Prefer downloaded CC0 recordings: `assets/audio/fetch_sfx.py` pins each source
+  (OpenGameArt URL or a file in Kenney's All-in-1 bundle at `~/Kenney Game Assets All-in-1 3.8.0`,
+  `KENNEY_DIR` to override; it also has Music Loops/Jingles) by SHA-256, trims one-shots, cuts seamless
+  loops (steadiest stretch, or re-laid hits for rhythmic sources), encodes `assets/audio/sfx/<id>.ogg`
+  and rewrites `assets/audio/CREDITS.md`. Add the id to the `sfx!` list in `game/src/sounds.rs`.
+- **SoundCraft**: only for sounds with no good CC0 recording (TV, stir, scrub, treadmill, snore), built
+  headless by `assets/soundcraft/make_sfx.py` (built-in synth/drum notes and generated noise per session;
+  `soundcraft-cli script` bounces, sox normalises, ffmpeg encodes Ogg). Gotchas: plugin params use
+  real units (ms, %, semitones; `soundcraft-cli plugins`) and choice params take indices; MIDI is 960 PPQ
+  at 120 bpm; use the 7-band EQ's 24 dB/oct filters, the 1-band EQ is too gentle on noise. Speech stays
+  synthesized.
 
 The craft MCP servers are user-scoped, and their read/write root is `~/CreativeWork` (outside the repo).
 Do scratch work there, e.g. `~/CreativeWork/life-sim-game/<tool>/`, and copy results into the repo; the tools
