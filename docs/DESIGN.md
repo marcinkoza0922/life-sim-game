@@ -68,7 +68,8 @@ assets/
   blender/       make_peons.py: builds the bodies, rig, hair and clips headlessly
   vectorcraft/   make_icons.py: UI icon SVGs (icons/, sheet.svg) rasterised by vectorcraft-cli
   ui/icons/      <name>.png 128 px UI icons (generated; embedded by game/src/icons.rs)
-  audio/sfx/     <id>.ogg sound effects (generated; embedded by game/src/sounds.rs)
+  audio/sfx/     <id>.ogg sound effects (embedded by game/src/sounds.rs)
+  audio/         fetch_sfx.py: downloads pinned CC0 sounds and cuts them; CREDITS.md
   soundcraft/    make_sfx.py: builds each sound as a SoundCraft session headlessly
   fonts/         Nunito, Fredoka, Noto Emoji (OFL, licences alongside; embedded by hearth_ui)
 docs/
@@ -531,9 +532,10 @@ Added since:
 
 - **Audio engine & sound effects:** `game::audio::Audio` mixes voices, one-shots, fading loops and
   cross-faded music under Master/Voices/Effects/Music volumes (☰ Game menu, saved to `settings.ron`);
-  pause silences the world but not music, M mutes all. 23 effects are built headless by
-  `assets/soundcraft/make_sfx.py` (synth/drum notes and filtered noise per SoundCraft session → Ogg) and
-  embedded by `game::sounds`. Interactions loop a sound while performed (`sfx:` on the interaction, else
+  pause silences the world but not music, M mutes all. 23 effects, embedded by `game::sounds`:
+  18 are CC0 recordings (Kenney, rubberduck, Bret Bernhoft, Unicae Games; `assets/audio/fetch_sfx.py`,
+  credits in `assets/audio/CREDITS.md`), and the 5 with no good recording (TV, stir, scrub, treadmill,
+  snore) are synthesized by `assets/soundcraft/make_sfx.py`. Interactions loop a sound while performed (`sfx:` on the interaction, else
   implied by the body clip: chop, stir, scrub, type, TV, shower, snore), one voice per sound at the
   loudest source's distance; walkers get footsteps at 1x/2x; Build/Buy actions thunk or crumble by
   whether they cost or refunded money; Sell jingles; Money/Career/Life/Death log entries chime; UI

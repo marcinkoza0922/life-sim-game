@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Sound effects, built headless with SoundCraft and encoded to Ogg Vorbis.
+"""Sound effects with no good CC0 recording, built headless with SoundCraft and encoded to Ogg.
+
+Downloaded CC0 sounds come first (`assets/audio/fetch_sfx.py`); this only builds the rest.
 
 Each sound is a small SoundCraft session: synth/drum notes (MIDI on built-in instruments) and
 generated noise, shaped with inserts and fades. For every entry in SOUNDS this writes
@@ -132,129 +134,8 @@ def bp(freq, q=1.5):
     return _eq(hpf=freq / k, lpf=freq * k, peak=freq)
 
 
-def room(mix=15, decay=0.6, size=30):
-    return ("room_reverb", {"mix": mix, "decay": decay, "size": size})
-
-
-def pluck(**kw):
-    """Short percussive synth voice."""
-    base = dict(osc1_wave="Triangle", osc2_wave="Sine", amp_attack=1, amp_decay=120, amp_sustain=0,
-                amp_release=60, cutoff=4000, filter_env_amount=30, velocity=40)
-    base.update(kw)
-    return base
-
-
-# ---------------------------------------------------------------------------------------------
-# One-shots
-
-
-def step(variant):
-    tune, bright = (-4, 2400) if variant == "a" else (-2, 2900)
-    return (Sound(0.25)
-            .drums([(KICK, 0, 0.05, 70)], kick_tune=tune, kick_decay=70, fx=[lp(900)])
-            .noise(0, 0.06, fx=[bp(bright, 1.0)], level=-18, fade_out=0.05))
-
-
-def door_open():
-    # latch click, creak (detuned resonant saw gliding up), soft swing air
-    return (Sound(0.9)
-            .drums([(HAT, 0, 0.02, 90)], hat_decay=30)
-            .synth([(50, 0.05, 0.25, 60), (55, 0.28, 0.3, 50)], osc1_wave="Saw", osc2_wave="Square", osc2_detune=40,
-                   cutoff=1400, resonance=60, amp_attack=40, amp_decay=300, amp_sustain=40, amp_release=150,
-                   glide=200, fx=[bp(1100, 2.0), room()], db=-8)
-            .noise(0.05, 0.6, fx=[lp(700)], level=-20, fade_in=0.15, fade_out=0.3))
-
-
-def door_close():
-    return (Sound(0.8)
-            .noise(0, 0.25, fx=[lp(600)], level=-18, fade_in=0.18, fade_out=0.02)
-            .drums([(KICK, 0.22, 0.1, 110), (TOM_LO, 0.22, 0.1, 80), (HAT, 0.24, 0.02, 70)],
-                   kick_tune=-3, kick_decay=180, tom_tune=-4, tom_decay=150, hat_decay=20, fx=[room(20)]))
-
-
-def ui_click():
-    return Sound(0.12).synth([(84, 0, 0.03, 90)], **pluck(amp_decay=40, osc1_wave="Sine"), fx=[lp(5000)])
-
-
-def ui_open():
-    return Sound(0.35).synth([(72, 0, 0.08, 80), (79, 0.06, 0.12, 90)], **pluck(amp_decay=180), fx=[lp(4000), room(12)])
-
-
-def ui_close():
-    return Sound(0.35).synth([(79, 0, 0.08, 80), (72, 0.06, 0.12, 80)], **pluck(amp_decay=150), fx=[lp(4000), room(12)])
-
-
-def notify():
-    return Sound(1.0).synth([(76, 0, 0.3, 90), (84, 0.12, 0.6, 100)],
-                            **pluck(osc1_wave="Sine", osc2_wave="Sine", osc2_semitones=12, osc_mix=25,
-                                    amp_decay=700, amp_release=300), fx=[room(25, 1.0, 50)])
-
-
-def place():
-    # wooden thunk with a springy pop on top (toy-box)
-    return (Sound(0.5)
-            .drums([(TOM_MID, 0, 0.1, 110), (KICK, 0, 0.08, 80)], tom_tune=5, tom_decay=120,
-                   kick_tune=6, kick_decay=70)
-            .synth([(67, 0.02, 0.06, 70), (79, 0.05, 0.04, 60)], **pluck(osc1_wave="Sine", amp_decay=70, glide=40),
-                   db=-6))
-
-
-def pickup():
-    return Sound(0.3).synth([(67, 0, 0.05, 70), (74, 0.04, 0.08, 80)], **pluck(osc1_wave="Sine", amp_decay=90))
-
-
-def sell():
-    # coins: bright metallic plinks + a little bell
-    return (Sound(0.9)
-            .synth([(91, 0, 0.05, 90), (95, 0.07, 0.05, 80), (98, 0.13, 0.05, 90), (96, 0.2, 0.4, 100)],
-                   osc1_wave="Square", osc2_wave="Sine", osc2_semitones=19, osc_mix=40, cutoff=7000,
-                   amp_attack=1, amp_decay=250, amp_sustain=0, amp_release=200, fx=[room(20)], db=-6)
-            .drums([(HAT, 0, 0.02, 60), (HAT, 0.07, 0.02, 50)], hat_decay=20))
-
-
-def demolish():
-    return (Sound(0.8)
-            .noise(0, 0.6, fx=[lp(1800)], level=-6, fade_out=0.5, wave="White Noise")
-            .drums([(KICK, 0, 0.2, 120), (SNARE, 0.03, 0.1, 100), (TOM_LO, 0.08, 0.2, 90)],
-                   kick_tune=-6, kick_decay=300, snare_snappy=80, fx=[room(15)]))
-
-
-def build_wall():
-    return (Sound(0.5)
-            .drums([(SNARE, 0, 0.05, 70), (TOM_LO, 0, 0.1, 100)], snare_tune=-4, snare_snappy=20, tom_tune=-2,
-                   tom_decay=200)
-            .noise(0, 0.15, fx=[bp(400, 1.0)], level=-14, fade_out=0.14))
-
-
-def cash():
-    return Sound(0.6).synth([(84, 0, 0.08, 90), (88, 0.08, 0.08, 90), (91, 0.16, 0.3, 100)],
-                            **pluck(osc1_wave="Square", amp_decay=200, cutoff=6000), fx=[room(15)])
-
-
 # ---------------------------------------------------------------------------------------------
 # Loops (seamless at their length)
-
-
-def shower():
-    return Sound(2.0).noise(0, 2.0, fx=[hp(1200), bp(4500, 0.5)], level=-6).noise(0, 2.0, fx=[lp(400)], level=-16)
-
-
-def faucet():
-    return Sound(2.0).noise(0, 2.0, fx=[bp(2200, 1.2), lp(5000)], level=-8)
-
-
-def chop():
-    # four knife-on-board taps per second
-    taps = [(HAT, t, 0.02, 90 - 10 * (i % 2)) for i, t in enumerate((0, 0.25, 0.5, 0.75))]
-    thunks = [(TOM_HI, t, 0.05, 70) for t in (0, 0.25, 0.5, 0.75)]
-    return Sound(1.0).drums(taps + thunks, hat_decay=30, tom_tune=10, tom_decay=60)
-
-
-def type_keys():
-    times = [0, 0.11, 0.19, 0.34, 0.42, 0.58, 0.66, 0.73, 0.9, 1.05, 1.14, 1.31, 1.4, 1.62, 1.7, 1.86]
-    keys = [(HAT, t, 0.01, 50 + (i * 37) % 40) for i, t in enumerate(times)]
-    return Sound(2.0).drums(keys + [(TOM_HI, 1.5, 0.03, 40)], hat_decay=20, tom_tune=12, tom_decay=50,
-                            fx=[bp(3000, 0.8)])
 
 
 def stir():
@@ -299,31 +180,13 @@ def snore():
 
 
 SOUNDS = {
-    "step_a": lambda: step("a"),
-    "step_b": lambda: step("b"),
-    "door_open": door_open,
-    "door_close": door_close,
-    "ui_click": ui_click,
-    "ui_open": ui_open,
-    "ui_close": ui_close,
-    "notify": notify,
-    "place": place,
-    "pickup": pickup,
-    "sell": sell,
-    "demolish": demolish,
-    "build_wall": build_wall,
-    "cash": cash,
-    "shower": shower,
-    "faucet": faucet,
-    "chop": chop,
-    "type": type_keys,
     "stir": stir,
     "scrub": scrub,
     "tv": tv,
     "treadmill": treadmill,
     "snore": snore,
 }
-LOOPS = {"shower", "faucet", "chop", "type", "stir", "scrub", "tv", "treadmill", "snore"}
+LOOPS = set(SOUNDS)
 
 
 def build(sid):

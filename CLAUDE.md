@@ -52,10 +52,14 @@ need no UVs. UI icon art lives in `assets/ui/icons/` (see VectorCraft below); so
   `icons!` list in `game/src/icons.rs`, which embeds them and registers each at its drawn pixel size
   (`IconSize`) because the UI image atlas has no mipmaps. Build tools, Buy categories and Sell use
   them; the remaining HUD/menu icons are still Noto Emoji.
-- **SoundCraft**: SFX are built headless by `assets/soundcraft/make_sfx.py` (each sound is a session of
-  built-in synth/drum notes and generated noise; `soundcraft-cli script` bounces it, sox normalises, ffmpeg
-  encodes Ogg into `assets/audio/sfx/`). To add one: add a function to `SOUNDS` (and `LOOPS` if it loops),
-  rerun with its id, add the id to the `sfx!` list in `game/src/sounds.rs`. Gotchas: plugin params use
+- **Sounds: CC0 first.** Prefer downloaded CC0 recordings: `assets/audio/fetch_sfx.py` pins each source
+  (OpenGameArt URL or a file in Kenney's All-in-1 bundle at `~/Kenney Game Assets All-in-1 3.8.0`,
+  `KENNEY_DIR` to override; it also has Music Loops/Jingles) by SHA-256, trims one-shots, cuts seamless
+  loops (steadiest stretch, or re-laid hits for rhythmic sources), encodes `assets/audio/sfx/<id>.ogg`
+  and rewrites `assets/audio/CREDITS.md`. Add the id to the `sfx!` list in `game/src/sounds.rs`.
+- **SoundCraft**: only for sounds with no good CC0 recording (TV, stir, scrub, treadmill, snore), built
+  headless by `assets/soundcraft/make_sfx.py` (built-in synth/drum notes and generated noise per session;
+  `soundcraft-cli script` bounces, sox normalises, ffmpeg encodes Ogg). Gotchas: plugin params use
   real units (ms, %, semitones; `soundcraft-cli plugins`) and choice params take indices; MIDI is 960 PPQ
   at 120 bpm; use the 7-band EQ's 24 dB/oct filters, the 1-band EQ is too gentle on noise. Speech stays
   synthesized.
