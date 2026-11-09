@@ -134,6 +134,20 @@ pub struct Builtins {
     pub disc: MeshId,
     pub wedge: MeshId,
     pub materials: HashMap<String, MaterialId>,
+    /// Static models registered with [`Renderer::add_model`], by name.
+    pub models: HashMap<String, Vec<ModelPart>>,
+}
+
+/// One drawable piece of a registered static model (see [`model::StaticPart`]).
+#[derive(Clone, Debug)]
+pub struct ModelPart {
+    pub mesh: MeshId,
+    /// Texture material id to look up with [`Builtins::material`] (may not exist).
+    pub material: String,
+    pub color: [f32; 4],
+    pub rough: f32,
+    pub metal: f32,
+    pub emissive: f32,
 }
 
 impl Builtins {
@@ -673,7 +687,7 @@ impl Renderer {
         let mut r = Renderer {
             gpu: gpu.clone(),
             format,
-            builtins: Builtins { cube: MeshId(0), cylinder: MeshId(0), sphere: MeshId(0), disc: MeshId(0), wedge: MeshId(0), materials: HashMap::new() },
+            builtins: Builtins { cube: MeshId(0), cylinder: MeshId(0), sphere: MeshId(0), disc: MeshId(0), wedge: MeshId(0), materials: HashMap::new(), models: HashMap::new() },
             meshes: Vec::new(),
             sk_meshes: Vec::new(),
             globals_buf,
@@ -708,6 +722,7 @@ impl Renderer {
             disc: r.upload_mesh(&shapes::disc(32)),
             wedge: r.upload_mesh(&shapes::wedge()),
             materials: HashMap::new(),
+            models: HashMap::new(),
         };
         r
     }
@@ -721,6 +736,15 @@ impl Renderer {
         self.main_bg = main_bind_group(&gpu.device, &self.main_bgl, &self.globals_buf, &self.shadow_view, &self.shadow_sampler, &arrays, &self.material_sampler);
         self.material_inv_scale = std::iter::once(1.0).chain(maps.iter().map(|m| 1.0 / m.scale.max(1e-3))).collect();
         self.builtins.materials = mats.iter().enumerate().map(|(i, (name, _))| (name.clone(), MaterialId(i as u32 + 1))).collect();
+    }
+
+    /// Uploads a static model's parts and registers them under `name` in [`Builtins::models`].
+    pub fn add_model(&mut self, name: &str, parts: &[model::StaticPart]) {
+        let parts = parts
+            .iter()
+            .map(|p| ModelPart { mesh: self.upload_mesh(&p.mesh), material: p.material.clone(), color: p.color, rough: p.rough, metal: p.metal, emissive: p.emissive })
+            .collect();
+        self.builtins.models.insert(name.to_string(), parts);
     }
 
     pub fn upload_mesh(&mut self, m: &MeshData) -> MeshId {

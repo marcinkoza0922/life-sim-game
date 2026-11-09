@@ -63,9 +63,11 @@ crates/
 assets/
   data/          RON content: objects, traits, quirks, careers, needs, names, materials
   models/        peon_<stage>.glb rigged bodies (generated; embedded in the game binary)
+    objects/     <object id>.glb static furniture models (generated; embedded by game/build.rs)
   textures/      <material id>/{albedo,normal,orm}.png tiling maps (embedded by game/build.rs)
   materialcraft/ materials.py: generates the .sbs packages and textures/ maps headlessly
-  blender/       make_peons.py: builds the bodies, rig, hair and clips headlessly
+  blender/       make_peons.py: builds the bodies, rig, hair and clips headlessly;
+                 make_objects.py: builds the object models
   vectorcraft/   make_icons.py: UI icon SVGs (icons/, sheet.svg) rasterised by vectorcraft-cli
   ui/icons/      <name>.png 128 px UI icons (generated; embedded by game/src/icons.rs)
   audio/sfx/     <id>.ogg sound effects (embedded by game/src/sounds.rs)
@@ -123,7 +125,14 @@ in the game crate covers debug UI needs.)
   Per-instance data (model matrix, base color, roughness/metallic, flags) in an instance buffer;
   draws are batched by mesh.
 - **Placeholders:** procedural primitives (box, cylinder, capsule, plane, wedge) used for
-  furniture greyboxes until glTF art lands (and for greybox peons if the models fail to load).
+  furniture greyboxes (and for greybox peons if the models fail to load).
+- **Object models:** `model::load_static_glb` bakes an unskinned glTF's node transforms and merges
+  its primitives into one mesh per material; `Renderer::add_model` registers them by name in
+  `Builtins::models`. `game::object_models` loads `assets/models/objects/<object id>.glb`, and an
+  object with a model draws one instanced draw per material (base colour, roughness, metallic,
+  emission; a material named after a texture id, e.g. `wood` or `wood.leg`, is also textured with
+  the colour as a tint) instead of its RON parts, which still define picking. Dirt, broken and
+  placement tints apply the same way. `simctl render --greybox` draws the parts instead.
 - **Skinned meshes:** `hearth_render::model` loads binary glTF (skeleton, skinned meshes, up to two
   position morph targets, T/R/S animation clips). Clips are sampled on the CPU; skinning matrices
   for every pose go into one storage buffer per frame, alongside an 8-entry colour palette per draw
@@ -385,7 +394,7 @@ Built in from day one:
 
 ## 9. Status (2026-11-09)
 
-**M0–M5 and M8 done; M6 (creator, no clothing yet), M7 (rigged peons, materials; objects still greybox) and M9 (roofs, terrain, saves; audio is voices only) partly in.** Everything below is playable in `lifesim`:
+**M0–M5 and M8 done; M6 (creator, no clothing yet), M7 (rigged peons, materials; all 34 objects modelled) and M9 (roofs, terrain, saves; audio is voices only) partly in.** Everything below is playable in `lifesim`:
 
 - Hearth ECS with tests and a clean Miri run; schedule with per-system timings.
 - Renderer: instanced PBR-lite, shadowed sun with day/night cycle, lamp & room lights, MSAA, ACES,

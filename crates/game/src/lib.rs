@@ -8,6 +8,7 @@ pub mod debug_ui;
 pub mod icons;
 pub mod lotmesh;
 pub mod materials;
+pub mod object_models;
 pub mod peons;
 pub mod saves;
 pub mod scene;

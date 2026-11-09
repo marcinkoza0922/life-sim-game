@@ -56,7 +56,7 @@ struct RenderArgs {
     mode: String,
     size: (u32, u32),
     rooms: bool,
-    /// Draw greybox peons instead of the rigged models.
+    /// Draw greybox peons and objects instead of the rigged/modelled art.
     greybox: bool,
     out: String,
     /// `lineup`: posture to show and clip time.
@@ -620,6 +620,9 @@ fn render(a: &Args) {
     let gpu = hearth_render::Gpu::headless().expect("no GPU adapter");
     let mut r = hearth_render::Renderer::new(gpu, hearth_render::wgpu::TextureFormat::Rgba8UnormSrgb);
     game::materials::install(&mut r, &sim.data());
+    if !ra.greybox {
+        game::object_models::install(&mut r, &sim.data());
+    }
     let (w, h) = ra.size;
     let target = ra.target.map(|(x, z)| glam::Vec3::new(x, 0.0, z)).unwrap_or(glam::Vec3::new(15.0, 0.0, 14.0));
     let mut cam = game::camera::OrbitCamera::new(target);

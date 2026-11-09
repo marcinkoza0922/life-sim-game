@@ -676,17 +676,36 @@ pub fn object_draws(d: &mut Vec<Draw>, r: &Builtins, data: &GameData, def_id: us
     let def = data.object(def_id);
     let rot = Quat::from_rotation_y(inst.yaw());
     let grime = 1.0 - inst.dirt * 0.35;
-    for p in &def.parts {
-        let center = inst.local_to_world(def, p.at);
-        let m = Mat4::from_scale_rotation_translation(p.size, rot, center);
-        let mut c = [p.color[0] * grime, p.color[1] * grime, p.color[2] * grime];
+    let shade = |c: [f32; 3]| {
+        let mut c = [c[0] * grime, c[1] * grime, c[2] * grime];
         if inst.broken {
             c = [c[0] * 0.6, c[1] * 0.55, c[2] * 0.5];
         }
         if let Some(t) = tint {
             c = [(c[0] * t[0]).min(1.0), (c[1] * t[1]).min(1.0), (c[2] * t[2]).min(1.0)];
         }
-        let mut dr = Draw::new(shape_mesh(r, p.shape), m, c)
+        c
+    };
+    if let Some(model) = r.models.get(&def.id) {
+        let m = Mat4::from_rotation_translation(rot, inst.local_to_world(def, Vec3::ZERO));
+        for p in model {
+            let mut dr = Draw::new(p.mesh, m, shade([p.color[0], p.color[1], p.color[2]]))
+                .rough(p.rough)
+                .metal(p.metal)
+                .emissive(if inst.broken { 0.0 } else { p.emissive })
+                .alpha(alpha * p.color[3])
+                .material(r.material(&p.material));
+            if alpha * p.color[3] < 1.0 {
+                dr = dr.flags(flags::NO_SHADOW_CAST);
+            }
+            d.push(dr);
+        }
+        return;
+    }
+    for p in &def.parts {
+        let center = inst.local_to_world(def, p.at);
+        let m = Mat4::from_scale_rotation_translation(p.size, rot, center);
+        let mut dr = Draw::new(shape_mesh(r, p.shape), m, shade(p.color))
             .rough(p.rough)
             .metal(p.metal)
             .emissive(if inst.broken { 0.0 } else { p.emissive })
