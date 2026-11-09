@@ -320,7 +320,7 @@ fn lineup(ra: &RenderArgs) {
         "exercise" => (Pose::Exercise, false),
         _ => (Pose::Stand, false),
     };
-    let posture = Posture { pose, walking, anim: ra.anim.clone(), prop: ra.prop.clone() };
+    let posture = Posture { pose, walking, anim: ra.anim.clone(), prop: ra.prop.clone(), sfx: None };
     let demeanor = match ra.demeanor.as_str() {
         "sad" => game::peons::Demeanor::Sad,
         "proud" => game::peons::Demeanor::Proud,

@@ -11,5 +11,6 @@ pub mod materials;
 pub mod peons;
 pub mod saves;
 pub mod scene;
+pub mod sounds;
 pub mod state;
 pub mod ui;

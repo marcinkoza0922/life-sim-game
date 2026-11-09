@@ -24,7 +24,8 @@ Current pipeline: object art is greybox primitives with flat PBR values in `asse
 `assets/models/*.glb` (embedded via `include_bytes!`); voices are synthesized in `game/src/audio.rs`;
 UI is our own `hearth_ui` crate (egui only for F1–F8 developer windows), with fonts bundled from
 `assets/fonts/`. Material textures (`assets/textures/<id>/`, see its README) are box-projected, so they
-need no UVs. UI icon art lives in `assets/ui/icons/` (see VectorCraft below); no audio files exist yet.
+need no UVs. UI icon art lives in `assets/ui/icons/` (see VectorCraft below); sound effects are `assets/audio/sfx/*.ogg`
+(see SoundCraft below).
 
 - **Blender** (`blender` MCP, or `blender -b -P <script>`): meshes, rigs, animation clips. Prefer
   extending a checked-in generator script over hand-editing a .blend, so models stay reproducible.
@@ -51,7 +52,13 @@ need no UVs. UI icon art lives in `assets/ui/icons/` (see VectorCraft below); no
   `icons!` list in `game/src/icons.rs`, which embeds them and registers each at its drawn pixel size
   (`IconSize`) because the UI image atlas has no mipmaps. Build tools, Buy categories and Sell use
   them; the remaining HUD/menu icons are still Noto Emoji.
-- **SoundCraft**: music and SFX when audio assets land (M9); speech stays synthesized.
+- **SoundCraft**: SFX are built headless by `assets/soundcraft/make_sfx.py` (each sound is a session of
+  built-in synth/drum notes and generated noise; `soundcraft-cli script` bounces it, sox normalises, ffmpeg
+  encodes Ogg into `assets/audio/sfx/`). To add one: add a function to `SOUNDS` (and `LOOPS` if it loops),
+  rerun with its id, add the id to the `sfx!` list in `game/src/sounds.rs`. Gotchas: plugin params use
+  real units (ms, %, semitones; `soundcraft-cli plugins`) and choice params take indices; MIDI is 960 PPQ
+  at 120 bpm; use the 7-band EQ's 24 dB/oct filters, the 1-band EQ is too gentle on noise. Speech stays
+  synthesized.
 
 The craft MCP servers are user-scoped, and their read/write root is `~/CreativeWork` (outside the repo).
 Do scratch work there, e.g. `~/CreativeWork/life-sim-game/<tool>/`, and copy results into the repo; the tools

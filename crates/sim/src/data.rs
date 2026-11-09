@@ -371,6 +371,10 @@ pub struct InteractionDef {
     /// Prop held while performing (an id in `props.ron`).
     #[serde(default)]
     pub prop: Option<String>,
+    /// Looping sound while performing (an id in `assets/audio/sfx/`). When absent the game picks
+    /// one from the body clip (chop, stir, type, TV…); `""` means silence.
+    #[serde(default)]
+    pub sfx: Option<String>,
     /// Perform from a free seat nearby when there is one (watching TV from the sofa, chess from a
     /// chair pulled up to the table); otherwise from the object's own slots as usual.
     #[serde(default)]

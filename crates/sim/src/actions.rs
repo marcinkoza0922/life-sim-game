@@ -788,7 +788,7 @@ fn arrive(world: &World, e: Entity, data: &GameData, cur: &mut CurrentAction, sl
                 tf.pos = pos;
                 tf.yaw = yaw;
             }
-            *world.get_mut::<Posture>(e).unwrap() = Posture::performing(pose, anim, inter.prop.clone());
+            *world.get_mut::<Posture>(e).unwrap() = Posture { sfx: inter.sfx.clone(), ..Posture::performing(pose, anim, inter.prop.clone()) };
             if let Some(b) = &inter.bubble {
                 set_bubble(world, e, Some(b.clone()), None, inter.nominal_minutes().min(60) as u64);
             }

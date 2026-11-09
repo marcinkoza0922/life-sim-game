@@ -96,6 +96,8 @@ pub struct Ui {
     pub fonts: Fonts,
     pub images: Images,
     pub clipboard: Box<dyn Clipboard>,
+    /// Widgets clicked this frame (lets the host play a click sound).
+    pub clicks: u32,
     /// Seconds since start, and since the last frame.
     pub time: f32,
     pub dt: f32,
@@ -141,6 +143,7 @@ impl Ui {
             fonts: Fonts::new(),
             images: Images::default(),
             clipboard: Box::new(LocalClipboard::default()),
+            clicks: 0,
             time: 0.0,
             dt: 1.0 / 60.0,
             screen: Rect::new(0.0, 0.0, 800.0, 600.0),
@@ -173,6 +176,7 @@ impl Ui {
 
     pub fn begin_frame(&mut self, dt: f32, size_px: [u32; 2]) {
         self.fonts.maybe_reset();
+        self.clicks = 0;
         self.painter.clear();
         self.painter.ppp = self.input.ppp;
         self.painter.order = Order::Panel;
@@ -451,6 +455,7 @@ impl Ui {
             r.down = self.input.down[0];
             if self.input.released[0] && inside {
                 r.clicked = true;
+                self.clicks += 1;
             }
         }
         r

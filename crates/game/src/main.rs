@@ -10,7 +10,7 @@
 //! Test hooks: `--seed N --minutes M --screenshot-after FRAMES PATH --mode live|buy|build --level L
 //! --debug --size WxH --cam YAW,PITCH,DIST --menu-on OBJECT_ID --speed I --load SAVE --creator --walls up|cutaway|down --show saves|neighborhood`
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -143,9 +143,77 @@ struct App {
     audio: game::audio::Audio,
     /// Seconds until changed volumes are written to `settings.ron` (debounces slider drags).
     volumes_save_in: Option<f32>,
+    /// Seconds until each walking peon's next footstep.
+    steps: HashMap<sim::Entity, f32>,
+    /// When each one-shot last played (app seconds), so bursts don't stack.
+    last_sfx: HashMap<&'static str, f32>,
+    clock: f32,
 }
 
 impl App {
+    /// Interaction loops, footsteps and queued one-shots (Build/Buy, notifications).
+    fn world_sounds(&mut self, dt: f32, eye: glam::Vec3) {
+        use game::sounds;
+        use sim::components::{AtWork, Offlot, Posture, Transform};
+        self.clock += dt;
+        let speed = SPEEDS[self.game.speed].0;
+        let w = &self.game.sim.world;
+        let mut loops: Vec<(u64, game::audio::Clip, f32)> = Vec::new();
+        let mut steps = Vec::new();
+        for (e, tf, posture) in w.query_filtered::<(sim::Entity, &Transform, &Posture), (hearth_ecs::Without<AtWork>, hearth_ecs::Without<Offlot>)>().iter() {
+            if tf.level() > self.game.level {
+                continue;
+            }
+            let gain = sounds::falloff((tf.pos - eye).length());
+            if gain <= 0.0 {
+                continue;
+            }
+            if posture.walking {
+                steps.push((e, gain));
+            } else if let Some(id) = sounds::loop_for(posture.sfx.as_deref(), posture.anim.as_deref()) {
+                // one voice per sound, at the loudest source (three people watching one TV)
+                let key = id.bytes().fold(0u64, |h, b| h.wrapping_mul(31).wrapping_add(b as u64));
+                let gain = if id == "snore" { gain * 0.5 } else { gain };
+                match loops.iter_mut().find(|l| l.0 == key) {
+                    Some(l) => l.2 = l.2.max(gain),
+                    None => loops.extend(sounds::clip(id).map(|c| (key, c, gain))),
+                }
+            }
+        }
+        self.audio.update_loops(dt, &loops);
+
+        // footsteps: a step every 0.42 s of game-speed time, only at 1x/2x so ultra isn't a stampede
+        self.steps.retain(|e, _| steps.iter().any(|s| s.0 == *e));
+        if speed <= 3.0 && !self.game.paused {
+            let mut budget = 4;
+            for (e, gain) in steps {
+                let t = self.steps.entry(e).or_insert((e.to_bits() % 7) as f32 * 0.06);
+                *t -= dt * speed;
+                if *t <= 0.0 {
+                    *t += 0.42;
+                    if budget > 0 {
+                        budget -= 1;
+                        let id = if e.to_bits() % 2 == 0 { "step_a" } else { "step_b" };
+                        if let Some(c) = sounds::clip(id) {
+                            self.audio.play(&c, gain * 0.35);
+                        }
+                    }
+                }
+            }
+        }
+
+        for id in std::mem::take(&mut self.game.sfx) {
+            let gap = if matches!(id, "notify" | "cash") { 0.6 } else { 0.08 };
+            if self.last_sfx.get(id).is_some_and(|t| self.clock - t < gap) {
+                continue;
+            }
+            self.last_sfx.insert(id, self.clock);
+            if let Some(c) = sounds::clip(id) {
+                self.audio.play(&c, 1.0);
+            }
+        }
+    }
+
     fn new(args: Args) -> App {
         let load = args.load.clone().or_else(|| {
             if !args.resume {
@@ -205,7 +273,7 @@ impl App {
             game.volumes = game::audio::Volumes::load();
             game::audio::Audio::new()
         };
-        App { args, game, gfx: None, cursor: (0.0, 0.0), keys: HashSet::new(), rmb: false, mmb: false, lmb_down_at: None, last: Instant::now(), frames: 0, audio, volumes_save_in: None }
+        App { args, game, gfx: None, cursor: (0.0, 0.0), keys: HashSet::new(), rmb: false, mmb: false, lmb_down_at: None, last: Instant::now(), frames: 0, audio, volumes_save_in: None, steps: HashMap::new(), last_sfx: HashMap::new(), clock: 0.0 }
     }
 
     fn ndc(&self) -> Option<(f32, f32)> {
@@ -289,6 +357,7 @@ impl App {
                     && let Some(Pick::Object(e)) = g.hover_pick.clone()
                         && let Some(v) = g.sim.sell_object(e) {
                             g.say(format!("Sold for ${v}"));
+                            g.sfx.push("sell");
                         }
             }
             KeyCode::F12 => {
@@ -335,6 +404,7 @@ impl App {
                     if let Some(Pick::Object(e)) = g.pick(&cam, ndc)
                         && let Some(v) = g.sim.sell_object(e) {
                             g.say(format!("Sold for ${v}"));
+                            g.sfx.push("sell");
                         }
                 }
                 Tool::Place { .. } => {
@@ -453,6 +523,7 @@ impl App {
                 speakers.clear();
             }
             self.audio.update(dt, &speakers);
+            self.world_sounds(dt, eye);
         }
 
         if let Some(gfx) = self.gfx.as_mut() {
@@ -485,6 +556,9 @@ impl App {
         gfx.ui.begin_frame(dt, size_px);
         ui::draw(&mut gfx.ui, &mut self.game, &cx);
         gfx.ui.end_frame();
+        if gfx.ui.clicks > 0 {
+            self.game.sfx.push("ui_click");
+        }
         gfx.ui_renderer.prepare(&gfx.renderer.gpu.device, &gfx.renderer.gpu.queue, &mut gfx.ui, size_px);
         // developer windows
         let raw = gfx.egui_state.take_egui_input(&gfx.window);
