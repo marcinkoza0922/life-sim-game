@@ -453,7 +453,16 @@ Added since:
   click. Peons are hit where the body is: lower when seated, along the body when lying (selecting someone
   asleep in a double bed works). In Live mode rugs are floor, so clicking one means "Go Here".
 
-**Known gaps / next up:** visiting other households' lots (only community lots for now); more community
-lots (café, gym) and house plans; neighbors' graves when they die off-lot; walking between lots instead of
-appearing at the street; new townies moving in to vacant lots, or the street slowly empties as
-neighbors die of old age.
+- **Visiting, newcomers, more lots:** the household can **visit** a neighbor's home (8:00–22:00,
+  `neighborhood::visit`): the hosts are live on their own lot (no `Offlot`, not `Visitor`), start indoors,
+  go to work/school from there, and yawn pointedly at 23:00; hosts or guests still at work when the
+  household leaves get `Offlot` so they come home to their own lot. House plans by household size
+  (`plan_for`): studio (1), bungalow (2), family cottage (3+). Community lots: Gulch Green, **The Grumpy Bean**
+  café (espresso bar: latte/cocoa cost money) and **Sweat Equity Gym** (treadmills, bikes, weight benches),
+  added to older saves on load. **Newcomers:** at 10:00, while the street has fewer than
+  `STREET_HOUSEHOLDS` (5) households, there's a 40% chance a new household moves into a vacant lot
+  (furnished first; on an empty plot they build), always leaving one lot for sale. Interaction costs are
+  charged to the buyer's own household (`economy::debit`), not always the played one.
+
+**Known gaps / next up:** neighbors' graves when they die off-lot; walking between lots instead of
+appearing at the street; guests sleeping over in their hosts' beds (nothing sends them home at night).

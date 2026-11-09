@@ -99,7 +99,14 @@ fn top_bar(ui: &mut Ui, g: &mut Game) {
                 hood.lots[hood.active].title()
             };
             let home = sim::neighborhood::at_home(&g.sim.world);
-            ui.label(RichText::new(if home { here } else { format!("out at {here}") }).weak());
+            let at = if home {
+                here
+            } else if sim::neighborhood::visiting(&g.sim.world) {
+                format!("visiting {here}")
+            } else {
+                format!("out at {here}")
+            };
+            ui.label(RichText::new(at).weak());
             if !home && ui.small_button("🏠 Go Home").clicked() {
                 match g.sim.go_home() {
                     Ok(()) => g.check_lot_change(),
@@ -254,6 +261,7 @@ fn household_panel(ui: &mut Ui, g: &mut Game) {
 /// What the player asked for in the neighborhood window.
 enum HoodAction {
     Play(usize),
+    Visit(usize),
     GoOut(usize),
     GoHome,
     Move(usize),
@@ -270,7 +278,7 @@ fn neighborhood_window(ui: &mut Ui, g: &mut Game) {
         let hood = w.res::<nh::Neighborhood>().clone();
         let hh = w.res::<Household>().clone();
         ui.label(RichText::new(&hood.name).strong());
-        ui.label(RichText::new("Play any household on the street, move house, or head out to the park. Everyone shares one clock: life goes on next door while you're away.").small().weak());
+        ui.label(RichText::new("Play any household on the street, visit the neighbors, move house, or head out to the park, café or gym. Everyone shares one clock: life goes on next door while you're away.").small().weak());
         ui.separator();
         egui::Grid::new("lots").num_columns(3).striped(true).spacing([10.0, 6.0]).show(ui, |ui| {
             for (i, lot) in hood.lots.iter().enumerate() {
@@ -303,8 +311,18 @@ fn neighborhood_window(ui: &mut Ui, g: &mut Game) {
                         ui.horizontal(|ui| {
                             if r.played {
                                 ui.label(RichText::new(if here { "you are here" } else { "your home" }).weak());
-                            } else if ui.button("Play").on_hover_text(format!("${} in the bank", r.funds)).clicked() {
-                                action = Some(HoodAction::Play(i));
+                            } else {
+                                if here {
+                                    ui.label(RichText::new("visiting").weak());
+                                    if ui.button("Go home").clicked() {
+                                        action = Some(HoodAction::GoHome);
+                                    }
+                                } else if ui.button("Visit").on_hover_text("Take the household over (8:00–22:00)").clicked() {
+                                    action = Some(HoodAction::Visit(i));
+                                }
+                                if ui.button("Play").on_hover_text(format!("${} in the bank", r.funds)).clicked() {
+                                    action = Some(HoodAction::Play(i));
+                                }
                             }
                         });
                     }
@@ -358,6 +376,7 @@ fn neighborhood_window(ui: &mut Ui, g: &mut Game) {
     let Some(action) = action else { return };
     let result = match action {
         HoodAction::Play(l) => g.sim.play_household(l).map(|_| "Switched households."),
+        HoodAction::Visit(l) => g.sim.visit(l).map(|_| "Knock knock!"),
         HoodAction::GoOut(l) => g.sim.go_out(l).map(|_| "Off they go!"),
         HoodAction::GoHome => g.sim.go_home().map(|_| "Home sweet home."),
         HoodAction::Move(l) => g.sim.move_household(l).map(|_| "Moved in!"),

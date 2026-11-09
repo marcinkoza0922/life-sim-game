@@ -239,6 +239,9 @@ pub fn restore(save: SaveGame, data: GameData) -> Result<Sim, String> {
     if migrating {
         crate::neighborhood::migrate(w, old_hood.map(|h| h.name), townies);
         w.flush();
+    } else if w.res::<Neighborhood>().lots.len() > 1 {
+        // streets saved before the café and gym opened
+        crate::neighborhood::add_community_lots(w);
     }
     Ok(sim)
 }
