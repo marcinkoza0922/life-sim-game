@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use glam::{Mat4, Quat, Vec3, Vec4};
 
-use crate::{MAX_MORPHS, SkinnedMeshData, SkinnedVertex};
+use crate::{MAX_MORPHS, MeshData, SkinnedMeshData, SkinnedVertex, Vertex};
 
 /// A local joint transform.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -337,6 +337,85 @@ impl Model {
 
         Ok(Model { skeleton, meshes, clips })
     }
+}
+
+/// One material's worth of an unskinned model: geometry in model space (node transforms baked
+/// in, vertex colour white) plus the material's flat PBR values, drawn as one [`crate::Draw`].
+#[derive(Clone, Debug)]
+pub struct StaticPart {
+    /// glTF material name with any Blender `.001` suffix removed; matched against texture
+    /// material ids by the caller.
+    pub material: String,
+    pub mesh: MeshData,
+    /// sRGB base colour (the space [`crate::Draw`] colours are in) and alpha.
+    pub color: [f32; 4],
+    pub rough: f32,
+    pub metal: f32,
+    /// Emission strength relative to the base colour (max emissive channel).
+    pub emissive: f32,
+}
+
+/// Loads every mesh of an unskinned `.glb`, merged into one [`StaticPart`] per material.
+pub fn load_static_glb(bytes: &[u8]) -> anyhow::Result<Vec<StaticPart>> {
+    let gltf = gltf::Gltf::from_slice(bytes)?;
+    let blob = gltf.blob.as_deref();
+    let buffers = |b: gltf::Buffer| match b.source() {
+        gltf::buffer::Source::Bin => blob,
+        gltf::buffer::Source::Uri(_) => None,
+    };
+    let to_srgb = |x: f32| x.max(0.0).powf(1.0 / 2.2);
+    let mut parts: Vec<(Option<usize>, StaticPart)> = Vec::new();
+    let mut visit = vec![];
+    for scene in gltf.document.scenes() {
+        visit.extend(scene.nodes().map(|n| (n, Mat4::IDENTITY)));
+    }
+    while let Some((node, parent)) = visit.pop() {
+        let m = parent * Mat4::from_cols_array_2d(&node.transform().matrix());
+        visit.extend(node.children().map(|c| (c, m)));
+        let Some(mesh) = node.mesh() else { continue };
+        let nm = m.inverse().transpose();
+        for prim in mesh.primitives() {
+            let r = prim.reader(buffers);
+            let (Some(pos), Some(nrm)) = (r.read_positions(), r.read_normals()) else { continue };
+            let mat = prim.material();
+            let idx = match parts.iter().position(|(i, _)| *i == mat.index()) {
+                Some(i) => i,
+                None => {
+                    let pbr = mat.pbr_metallic_roughness();
+                    let c = pbr.base_color_factor();
+                    let e = mat.emissive_factor();
+                    let emax = e[0].max(e[1]).max(e[2]);
+                    let name = mat.name().unwrap_or("");
+                    let name = name.split_once('.').map_or(name, |(a, _)| a).to_string();
+                    parts.push((
+                        mat.index(),
+                        StaticPart {
+                            material: name,
+                            mesh: MeshData::default(),
+                            color: [to_srgb(c[0]), to_srgb(c[1]), to_srgb(c[2]), c[3]],
+                            rough: pbr.roughness_factor(),
+                            metal: pbr.metallic_factor(),
+                            emissive: emax,
+                        },
+                    ));
+                    parts.len() - 1
+                }
+            };
+            let data = &mut parts[idx].1.mesh;
+            let base = data.vertices.len() as u32;
+            for (p, n) in pos.zip(nrm) {
+                let p = m.transform_point3(Vec3::from(p));
+                let n = nm.transform_vector3(Vec3::from(n)).normalize_or_zero();
+                data.vertices.push(Vertex { pos: p.to_array(), normal: n.to_array(), color: [1.0; 4] });
+            }
+            match r.read_indices() {
+                Some(ix) => data.indices.extend(ix.into_u32().map(|i| i + base)),
+                None => data.indices.extend(base..data.vertices.len() as u32),
+            }
+        }
+    }
+    anyhow::ensure!(!parts.is_empty(), "glb has no meshes");
+    Ok(parts.into_iter().map(|(_, p)| p).collect())
 }
 
 #[cfg(test)]
