@@ -7,6 +7,7 @@ rewrites `assets/audio/CREDITS.md` from the table below.
 
     python3 assets/audio/fetch_sfx.py            # all
     python3 assets/audio/fetch_sfx.py faucet     # just these
+    python3 assets/audio/fetch_sfx.py music      # just the music loops
 
 Downloads are cached in ~/CreativeWork/life-sim-game/cc0/dl. One-shots get leading silence
 trimmed; loops take the steadiest `loop` seconds of the recording and cross-fade the seam.
@@ -102,6 +103,40 @@ SFX = {
     "type": ("keyboard", "Human Typing/human_vel-*.wav",
              {"loop": 20.0, "bursts": [f"Human Typing/human_vel-{i:03}.wav" for i in range(1, 11)]}),
 }
+
+
+# Music: Kenney "Music Loops" (CC0) copied as-is to assets/audio/music/<id>.ogg.
+# id: (file in Audio/Music Loops/Loops, sha256). Which plays when is in game/src/sounds.rs.
+MUSIC_DIR = "Audio/Music Loops/Loops/"
+MUSIC = {
+    "swinging_pants": ("Swinging Pants.ogg", "8f60328d8664e050b7fb5c8c7f97862aca0f190a3f6e31d00f0415726d76d52c"),
+    "italian_mom": ("Italian Mom.ogg", "d9392f3a561623c72a5a0a793984272a2264d350d9d61bfcd9bf4bdb8cfdd49b"),
+    "mischief_stroll": ("Mishief Stroll.ogg", "83774bba960b6d2192d45e7b1c6c4b07d1b73061672230734dde195972a88a95"),
+    "cheerful_annoyance": ("Cheerful Annoyance.ogg", "0e262e050e53eec55ebd1702981fa3944cd558d482580b6e34eea5a01ef54b05"),
+    "farm_frolics": ("Farm Frolics.ogg", "3c1a6ae05701a7e32b6b3c19fae046a46d7183785ff0dbab4cd9b0683655dd89"),
+    "polka_train": ("Polka Train.ogg", "18fda64504def86792493065b584ff5e762729989f2a9f8fb83284136a483e7b"),
+    "night_at_the_beach": ("Night at the Beach.ogg", "8beff4d1153fcea045d1f3d01a241f81c6bb7645d64d5e52511152d1ff19c768"),
+    "flowing_rocks": ("Flowing Rocks.ogg", "8563774243e381e827cba402cf6ccdc471b8bed3e3fafdf182f36039c2a8479f"),
+    "space_cadet": ("Space Cadet.ogg", "bf1a3b86027ae92c79f425e3f857ee9be74cbdfea46b75b668fe55489598bfbc"),
+    "drumming_sticks": ("Drumming Sticks.ogg", "35b3f446a74dfd543503aede4b99e223635b747e90c18821d48abc1c451ed089"),
+    "mission_plausible": ("Mission Plausible.ogg", "324bb691a715a51875973079f9e0706fc81168203401725d4131d0fa1528c621"),
+    "time_driving": ("Time Driving.ogg", "e7f220dca59444699153f4e44972b632258c32d7ee7e617ded9995791e4beac2"),
+    "wacky_waiting": ("Wacky Waiting.ogg", "5b145cb963c583fd9a8728461a7ed3e3d98860b381ac0ef41ee2181e7baf0964"),
+}
+
+
+def build_music():
+    out = REPO / "assets/audio/music"
+    out.mkdir(parents=True, exist_ok=True)
+    for mid, (file, sha) in MUSIC.items():
+        path = KENNEY / MUSIC_DIR / file
+        if not path.exists():
+            sys.exit(f"{path} not found: download Kenney's All-in-1 bundle and set KENNEY_DIR")
+        data = path.read_bytes()
+        if hashlib.sha256(data).hexdigest() != sha:
+            sys.exit(f"{file}: checksum mismatch")
+        (out / f"{mid}.ogg").write_bytes(data)
+    print(f"music: {len(MUSIC)} loops")
 
 
 def fetch(name):
@@ -282,11 +317,16 @@ def credits():
         lines.append(f"- **{title}** by {author}, CC0, <{page}>")
         for sid, file in items:
             lines.append(f"  - `{sid}.ogg` ← `{file.rsplit('/', 1)[-1]}`")
+    lines += ["", "Music in `music/`: **Music Loops** by Kenney, CC0, <https://kenney.nl/assets/music-loops>", ""]
+    lines += [f"- `{mid}.ogg` ← `{file}`" for mid, (file, _) in MUSIC.items()]
     (REPO / "assets/audio/CREDITS.md").write_text("\n".join(lines) + "\n")
 
 
 def main():
-    ids = sys.argv[1:] or list(SFX)
+    ids = sys.argv[1:] or list(SFX) + ["music"]
+    if "music" in ids:
+        build_music()
+        ids.remove("music")
     for sid in ids:
         if sid not in SFX:
             sys.exit(f"unknown sound {sid}; have {', '.join(SFX)}")

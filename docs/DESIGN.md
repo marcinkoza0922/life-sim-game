@@ -69,6 +69,7 @@ assets/
   vectorcraft/   make_icons.py: UI icon SVGs (icons/, sheet.svg) rasterised by vectorcraft-cli
   ui/icons/      <name>.png 128 px UI icons (generated; embedded by game/src/icons.rs)
   audio/sfx/     <id>.ogg sound effects (embedded by game/src/sounds.rs)
+  audio/music/   <id>.ogg Kenney Music Loops (CC0; embedded by game/src/sounds.rs)
   audio/         fetch_sfx.py: downloads pinned CC0 sounds and cuts them; CREDITS.md
   soundcraft/    make_sfx.py: builds each sound as a SoundCraft session headlessly
   fonts/         Nunito, Fredoka, Noto Emoji (OFL, licences alongside; embedded by hearth_ui)
@@ -539,4 +540,8 @@ Added since:
   implied by the body clip: chop, stir, scrub, type, TV, shower, snore), one voice per sound at the
   loudest source's distance; walkers get footsteps at 1x/2x; Build/Buy actions thunk or crumble by
   whether they cost or refunded money; Sell jingles; Money/Career/Life/Death log entries chime; UI
-  clicks tick. `door_open`/`door_close`/`pickup` are built but unused until doors animate. No music yet.
+  clicks tick. `door_open`/`door_close`/`pickup` are built but unused until doors animate.
+- **Music:** 13 Kenney Music Loops (CC0). `sounds::Jukebox` plays a playlist per scene (Day, Night 22:00–6:00,
+  Build/Buy, Create-a-Household); a track loops for 60–100 s then the next cross-fades in, with a 30% chance
+  of a 30–90 s quiet break between tracks; changing scene switches playlist at once. Music keeps playing
+  while paused and has its own volume slider.

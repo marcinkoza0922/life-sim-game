@@ -30,3 +30,19 @@ credit is given as thanks, not as a licence requirement. Sounds not listed here 
   - `chop.ogg` ← `kitchencuttingboard01.wav`
 - **Keyboard Soundpack #1** by Unicae Games, CC0, <https://opengameart.org/content/keyboard-soundpack-1-typing-and-single-keystrokes>
   - `type.ogg` ← `human_vel-*.wav`
+
+Music in `music/`: **Music Loops** by Kenney, CC0, <https://kenney.nl/assets/music-loops>
+
+- `swinging_pants.ogg` ← `Swinging Pants.ogg`
+- `italian_mom.ogg` ← `Italian Mom.ogg`
+- `mischief_stroll.ogg` ← `Mishief Stroll.ogg`
+- `cheerful_annoyance.ogg` ← `Cheerful Annoyance.ogg`
+- `farm_frolics.ogg` ← `Farm Frolics.ogg`
+- `polka_train.ogg` ← `Polka Train.ogg`
+- `night_at_the_beach.ogg` ← `Night at the Beach.ogg`
+- `flowing_rocks.ogg` ← `Flowing Rocks.ogg`
+- `space_cadet.ogg` ← `Space Cadet.ogg`
+- `drumming_sticks.ogg` ← `Drumming Sticks.ogg`
+- `mission_plausible.ogg` ← `Mission Plausible.ogg`
+- `time_driving.ogg` ← `Time Driving.ogg`
+- `wacky_waiting.ogg` ← `Wacky Waiting.ogg`

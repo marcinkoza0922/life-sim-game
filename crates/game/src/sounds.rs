@@ -22,6 +22,110 @@ sfx![
     "demolish", "build_wall", "cash", "shower", "faucet", "chop", "type", "stir", "scrub", "tv", "treadmill", "snore",
 ];
 
+macro_rules! music {
+    ($($id:literal),* $(,)?) => {
+        /// Every embedded music loop id (`assets/audio/music/`, Kenney "Music Loops", CC0).
+        pub const MUSIC: &[&str] = &[$($id),*];
+        fn music_table() -> HashMap<&'static str, Clip> {
+            HashMap::from([$(($id, Arc::from(&include_bytes!(concat!("../../../assets/audio/music/", $id, ".ogg"))[..]))),*])
+        }
+    };
+}
+
+music![
+    "swinging_pants", "italian_mom", "mischief_stroll", "cheerful_annoyance", "farm_frolics", "polka_train",
+    "night_at_the_beach", "flowing_rocks", "space_cadet", "drumming_sticks", "mission_plausible", "time_driving",
+    "wacky_waiting",
+];
+
+/// The clip for a music loop id.
+pub fn track(id: &str) -> Option<Clip> {
+    static TABLE: OnceLock<HashMap<&'static str, Clip>> = OnceLock::new();
+    TABLE.get_or_init(music_table).get(id).cloned()
+}
+
+/// What the music should suit right now.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Scene {
+    Day,
+    Night,
+    Build,
+    Creator,
+}
+
+impl Scene {
+    pub fn playlist(self) -> &'static [&'static str] {
+        match self {
+            Scene::Day => &["swinging_pants", "italian_mom", "mischief_stroll", "cheerful_annoyance", "farm_frolics", "polka_train"],
+            Scene::Night => &["night_at_the_beach", "flowing_rocks", "space_cadet"],
+            Scene::Build => &["drumming_sticks", "mission_plausible", "time_driving", "mischief_stroll"],
+            Scene::Creator => &["wacky_waiting", "cheerful_annoyance"],
+        }
+    }
+}
+
+/// Picks the music: each scene has a playlist; a track loops for a minute or so, then the next
+/// one cross-fades in, with an occasional quiet break so the short loops don't wear thin.
+/// Changing scene (Live → Build, nightfall) switches playlist at once.
+pub struct Jukebox {
+    scene: Option<Scene>,
+    index: usize,
+    playing: Option<&'static str>,
+    /// Seconds left on the current track, or of the current break.
+    left: f32,
+    rng: u32,
+}
+
+impl Default for Jukebox {
+    fn default() -> Self {
+        Jukebox { scene: None, index: 0, playing: None, left: 0.0, rng: 0x9e37_79b9 }
+    }
+}
+
+impl Jukebox {
+    pub const TRACK_SECS: (f32, f32) = (60.0, 100.0);
+    pub const BREAK_SECS: (f32, f32) = (30.0, 90.0);
+    pub const BREAK_CHANCE: f32 = 0.3;
+
+    fn roll(&mut self) -> f32 {
+        self.rng ^= self.rng << 13;
+        self.rng ^= self.rng >> 17;
+        self.rng ^= self.rng << 5;
+        (self.rng >> 8) as f32 / (1u32 << 24) as f32
+    }
+
+    fn between(&mut self, (lo, hi): (f32, f32)) -> f32 {
+        lo + (hi - lo) * self.roll()
+    }
+
+    fn next_track(&mut self, scene: Scene) {
+        let list = scene.playlist();
+        self.index = (self.index + 1) % list.len();
+        self.playing = Some(list[self.index]);
+        self.left = self.between(Self::TRACK_SECS);
+    }
+
+    /// Advances by `dt` real seconds in `scene`; returns the track that should be playing.
+    pub fn update(&mut self, dt: f32, scene: Scene) -> Option<&'static str> {
+        if self.scene != Some(scene) {
+            self.scene = Some(scene);
+            self.index = (self.roll() * scene.playlist().len() as f32) as usize;
+            self.next_track(scene);
+            return self.playing;
+        }
+        self.left -= dt;
+        if self.left <= 0.0 {
+            if self.playing.is_some() && self.roll() < Self::BREAK_CHANCE {
+                self.playing = None;
+                self.left = self.between(Self::BREAK_SECS);
+            } else {
+                self.next_track(scene);
+            }
+        }
+        self.playing
+    }
+}
+
 /// The clip for a sound id, or None for an unknown id.
 pub fn clip(id: &str) -> Option<Clip> {
     static TABLE: OnceLock<HashMap<&'static str, Clip>> = OnceLock::new();
@@ -97,6 +201,45 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn every_music_track_decodes_and_is_in_a_playlist() {
+        for id in MUSIC {
+            let c = track(id).unwrap();
+            assert!(rodio::Decoder::new(std::io::Cursor::new(c)).is_ok(), "{id}");
+            let used = [Scene::Day, Scene::Night, Scene::Build, Scene::Creator].iter().any(|s| s.playlist().contains(id));
+            assert!(used, "{id} is in no playlist");
+        }
+        for s in [Scene::Day, Scene::Night, Scene::Build, Scene::Creator] {
+            assert!(s.playlist().iter().all(|id| track(id).is_some()));
+        }
+    }
+
+    #[test]
+    fn jukebox_switches_on_scene_change_and_rotates_with_breaks() {
+        let mut j = Jukebox::default();
+        let first = j.update(0.1, Scene::Day).unwrap();
+        assert!(Scene::Day.playlist().contains(&first));
+        assert_eq!(j.update(1.0, Scene::Day), Some(first), "keeps playing");
+        let b = j.update(0.1, Scene::Build).unwrap();
+        assert!(Scene::Build.playlist().contains(&b), "switches at once");
+        // over an hour of Build: several tracks, some breaks, never silent for long
+        let (mut tracks, mut silent, mut longest) = (std::collections::HashSet::new(), 0.0, 0.0f32);
+        for _ in 0..36_000 {
+            match j.update(0.1, Scene::Build) {
+                Some(t) => {
+                    tracks.insert(t);
+                    silent = 0.0;
+                }
+                None => {
+                    silent += 0.1;
+                    longest = longest.max(silent);
+                }
+            }
+        }
+        assert_eq!(tracks.len(), Scene::Build.playlist().len());
+        assert!(longest > 0.0 && longest <= Jukebox::BREAK_SECS.1 + 0.2, "{longest}");
     }
 
     #[test]

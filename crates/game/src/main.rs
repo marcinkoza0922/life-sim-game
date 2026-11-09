@@ -148,6 +148,7 @@ struct App {
     /// When each one-shot last played (app seconds), so bursts don't stack.
     last_sfx: HashMap<&'static str, f32>,
     clock: f32,
+    jukebox: game::sounds::Jukebox,
 }
 
 impl App {
@@ -184,6 +185,17 @@ impl App {
             }
         }
         self.audio.update_loops(dt, &loops);
+
+        let scene = if self.game.creator.is_some() {
+            sounds::Scene::Creator
+        } else if matches!(self.game.mode, Mode::Build | Mode::Buy) {
+            sounds::Scene::Build
+        } else {
+            let h = w.res::<sim::time::Clock>().hour();
+            if !(6..22).contains(&h) { sounds::Scene::Night } else { sounds::Scene::Day }
+        };
+        let track = self.jukebox.update(dt, scene).and_then(sounds::track);
+        self.audio.update_music(dt, track.as_ref());
 
         // footsteps: a step every 0.42 s of game-speed time, only at 1x/2x so ultra isn't a stampede
         self.steps.retain(|e, _| steps.iter().any(|s| s.0 == *e));
@@ -276,7 +288,7 @@ impl App {
             game.volumes = game::audio::Volumes::load();
             game::audio::Audio::new()
         };
-        App { args, game, gfx: None, cursor: (0.0, 0.0), keys: HashSet::new(), rmb: false, mmb: false, lmb_down_at: None, last: Instant::now(), frames: 0, audio, volumes_save_in: None, steps: HashMap::new(), last_sfx: HashMap::new(), clock: 0.0 }
+        App { args, game, gfx: None, cursor: (0.0, 0.0), keys: HashSet::new(), rmb: false, mmb: false, lmb_down_at: None, last: Instant::now(), frames: 0, audio, volumes_save_in: None, steps: HashMap::new(), last_sfx: HashMap::new(), clock: 0.0, jukebox: Default::default() }
     }
 
     fn ndc(&self) -> Option<(f32, f32)> {
