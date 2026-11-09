@@ -31,9 +31,9 @@ def reset():
 _mats = {}
 
 
-def mat(name, color, rough=0.6, metal=0.0, emit=0.0):
-    """A glTF-exportable material; `color` is sRGB."""
-    key = (name, tuple(color), rough, metal, emit)
+def mat(name, color, rough=0.6, metal=0.0, emit=0.0, alpha=1.0):
+    """A glTF-exportable material; `color` is sRGB. `alpha` < 1 draws in the transparent pass."""
+    key = (name, tuple(color), rough, metal, emit, alpha)
     if key in _mats:
         return _mats[key]
     m = bpy.data.materials.new(name)
@@ -43,6 +43,9 @@ def mat(name, color, rough=0.6, metal=0.0, emit=0.0):
     b.inputs["Base Color"].default_value = (*lin, 1.0)
     b.inputs["Roughness"].default_value = rough
     b.inputs["Metallic"].default_value = metal
+    if alpha < 1.0:
+        b.inputs["Alpha"].default_value = alpha
+        m.surface_render_method = "BLENDED"
     if emit > 0:
         b.inputs["Emission Color"].default_value = (*lin, 1.0)
         b.inputs["Emission Strength"].default_value = emit
@@ -318,7 +321,205 @@ def dining_table():
             cyl(0.042, 0.06, (x, 0.03, z), legs, verts=16)
 
 
-BUILDERS = {f.__name__: f for f in (fridge_basic, stove_basic, counter_basic, kitchen_sink, toilet_basic, bed_single, bed_double, sofa_basic, dining_chair, dining_table)}
+# ------------------------------------------------------------------------------------------------
+# second batch
+
+
+def armchair():
+    shell = mat("fabric", (0.57, 0.31, 0.23), 0.9)
+    cushion = mat("fabric.cushion", (0.63, 0.34, 0.25), 0.95)
+    leg = mat("wood.leg", (0.3, 0.21, 0.15), 0.6)
+    for x in (0.15, 0.85):
+        for z in (0.17, 0.83):
+            cyl(0.022, 0.08, (x, 0.04, z), leg)
+    box((0.86, 0.3, 0.78), (0.5, 0.23, 0.5), shell, bevel=0.03, segments=3)
+    box((0.84, 0.66, 0.2), (0.5, 0.7, 0.14), shell, bevel=0.07, segments=4, rot_x=8)  # wing back
+    for x in (0.085, 0.915):
+        box((0.16, 0.3, 0.82), (x, 0.52, 0.5), shell, bevel=0.07, segments=4)
+        sphere(0.085, (x, 0.66, 0.84), shell, scale=(1.0, 0.8, 0.5))  # rolled arm fronts
+    box((0.62, 0.12, 0.6), (0.5, 0.43, 0.56), cushion, bevel=0.045, segments=4)
+    box((0.6, 0.38, 0.12), (0.5, 0.66, 0.3), cushion, bevel=0.05, segments=4, rot_x=10)
+
+
+def tv_basic():
+    wood = mat("wood", (0.24, 0.19, 0.16), 0.6)
+    black = mat("bezel", (0.05, 0.05, 0.06), 0.3)
+    screen = mat("screen", (0.2, 0.35, 0.5), 0.1, emit=1.5)
+    # low media console: open shelf between two doors, short legs
+    for x in (0.1, 0.9):
+        for z in (0.15, 0.45):
+            box((0.04, 0.08, 0.04), (x, 0.04, z), black, bevel=0.008)
+    box((0.92, 0.04, 0.42), (0.5, 0.48, 0.3), wood, bevel=0.012)
+    box((0.92, 0.03, 0.42), (0.5, 0.095, 0.3), wood, bevel=0.008)
+    for x in (0.025, 0.975, 0.3, 0.7):
+        box((0.03, 0.37, 0.42), (x, 0.28, 0.3), wood, bevel=0.006)
+    box((0.92, 0.37, 0.02), (0.5, 0.28, 0.1), wood, bevel=0.0)  # back panel
+    for x in (0.16, 0.84):
+        box((0.26, 0.33, 0.02), (x, 0.28, 0.51), wood, bevel=0.008)
+    box((0.3, 0.06, 0.24), (0.5, 0.17, 0.3), black, bevel=0.01)  # a console in the shelf
+    # flat screen on a stand
+    box((0.28, 0.02, 0.16), (0.5, 0.51, 0.3), black, bevel=0.006)
+    box((0.06, 0.08, 0.03), (0.5, 0.56, 0.28), black, bevel=0.006)
+    box((0.95, 0.55, 0.04), (0.5, 0.86, 0.3), black, bevel=0.012)
+    box((0.89, 0.49, 0.006), (0.5, 0.86, 0.321), screen, bevel=0.0)
+
+
+def bookshelf():
+    wood = mat("wood", (0.5, 0.35, 0.23), 0.7)
+    for x in (0.035, 0.965):
+        box((0.04, 1.9, 0.35), (x, 0.95, 0.2), wood, bevel=0.008)
+    box((0.95, 1.86, 0.02), (0.5, 0.95, 0.035), wood, bevel=0.0)  # back
+    box((0.98, 0.05, 0.37), (0.5, 1.915, 0.2), wood, bevel=0.012)  # crown
+    box((0.9, 0.08, 0.33), (0.5, 0.04, 0.21), wood, bevel=0.006)  # plinth
+    shelves = [0.08, 0.5, 0.92, 1.34, 1.76]
+    for y in shelves[1:]:
+        box((0.89, 0.025, 0.32), (0.5, y, 0.21), wood, bevel=0.004)
+    # rows of books: deterministic varied heights, widths, colours and the odd lean
+    colours = [(0.6, 0.2, 0.2), (0.2, 0.35, 0.5), (0.3, 0.5, 0.3), (0.75, 0.62, 0.3), (0.35, 0.25, 0.45), (0.85, 0.82, 0.74), (0.15, 0.15, 0.18)]
+    seed = 7
+    for row, y in enumerate(shelves[:-1]):
+        x = 0.07
+        while True:
+            seed = (seed * 1103515245 + 12345) % 2**31
+            w = 0.03 + (seed % 5) * 0.008
+            h = 0.22 + (seed // 7 % 6) * 0.025
+            if x + w > 0.93 or (row == 2 and 0.55 < x < 0.75):
+                if x + w > 0.93:
+                    break
+                x += 0.03
+                continue
+            c = colours[seed // 3 % len(colours)]
+            lean = 12 if seed % 11 == 0 else 0
+            b = box((w, h, 0.22), (x + w / 2, y + 0.0125 + h / 2, 0.22), mat(f"book{seed // 3 % len(colours)}", c, 0.8), bevel=0.004)
+            if lean:
+                b.rotation_euler = (0, math.radians(lean), 0)
+            x += w + 0.004
+    # a little vase on the gap
+    cyl(0.04, 0.16, (0.65, 0.92 + 0.0125 + 0.08, 0.22), mat("vase", (0.25, 0.55, 0.6), 0.2))
+
+
+def computer_desk():
+    top = mat("desk", (0.85, 0.85, 0.83), 0.4)
+    side = mat("desk.side", (0.75, 0.75, 0.73), 0.5)
+    black = mat("bezel", (0.06, 0.06, 0.07), 0.3)
+    screen = mat("screen", (0.3, 0.45, 0.65), 0.1, emit=1.2)
+    box((0.96, 0.035, 0.6), (0.5, 0.74, 0.3), top, bevel=0.01)
+    box((0.04, 0.72, 0.56), (0.05, 0.36, 0.3), side, bevel=0.006)
+    # drawer pedestal on the right
+    box((0.36, 0.72, 0.56), (0.76, 0.36, 0.3), side, bevel=0.006)
+    knob = m_("metal.chrome", CHROME)
+    for y in (0.6, 0.38, 0.16):
+        box((0.33, 0.2, 0.015), (0.76, y, 0.585), top, bevel=0.005)
+        box((0.1, 0.015, 0.02), (0.76, y + 0.06, 0.6), knob, bevel=0.004)
+    box((0.5, 0.18, 0.015), (0.3, 0.62, 0.05), side, bevel=0.0)  # modesty panel
+    # monitor on a stand, keyboard, mouse, a mug
+    box((0.18, 0.012, 0.12), (0.5, 0.764, 0.13), black, bevel=0.004)
+    box((0.04, 0.12, 0.025), (0.5, 0.82, 0.12), black, bevel=0.005)
+    box((0.52, 0.32, 0.03), (0.5, 0.98, 0.15), black, bevel=0.01)
+    box((0.48, 0.28, 0.005), (0.5, 0.985, 0.166), screen, bevel=0.0)
+    box((0.4, 0.018, 0.13), (0.5, 0.767, 0.4), mat("keyboard", (0.15, 0.15, 0.16), 0.6), bevel=0.006)
+    sphere(0.03, (0.78, 0.768, 0.42), mat("keyboard", (0.15, 0.15, 0.16), 0.6), scale=(0.75, 0.45, 1.1))
+    cyl(0.035, 0.09, (0.13, 0.802, 0.38), mat("mug", (0.85, 0.4, 0.25), 0.3))
+
+
+def shower_basic():
+    tray = m_("porcelain", PORCELAIN)
+    tile = mat("wall_tile", (0.85, 0.9, 0.92), 0.2)
+    glass = mat("glass", (0.75, 0.88, 0.95), 0.05, alpha=0.3)
+    chrome = m_("metal.chrome", CHROME)
+    box((0.96, 0.08, 0.96), (0.5, 0.04, 0.5), tray, bevel=0.02)
+    cyl(0.04, 0.004, (0.5, 0.082, 0.5), mat("drain", (0.15, 0.15, 0.16), 0.4, 1.0))
+    # tiled back wall, glass side and front panel with a door gap
+    box((0.96, 2.0, 0.03), (0.5, 1.0, 0.015), tile, bevel=0.0)
+    box((0.012, 1.9, 0.92), (0.025, 1.03, 0.5), glass, bevel=0.0)
+    box((0.45, 1.9, 0.012), (0.255, 1.03, 0.955), glass, bevel=0.0)
+    box((0.03, 1.92, 0.03), (0.035, 1.04, 0.955), chrome, bevel=0.008)  # frame post
+    box((0.47, 0.025, 0.025), (0.255, 1.99, 0.955), chrome, bevel=0.006)
+    box((0.025, 0.025, 0.93), (0.035, 1.99, 0.5), chrome, bevel=0.006)
+    # riser pipe, head and mixer
+    cyl(0.012, 1.0, (0.5, 1.45, 0.05), chrome)
+    cyl(0.01, 0.15, (0.5, 1.95, 0.12), chrome, axis="z")
+    cyl(0.09, 0.02, (0.5, 1.94, 0.2), chrome, verts=32)
+    cyl(0.035, 0.05, (0.5, 1.05, 0.05), chrome, axis="z")
+    box((0.08, 0.015, 0.02), (0.5, 1.05, 0.085), chrome, bevel=0.005)
+
+
+def bathtub_basic():
+    p = m_("porcelain", PORCELAIN)
+    water = mat("water", (0.6, 0.78, 0.88), 0.05, alpha=0.75)
+    chrome = m_("metal.chrome", CHROME)
+    # walls of the tub around a hollow, a rolled rim, and the floor of the basin
+    box((0.86, 0.2, 1.84), (0.5, 0.1, 1.0), p, bevel=0.04, segments=3)
+    for (sx, sz, x, z) in ((0.86, 0.1, 0.5, 0.13), (0.86, 0.1, 0.5, 1.87), (0.08, 1.84, 0.11, 1.0), (0.08, 1.84, 0.89, 1.0)):
+        box((sx, 0.56, sz), (x, 0.28, z), p, bevel=0.035, segments=3)
+    box((0.7, 0.03, 1.64), (0.5, 0.48, 1.0), water, bevel=0.0)
+    # claw feet
+    for x in (0.14, 0.86):
+        for z in (0.2, 1.8):
+            sphere(0.05, (x, 0.04, z), chrome, scale=(1, 0.8, 1))
+    # tap at the foot end
+    cyl(0.02, 0.12, (0.5, 0.62, 1.88), chrome)
+    cyl(0.016, 0.12, (0.5, 0.67, 1.83), chrome, axis="z")
+    for x in (0.42, 0.58):
+        cyl(0.025, 0.03, (x, 0.59, 1.88), chrome)
+
+
+def crib():
+    wood = mat("wood", (1.0, 0.93, 0.78), 0.7)
+    sheet = mat("fabric", (1.0, 1.0, 0.97), 0.9)
+    blanket = mat("fabric.blanket", (0.72, 0.85, 0.95), 0.9)
+    # corner posts with knobs, top and bottom rails, spindles on all four sides
+    for x in (0.07, 0.93):
+        for z in (0.07, 0.93):
+            box((0.05, 0.95, 0.05), (x, 0.475, z), wood, bevel=0.01)
+            sphere(0.035, (x, 0.97, z), wood)
+    for y in (0.3, 0.9):
+        for z in (0.07, 0.93):
+            box((0.82, 0.04, 0.03), (0.5, y, z), wood, bevel=0.008)
+        for x in (0.07, 0.93):
+            box((0.03, 0.04, 0.82), (x, y, 0.5), wood, bevel=0.008)
+    n = 8
+    for i in range(1, n):
+        t = 0.07 + 0.86 * i / n
+        for z in (0.07, 0.93):
+            cyl(0.011, 0.58, (t, 0.6, z), wood, verts=10)
+        for x in (0.07, 0.93):
+            cyl(0.011, 0.58, (x, 0.6, t), wood, verts=10)
+    # head and foot panels a bit higher, mattress, folded blanket, a star mobile
+    box((0.86, 0.1, 0.84), (0.5, 0.36, 0.5), sheet, bevel=0.035, segments=3)
+    box((0.8, 0.04, 0.35), (0.5, 0.43, 0.7), blanket, bevel=0.018, segments=3)
+    box((0.016, 0.45, 0.016), (0.88, 1.15, 0.12), wood, bevel=0.004)
+    box((0.016, 0.016, 0.38), (0.88, 1.37, 0.31), wood, bevel=0.004)
+    for i, c in enumerate(((1.0, 0.8, 0.3), (0.9, 0.45, 0.5), (0.5, 0.75, 0.55))):
+        sphere(0.035, (0.88, 1.2, 0.25 + i * 0.1), mat(f"toy{i}", c, 0.5))
+        cyl(0.003, 0.15, (0.88, 1.29, 0.25 + i * 0.1), mat("string", (0.9, 0.9, 0.9), 0.9))
+
+
+def floor_lamp():
+    metal = mat("metal", (0.2, 0.2, 0.2), 0.3, 1.0)
+    shade = mat("fabric", (1.0, 1.0, 0.86), 0.9, emit=0.8)
+    cyl(0.16, 0.03, (0.5, 0.015, 0.5), metal, bevel=0.01, verts=32)
+    cyl(0.045, 0.03, (0.5, 0.045, 0.5), metal)
+    cyl(0.013, 1.42, (0.5, 0.74, 0.5), metal, verts=12)
+    cyl(0.02, 0.04, (0.5, 1.44, 0.5), metal)
+    # tapered drum shade (open cone) and a glowing bulb inside
+    bpy.ops.mesh.primitive_cone_add(vertices=32, radius1=0.22, radius2=0.16, depth=0.3, end_fill_type="NOTHING", location=g2b(0.5, 1.55, 0.5))
+    o = bpy.context.active_object
+    sol = o.modifiers.new("solid", "SOLIDIFY")
+    sol.thickness = 0.008
+    for poly in o.data.polygons:
+        poly.use_smooth = True
+    o.data.materials.append(shade)
+    sphere(0.05, (0.5, 1.5, 0.5), mat("bulb", (1.0, 0.95, 0.8), 0.3, emit=3.0))
+
+
+BUILDERS = {
+    f.__name__: f
+    for f in (
+        fridge_basic, stove_basic, counter_basic, kitchen_sink, toilet_basic, bed_single, bed_double, sofa_basic, dining_chair, dining_table,
+        armchair, tv_basic, bookshelf, computer_desk, shower_basic, bathtub_basic, crib, floor_lamp,
+    )
+}
 
 
 def main():
