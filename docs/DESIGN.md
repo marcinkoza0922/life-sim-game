@@ -418,9 +418,10 @@ Added since:
   object and facing it to within `cone`° (TV: 5 m from the sofa; chess: a chair pulled up to the
   table). The seat slot is reserved on `CurrentAction::seat` and the peon sits there with the seat
   clip; with no free seat, the object's own slots are used (TV: on the floor; chess: standing).
+  Autonomy and the pie menu count a free reachable seat as a free spot. `simctl render --order
+  OBJECT:INTERACTION` stages the household doing something (e.g. `tv_basic:watch`) before rendering.
 
 **Known gaps / next up:** eye colour from genes
-(pupils are a fixed colour); infant-specific interaction clips; autonomy only offers an object while
-one of its own slots is free (seats nearby don't count yet); playable multi-lot
+(pupils are a fixed colour); infant-specific interaction clips; playable multi-lot
 neighborhoods (switching households, community lots) — townies are the first step; multi-tile object
 picking polish; hygiene still occasionally bottoms out in long headless runs (warning, not a failure).

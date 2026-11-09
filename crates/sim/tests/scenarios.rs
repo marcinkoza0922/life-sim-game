@@ -258,3 +258,36 @@ fn selling_the_seat_mid_show_stands_them_up() {
     assert!(sim.world.get::<Transform>(adult).unwrap().pos.y < 0.05, "back on the floor");
     assert!(sim.world.get::<ActionQueue>(adult).unwrap().current.as_ref().is_none_or(|c| c.seat.is_none()));
 }
+
+#[test]
+fn a_full_floor_in_front_of_the_tv_still_leaves_the_sofa() {
+    let sim = starter_sim(5);
+    sim.world.res_mut::<Settings>().free_will = sim::time::FreeWill::Off;
+    let adult = sim.living_peons()[0];
+    let tv = find_object(&sim, "tv_basic");
+    let watch = interaction(&sim, tv, "watch");
+    let is_watch = |k: &ActionKind| matches!(k, ActionKind::Object { obj, interaction } if *obj == tv && *interaction == watch);
+    // three others already on the floor in front of it
+    let others: Vec<Entity> = sim.living_peons().into_iter().filter(|&p| p != adult).collect();
+    {
+        let mut o = sim.world.get_mut::<sim::objects::ObjectInstance>(tv).unwrap();
+        for s in o.slot_users.iter_mut() {
+            *s = Some(others[0]);
+        }
+    }
+    let offered = |sim: &Sim| sim.options(adult, tv).into_iter().find(|(_, k, _)| is_watch(k)).unwrap().2;
+    let considered = |sim: &Sim| sim::autonomy::candidates(&sim.world, adult, &sim.data()).iter().any(|c| is_watch(&c.kind));
+    assert_eq!(offered(&sim), Ok(()), "the sofa is free");
+    assert!(considered(&sim), "autonomy counts the sofa");
+
+    // and with the sofa taken too, it really is full
+    let sofa = find_object(&sim, "sofa_basic");
+    {
+        let mut o = sim.world.get_mut::<sim::objects::ObjectInstance>(sofa).unwrap();
+        for s in o.slot_users.iter_mut() {
+            *s = Some(others[0]);
+        }
+    }
+    assert!(offered(&sim).is_err());
+    assert!(!considered(&sim));
+}

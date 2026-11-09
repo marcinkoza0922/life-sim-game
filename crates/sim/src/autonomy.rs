@@ -90,6 +90,52 @@ pub fn free_slots(def: &crate::data::ObjectDef, inter: &InteractionDef, inst: &O
         .collect()
 }
 
+/// The closest (by walking) free seat slot to perform `obj`'s interaction from (see `SeatDef`), with
+/// the nav node to approach it from.
+pub fn nearest_seat(world: &World, data: &GameData, e: Entity, obj: Entity, inst: &ObjectInstance, sd: &crate::data::SeatDef, field: &NavField) -> Option<(Entity, usize, NavNode)> {
+    nearest_seat_by(world, data, e, obj, inst, sd, field).map(|(_, se, s, n)| (se, s, n))
+}
+
+/// [`nearest_seat`] with its walking distance.
+fn nearest_seat_by(world: &World, data: &GameData, e: Entity, obj: Entity, inst: &ObjectInstance, sd: &crate::data::SeatDef, field: &NavField) -> Option<(f32, Entity, usize, NavNode)> {
+    let target = inst.center(data.object(inst.def));
+    let cos_cone = sd.cone.to_radians().cos();
+    let mut best: Option<(f32, Entity, usize, NavNode)> = None;
+    for (se, si) in world.query::<(Entity, &ObjectInstance)>().iter() {
+        if se == obj || si.level != inst.level {
+            continue;
+        }
+        let def = data.object(si.def);
+        let seat_slots = def.interactions.iter().filter(|i| i.pose == crate::data::Pose::Sit && i.tags.iter().any(|t| t == "seating"));
+        for i in seat_slots {
+            for s in free_slots(def, i, si, e) {
+                let at = si.slot_use_pos(def, s);
+                let to = glam::Vec2::new(target.x - at.x, target.z - at.z);
+                let yaw = si.slot_yaw(def, s);
+                let fwd = glam::Vec2::new(yaw.sin(), yaw.cos());
+                if to.length() > sd.range || to.normalize_or_zero().dot(fwd) < cos_cone {
+                    continue;
+                }
+                let node = NavNode::new(si.level, si.slot_stand_tile(def, s));
+                if let Some(d) = field.distance(node)
+                    && best.is_none_or(|b| d < b.0)
+                {
+                    best = Some((d, se, s, node));
+                }
+            }
+        }
+    }
+    best
+}
+
+/// Is there a reachable free seat to perform `inter` on `obj` from (see `SeatDef`)?
+fn seat_free(world: &World, data: &GameData, e: Entity, obj: Entity, inst: &ObjectInstance, inter: &InteractionDef) -> bool {
+    let Some(sd) = &inter.seat else { return false };
+    let Some(tf) = world.get::<Transform>(e).map(|t| *t) else { return false };
+    let field = NavField::flood(&world.res::<Lot>(), NavNode::new(tf.level(), tf.tile()), 400.0);
+    nearest_seat(world, data, e, obj, inst, sd, &field).is_some()
+}
+
 fn score_gains(needs: &Needs, gains: impl Iterator<Item = (Need, f32)>) -> f32 {
     let mut s = 0.0;
     for (n, ad) in gains {
@@ -163,10 +209,12 @@ pub fn candidates(world: &World, e: Entity, data: &GameData) -> Vec<Candidate> {
             if inter.has_tag("homework") && !homework_due {
                 continue;
             }
+            // walking distance to the nearest free spot: one of its own slots or a seat nearby
+            let seat = inter.seat.as_ref().and_then(|sd| nearest_seat_by(world, data, e, oe, inst, sd, &field)).map_or(f32::INFINITY, |b| b.0);
             let dist = free_slots(def, inter, inst, e)
                 .into_iter()
                 .filter_map(|s| field.distance(NavNode::new(inst.level, inst.slot_stand_tile(def, s))))
-                .fold(f32::INFINITY, f32::min);
+                .fold(seat, f32::min);
             if !dist.is_finite() {
                 continue;
             }
@@ -400,7 +448,7 @@ pub fn menu_options(world: &World, peon: Entity, target: Entity) -> Vec<(String,
                 continue;
             }
             let mut ok = interaction_check(&data, inter, &inst, stage, &pers, funds);
-            if ok.is_ok() && free_slots(def, inter, &inst, peon).is_empty() {
+            if ok.is_ok() && free_slots(def, inter, &inst, peon).is_empty() && !seat_free(world, &data, peon, target, &inst, inter) {
                 ok = Err("in use".into());
             }
             let label = if inter.cost > 0 { format!("{} (${})", inter.name, inter.cost) } else { inter.name.clone() };

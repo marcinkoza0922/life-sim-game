@@ -621,7 +621,7 @@ fn begin(world: &World, e: Entity, data: &GameData, cur: &mut CurrentAction) -> 
                 let def = data.object(inst.def);
                 let inter = &def.interactions[interaction];
                 interaction_check(data, inter, &inst, stage, &pers, funds)?;
-                inter.seat.as_ref().and_then(|sd| nearest_seat(world, data, e, obj, &inst, sd, &field))
+                inter.seat.as_ref().and_then(|sd| autonomy::nearest_seat(world, data, e, obj, &inst, sd, &field))
             };
             if let Some((seat, slot, node)) = seat {
                 let nodes = field.path_to(node).unwrap();
@@ -704,39 +704,6 @@ fn begin(world: &World, e: Entity, data: &GameData, cur: &mut CurrentAction) -> 
 }
 
 /// Where peons leave the lot (the street side).
-/// The closest (by walking) free seat slot to perform `obj`'s interaction from (see `SeatDef`), with
-/// the nav node to approach it from.
-fn nearest_seat(world: &World, data: &GameData, e: Entity, obj: Entity, inst: &ObjectInstance, sd: &crate::data::SeatDef, field: &NavField) -> Option<(Entity, usize, NavNode)> {
-    let target = inst.center(data.object(inst.def));
-    let cos_cone = sd.cone.to_radians().cos();
-    let mut best: Option<(f32, Entity, usize, NavNode)> = None;
-    for (se, si) in world.query::<(Entity, &ObjectInstance)>().iter() {
-        if se == obj || si.level != inst.level {
-            continue;
-        }
-        let def = data.object(si.def);
-        let seat_slots = def.interactions.iter().filter(|i| i.pose == Pose::Sit && i.tags.iter().any(|t| t == "seating"));
-        for i in seat_slots {
-            for s in free_slots(def, i, si, e) {
-                let at = si.slot_use_pos(def, s);
-                let to = glam::Vec2::new(target.x - at.x, target.z - at.z);
-                let yaw = si.slot_yaw(def, s);
-                let fwd = glam::Vec2::new(yaw.sin(), yaw.cos());
-                if to.length() > sd.range || to.normalize_or_zero().dot(fwd) < cos_cone {
-                    continue;
-                }
-                let node = NavNode::new(si.level, si.slot_stand_tile(def, s));
-                if let Some(d) = field.distance(node)
-                    && best.is_none_or(|b| d < b.0)
-                {
-                    best = Some((d, se, s, node));
-                }
-            }
-        }
-    }
-    best.map(|(_, se, s, n)| (se, s, n))
-}
-
 pub fn exit_tile(lot: &Lot) -> IVec2 {
     IVec2::new(lot.width / 2, lot.depth - 1)
 }
