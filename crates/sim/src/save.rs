@@ -16,13 +16,14 @@ use crate::economy::Household;
 use crate::log::SimLog;
 use crate::lot::Lot;
 use crate::needs::Nanny;
+use crate::neighborhood::Neighborhood;
 use crate::objects::ObjectInstance;
 use crate::rng::SimRng;
 use crate::sim::{Sim, data};
 use crate::social::{Rel, Relationships};
 use crate::time::{Clock, Settings};
 
-pub const SAVE_VERSION: u32 = 1;
+pub const SAVE_VERSION: u32 = 2;
 
 /// Every component the sim knows about, for one entity.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -70,8 +71,13 @@ pub struct SavedEntity {
     pub pregnant: Option<Pregnant>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ghost: Option<Ghost>,
+    /// Old saves (v1): a neighbor with an address but no house.
+    #[serde(default, skip_serializing)]
+    pub townie: Option<crate::neighborhood::OldTownie>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub townie: Option<crate::townies::Townie>,
+    pub offlot: Option<Offlot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visitor: Option<Visitor>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub object: Option<ObjectInstance>,
     /// String id of `object.def`.
@@ -92,9 +98,16 @@ pub struct SaveGame {
     pub pending: PendingChoices,
     pub nanny: Nanny,
     pub next_action_id: u64,
+    /// v1 saves: just the street's name.
+    #[serde(default, skip_serializing)]
+    pub neighborhood: Option<crate::neighborhood::OldNeighborhood>,
+    /// v2+: every lot and household on the street.
     #[serde(default)]
-    pub neighborhood: crate::townies::Neighborhood,
+    pub hood: Option<Neighborhood>,
     pub entities: Vec<SavedEntity>,
+    /// Entity allocator free list, so loaded games hand out the same handles.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub free: Vec<Entity>,
 }
 
 fn take<T: hearth_ecs::Component + Clone>(world: &World, e: Entity) -> Option<T> {
@@ -132,7 +145,9 @@ pub fn capture(world: &World) -> SaveGame {
                 student: take(world, e),
                 pregnant: take(world, e),
                 ghost: take(world, e),
-                townie: take(world, e),
+                townie: None,
+                offlot: take(world, e),
+                visitor: take(world, e),
                 object_def: object.as_ref().map(|o| data.object(o.def).id.clone()),
                 object,
             }
@@ -151,8 +166,10 @@ pub fn capture(world: &World) -> SaveGame {
         pending: world.res::<PendingChoices>().clone(),
         nanny: world.res::<Nanny>().clone(),
         next_action_id: world.res::<NextActionId>().0,
-        neighborhood: world.res::<crate::townies::Neighborhood>().clone(),
+        neighborhood: None,
+        hood: Some(world.res::<Neighborhood>().clone()),
         entities,
+        free: world.free_list(),
     }
 }
 
@@ -173,7 +190,10 @@ pub fn restore(save: SaveGame, data: GameData) -> Result<Sim, String> {
     w.insert_resource(save.pending);
     w.insert_resource(save.nanny);
     w.insert_resource(NextActionId(save.next_action_id));
-    w.insert_resource(save.neighborhood);
+    let old_hood = save.neighborhood;
+    let migrating = save.hood.is_none();
+    w.insert_resource(save.hood.unwrap_or_default());
+    let mut townies = Vec::new();
     let mut lot = save.lot;
     lot.occupancy.clear();
     for s in save.entities {
@@ -184,7 +204,11 @@ pub fn restore(save: SaveGame, data: GameData) -> Result<Sim, String> {
         macro_rules! put {
             ($($field:ident),*) => { $( if let Some(c) = s.$field { w.insert_one(e, c); } )* };
         }
-        put!(peon, age, needs, personality, skills, mood, transform, appearance, posture, bubble, actions, brain, family, job, at_work, dead, genes, student, pregnant, ghost, townie);
+        let away = s.at_work.is_some();
+        put!(peon, age, needs, personality, skills, mood, transform, appearance, posture, bubble, actions, brain, family, job, at_work, dead, genes, student, pregnant, ghost, offlot, visitor);
+        if let Some(t) = s.townie {
+            townies.push((e, t, away));
+        }
         if s.member {
             w.insert_one(e, Member);
         }
@@ -206,9 +230,16 @@ pub fn restore(save: SaveGame, data: GameData) -> Result<Sim, String> {
             w.insert_one(e, o);
         }
     }
+    if !save.free.is_empty() {
+        w.set_free_list(&save.free);
+    }
     lot.rooms_dirty = true;
     lot.version += 1;
     w.insert_resource(lot);
+    if migrating {
+        crate::neighborhood::migrate(w, old_hood.map(|h| h.name), townies);
+        w.flush();
+    }
     Ok(sim)
 }
 

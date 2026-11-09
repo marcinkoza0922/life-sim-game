@@ -10,6 +10,11 @@
 //! simctl render [--seed S] [--minutes M] [--hour H] [--level L] [--yaw D] [--pitch D] [--dist M]
 //!               [--target X,Z] [--mode cutaway|up|down] [--size WxH] [--rooms] [--greybox] [--out FILE]
 //!     Runs the starter household for M minutes and renders the lot offscreen to a PNG.
+//!     `--lot N` fills out the street first and renders lot N instead (playing the household
+//!     there, going out to it, or just looking at a vacant one).
+//! simctl hood [--seed S] [--days D]
+//!     Tours the neighborhood for D days: outings to the park, a day playing the neighbors, then
+//!     home again. Prints the street (residents, funds, values) and fails on deaths by neglect.
 //! simctl lineup [--pose stand|walk|sit|lie|use|dance|exercise] [--time T] [--yaw D] [--pitch D]
 //!               [--anim CLIP] [--prop ID] [--demeanor normal|sad|proud|nervous] [--dist M] [--target X,Z]
 //!               [--size WxH] [--out FILE]
@@ -61,11 +66,13 @@ struct RenderArgs {
     demeanor: String,
     /// `render`: order everyone at home to do OBJECT:INTERACTION (ids) and render once they are.
     order: Option<String>,
+    /// `render`: populate the street and render this lot.
+    lot: Option<usize>,
 }
 
 fn parse() -> Args {
     let mut a = Args { cmd: "run".into(), days: 3, seed: 1, seeds: 8, echo: false, log: None, manual: false, trace: None,
-        render: RenderArgs { minutes: 60, hour: None, level: 0, yaw: 35.0, pitch: 45.0, dist: 30.0, target: None, mode: "cutaway".into(), size: (1600, 1000), rooms: false, greybox: false, out: "out/render.png".into(), pose: "stand".into(), time: 0.0, anim: None, prop: None, demeanor: "normal".into(), order: None } };
+        render: RenderArgs { minutes: 60, hour: None, level: 0, yaw: 35.0, pitch: 45.0, dist: 30.0, target: None, mode: "cutaway".into(), size: (1600, 1000), rooms: false, greybox: false, out: "out/render.png".into(), pose: "stand".into(), time: 0.0, anim: None, prop: None, demeanor: "normal".into(), order: None, lot: None } };
     let mut it = std::env::args().skip(1);
     if let Some(c) = it.next() {
         a.cmd = c;
@@ -103,6 +110,7 @@ fn parse() -> Args {
             "--demeanor" => a.render.demeanor = it.next().unwrap(),
             "--out" => a.render.out = it.next().unwrap(),
             "--order" => a.render.order = it.next(),
+            "--lot" => a.render.lot = Some(it.next().unwrap().parse().unwrap()),
             other => {
                 eprintln!("unknown arg {other}");
                 std::process::exit(2);
@@ -284,8 +292,9 @@ fn main() {
         }
         "render" => render(&a),
         "lineup" => lineup(&a.render),
+        "hood" => hood_tour(a.seed, a.days),
         other => {
-            eprintln!("unknown command {other}; try `run`, `check`, `render` or `lineup`");
+            eprintln!("unknown command {other}; try `run`, `check`, `render`, `lineup` or `hood`");
             std::process::exit(2);
         }
     }
@@ -408,11 +417,111 @@ fn stage_order(sim: &mut sim::Sim, order: &str) {
     }
 }
 
+/// Makes `lot` the live one, the way the player would get there.
+fn visit_lot(sim: &mut Sim, lot: usize) {
+    use sim::neighborhood::{self as nh, LotKind};
+    if lot == nh::active_lot(&sim.world) {
+        return;
+    }
+    let kind = sim.world.res::<nh::Neighborhood>().lots.get(lot).map(|l| l.kind).unwrap_or_else(|| panic!("no lot {lot}"));
+    let r = match (kind, nh::residents(&sim.world, lot)) {
+        (LotKind::Community, _) => sim.go_out(lot),
+        (LotKind::Residential, Some(_)) => sim.play_household(lot),
+        (LotKind::Residential, None) => {
+            let r = nh::switch_lot(&mut sim.world, lot, &[]);
+            sim.world.flush();
+            r
+        }
+    };
+    r.unwrap_or_else(|e| panic!("can't get to lot {lot}: {e}"));
+}
+
+fn print_street(sim: &Sim) {
+    use sim::neighborhood as nh;
+    let w = &sim.world;
+    let hood = w.res::<nh::Neighborhood>().clone();
+    println!("{} — {}", hood.name, sim.clock().label());
+    for (i, lot) in hood.lots.iter().enumerate() {
+        let who = match nh::residents(w, i) {
+            Some(r) => {
+                let people: Vec<String> = r.members.iter().map(|e| {
+                    let n = sim.name(*e);
+                    let stage = w.get::<sim::components::Age>(*e).map(|a| a.stage.label()).unwrap_or("?");
+                    if w.has::<Dead>(*e) { format!("{n} (✝)") } else { format!("{n} ({stage})") }
+                }).collect();
+                format!("{}{} ${}: {}", r.name, if r.played { " [played]" } else { "" }, r.funds, people.join(", "))
+            }
+            None => format!("{:?}, vacant", lot.kind),
+        };
+        let here = if i == hood.active { "*" } else { " " };
+        println!("{here}{i:>2} {:<34} value ${:>6}  {who}", lot.title(), nh::build_value(w, i));
+    }
+}
+
+fn hood_tour(seed: u64, days: u64) {
+    use sim::neighborhood::{self as nh, LotKind};
+    let mut sim = starter_sim(seed);
+    sim.world.res_mut::<sim::time::Settings>().auto_career_choices = true;
+    sim.populate_neighborhood();
+    let park = {
+        let hood = sim.world.res::<nh::Neighborhood>();
+        hood.lots.iter().position(|l| l.kind == LotKind::Community).unwrap()
+    };
+    let neighbor = sim.world.res::<nh::Neighborhood>().households[0].home.unwrap();
+    let t0 = Instant::now();
+    for day in 0..days {
+        let until = |sim: &mut Sim, h: u32| {
+            while sim.clock().hour() != h {
+                sim.tick();
+            }
+        };
+        until(&mut sim, 10);
+        match day % 3 {
+            0 => {
+                if let Err(e) = sim.go_out(park) {
+                    println!("day {day}: no outing ({e})");
+                }
+                until(&mut sim, 15);
+                if !nh::at_home(&sim.world) {
+                    sim.go_home().unwrap();
+                }
+            }
+            1 => {
+                sim.play_household(neighbor).unwrap();
+                until(&mut sim, 9);
+                sim.play_household(0).unwrap();
+            }
+            _ => {}
+        }
+        until(&mut sim, 0);
+    }
+    print_street(&sim);
+    let log = sim.world.res::<sim::log::SimLog>();
+    let count = |s: &str| log.entries.iter().filter(|e| e.text.contains(s)).count();
+    println!("\nvisits: {} at home, {} at the park; neighbor promotions: {}; births: {}",
+        count("dropped by") + count("rang the doorbell") + count("cup of sugar") + count("casserole") + count("wandered over"),
+        count("too."), count("Word on the street"), count("had a baby"));
+    println!("simulated {days} days in {:.1}s", t0.elapsed().as_secs_f32());
+    for e in log.entries.iter().filter(|e| e.kind == LogKind::Death || e.text.contains("up for sale")) {
+        println!("  [{}] {}", sim::time::Clock { tick: e.tick }.label(), e.text);
+    }
+    let neglect: Vec<String> = log.entries.iter().filter(|e| e.kind == LogKind::Death && e.text.contains("starvation")).map(|e| e.text.clone()).collect();
+    drop(log);
+    if !neglect.is_empty() {
+        println!("\n!!! deaths by neglect:\n  {}", neglect.join("\n  "));
+        std::process::exit(1);
+    }
+}
+
 fn render(a: &Args) {
     use game::scene::{SceneOptions, WallMode, build};
     let ra = &a.render;
     let mut sim = starter_sim(a.seed);
     sim.world.res_mut::<sim::time::Settings>().auto_career_choices = true;
+    if let Some(lot) = ra.lot {
+        sim.populate_neighborhood();
+        visit_lot(&mut sim, lot);
+    }
     let mut minutes = ra.minutes.max(1);
     if let Some(h) = ra.hour {
         let now = sim.clock().minute_of_day() as f32;

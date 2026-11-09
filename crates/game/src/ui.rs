@@ -49,15 +49,17 @@ pub fn draw(ui: &mut Ui, g: &mut Game, cx: &UiCtx) {
     if let Some(c) = g.creator.as_mut() {
         match crate::creator::window(ui, c) {
             crate::creator::CreatorAction::MoveIn => {
-                let seed = g.sim.clock().tick.wrapping_mul(31) ^ 0xbeef;
-                match g.creator.as_ref().unwrap().move_in(seed) {
-                    Ok(mut sim) => {
-                        sim::townies::populate(&mut sim.world, 5);
-                        g.replace_sim(sim);
-                        g.creator = None;
-                        g.say("Welcome home!");
+                let c = g.creator.take().unwrap();
+                match c.move_in_to(&mut g.sim) {
+                    Ok(()) => {
+                        g.check_lot_change();
+                        g.say("Welcome to the neighborhood!");
                     }
-                    Err(e) => g.creator.as_mut().unwrap().error = Some(e),
+                    Err(e) => {
+                        let mut c = c;
+                        c.error = Some(e);
+                        g.creator = Some(c);
+                    }
                 }
             }
             crate::creator::CreatorAction::Cancel => g.creator = None,
@@ -92,6 +94,18 @@ fn top_bar(ui: &mut Ui, g: &mut Game) {
         ui.horizontal(|ui| {
             let hh = g.sim.world.res::<Household>().clone();
             ui.label(RichText::new(&hh.name).strong());
+            let here = {
+                let hood = g.sim.world.res::<sim::neighborhood::Neighborhood>();
+                hood.lots[hood.active].title()
+            };
+            let home = sim::neighborhood::at_home(&g.sim.world);
+            ui.label(RichText::new(if home { here } else { format!("out at {here}") }).weak());
+            if !home && ui.small_button("🏠 Go Home").clicked() {
+                match g.sim.go_home() {
+                    Ok(()) => g.check_lot_change(),
+                    Err(e) => g.say(e),
+                }
+            }
             ui.separator();
             ui.label(RichText::new(format!("${}", hh.funds)).color(if hh.funds < 0 { Color32::RED } else { Color32::from_rgb(120, 220, 120) }).strong());
             ui.separator();
@@ -108,7 +122,9 @@ fn top_bar(ui: &mut Ui, g: &mut Game) {
             }
             ui.separator();
             for (m, name, key) in [(Mode::Live, "Live", "F5"), (Mode::Buy, "Buy", "F6"), (Mode::Build, "Build", "F7")] {
-                if ui.selectable_label(g.mode == m, name).on_hover_text(key).clicked() {
+                let allowed = m == Mode::Live || g.can_build();
+                let hover = if allowed { key.to_string() } else { "Only on your own lot".into() };
+                if ui.add_enabled(allowed, egui::Button::selectable(g.mode == m, name)).on_hover_text(hover).on_disabled_hover_text("Only on your own lot").clicked() {
                     g.mode = m;
                     g.tool = Tool::None;
                     g.menu = None;
@@ -235,50 +251,131 @@ fn household_panel(ui: &mut Ui, g: &mut Game) {
     });
 }
 
+/// What the player asked for in the neighborhood window.
+enum HoodAction {
+    Play(usize),
+    GoOut(usize),
+    GoHome,
+    Move(usize),
+    NewHousehold,
+    Invite(sim::Entity),
+}
+
 fn neighborhood_window(ui: &mut Ui, g: &mut Game) {
+    use sim::neighborhood::{self as nh, LotKind};
     let mut open = true;
-    egui::Window::new("Neighborhood").open(&mut open).default_width(360.0).show(ui.ctx(), |ui| {
-        let hood = g.sim.world.res::<sim::townies::Neighborhood>().clone();
+    let mut action = None;
+    egui::Window::new("Neighborhood").open(&mut open).default_width(460.0).show(ui.ctx(), |ui| {
+        let w = &g.sim.world;
+        let hood = w.res::<nh::Neighborhood>().clone();
+        let hh = w.res::<Household>().clone();
         ui.label(RichText::new(&hood.name).strong());
-        ui.label(RichText::new("Townies drop by now and then. Make friends (or enemies) with the neighbors.").small().weak());
+        ui.label(RichText::new("Play any household on the street, move house, or head out to the park. Everyone shares one clock: life goes on next door while you're away.").small().weak());
         ui.separator();
-        let tick = g.sim.clock().tick;
-        let mut invite = None;
-        for (e, t) in sim::townies::townies(&g.sim.world) {
-            let w = &g.sim.world;
+        egui::Grid::new("lots").num_columns(3).striped(true).spacing([10.0, 6.0]).show(ui, |ui| {
+            for (i, lot) in hood.lots.iter().enumerate() {
+                let here = i == hood.active;
+                let mut title = RichText::new(lot.title());
+                if here {
+                    title = title.strong();
+                }
+                ui.label(title);
+                let residents = nh::residents(w, i);
+                let names = |r: &nh::Residents| {
+                    let firsts: Vec<String> = r.members.iter().filter(|e| !w.has::<Dead>(**e)).filter_map(|e| w.get::<Peon>(*e).map(|p| p.first.clone())).collect();
+                    format!("{} ({})", r.name, firsts.join(", "))
+                };
+                match (lot.kind, &residents) {
+                    (LotKind::Community, _) => {
+                        ui.label(RichText::new("community lot").italics());
+                        ui.horizontal(|ui| {
+                            if here {
+                                if ui.button("Go home").clicked() {
+                                    action = Some(HoodAction::GoHome);
+                                }
+                            } else if ui.button("Go out").on_hover_text("Take the household here for a few hours").clicked() {
+                                action = Some(HoodAction::GoOut(i));
+                            }
+                        });
+                    }
+                    (LotKind::Residential, Some(r)) => {
+                        ui.label(names(r));
+                        ui.horizontal(|ui| {
+                            if r.played {
+                                ui.label(RichText::new(if here { "you are here" } else { "your home" }).weak());
+                            } else if ui.button("Play").on_hover_text(format!("${} in the bank", r.funds)).clicked() {
+                                action = Some(HoodAction::Play(i));
+                            }
+                        });
+                    }
+                    (LotKind::Residential, None) => {
+                        let value = nh::build_value(w, i);
+                        let price = nh::price(w, i);
+                        ui.label(RichText::new(if value > 0 { format!("for sale: furnished house, ${price}") } else { format!("for sale: empty plot, ${price}") }).color(Color32::from_rgb(160, 210, 160)));
+                        ui.horizontal(|ui| {
+                            let sale = hh.home.map(|h| nh::price(w, h)).unwrap_or(0);
+                            let afford = hh.funds + sale >= price;
+                            if ui.add_enabled(afford, egui::Button::new("Move here")).on_hover_text(format!("Sell your place for ${sale} and buy this for ${price}")).clicked() {
+                                action = Some(HoodAction::Move(i));
+                            }
+                            if ui.button("New household…").clicked() {
+                                action = Some(HoodAction::NewHousehold);
+                            }
+                        });
+                    }
+                }
+                ui.end_row();
+            }
+        });
+        ui.separator();
+        ui.label(RichText::new("Neighbors").strong());
+        let members: Vec<sim::Entity> = g.sim.living_peons().into_iter().filter(|m| w.has::<Member>(*m)).collect();
+        for e in nh::neighbors(w) {
             let Some(p) = w.get::<Peon>(e).map(|p| p.full_name()) else { continue };
-            let here = !w.has::<AtWork>(e) && !w.has::<Dead>(e);
+            let address = nh::home_of(w, e).map(|l| hood.lots[l].address.clone()).unwrap_or_default();
             let status = if w.has::<Dead>(e) {
-                "passed on".to_string()
-            } else if here {
-                "visiting now".to_string()
+                "passed on"
+            } else if w.has::<Visitor>(e) {
+                "here now"
             } else {
-                let mins = w.get::<AtWork>(e).map(|a| a.until.saturating_sub(tick)).unwrap_or(0);
-                format!("next visit in ~{}h", mins / 60)
+                "at home"
             };
-            let best = g.sim.living_peons().into_iter().filter(|m| w.has::<Member>(*m)).map(|m| w.res::<Relationships>().get(m, e)).max_by(|a, b| a.friendship.total_cmp(&b.friendship));
+            let best = members.iter().map(|m| w.res::<Relationships>().get(*m, e)).max_by(|a, b| a.friendship.total_cmp(&b.friendship));
             let rel = best.map(|r| r.label()).unwrap_or("Stranger");
             ui.horizontal(|ui| {
-                ui.label(format!("{p} — {} ({})", t.address, status));
+                ui.label(format!("{p} — {address} ({status})"));
                 ui.label(RichText::new(rel).weak());
-                if !here && !w.has::<Dead>(e) && ui.small_button("Invite over").clicked() {
-                    invite = Some(e);
+                let grown = w.get::<Age>(e).is_some_and(|a| a.stage >= LifeStage::Teen);
+                if w.has::<Offlot>(e) && grown && !w.has::<Dead>(e) && ui.small_button("Invite over").clicked() {
+                    action = Some(HoodAction::Invite(e));
                 }
             });
-        }
-        if let Some(e) = invite {
-            sim::townies::invite(&mut g.sim.world, e);
-            g.say("Invitation sent. They'll be right over.");
-        }
-        ui.separator();
-        ui.label(RichText::new("Lots").strong());
-        for l in &hood.lots {
-            ui.label(format!("{} — {}", l.address, l.residents));
         }
     });
     if !open {
         g.show_neighborhood = false;
     }
+    let Some(action) = action else { return };
+    let result = match action {
+        HoodAction::Play(l) => g.sim.play_household(l).map(|_| "Switched households."),
+        HoodAction::GoOut(l) => g.sim.go_out(l).map(|_| "Off they go!"),
+        HoodAction::GoHome => g.sim.go_home().map(|_| "Home sweet home."),
+        HoodAction::Move(l) => g.sim.move_household(l).map(|_| "Moved in!"),
+        HoodAction::NewHousehold => {
+            g.show_neighborhood = false;
+            g.open_creator();
+            Ok("Create the new household, then pick their lot.")
+        }
+        HoodAction::Invite(e) => {
+            g.sim.invite(e);
+            Ok("Invitation sent. They'll be right over.")
+        }
+    };
+    match result {
+        Ok(msg) => g.say(msg),
+        Err(e) => g.say(e),
+    }
+    g.check_lot_change();
 }
 
 fn peon_panel(ui: &mut Ui, g: &mut Game, e: sim::Entity) {

@@ -14,6 +14,7 @@ pub mod log;
 pub mod lot;
 pub mod nav;
 pub mod needs;
+pub mod neighborhood;
 pub mod objects;
 pub mod rng;
 pub mod save;
@@ -23,7 +24,6 @@ pub mod social;
 pub mod speech;
 pub mod starter;
 pub mod time;
-pub mod townies;
 
 pub use hearth_ecs::{Entity, World};
 pub use sim::{PeonSpec, Sim};

@@ -12,18 +12,56 @@ pub struct Household {
     pub members: Vec<Entity>,
     pub unpaid: i64,
     pub unpaid_since: Option<u64>,
+    /// The lot they live on (index into `Neighborhood::lots`).
+    #[serde(default = "first_lot")]
+    pub home: Option<usize>,
+}
+
+fn first_lot() -> Option<usize> {
+    Some(0)
 }
 
 impl Default for Household {
     fn default() -> Self {
-        Household { name: "Household".into(), funds: 20_000, members: Vec::new(), unpaid: 0, unpaid_since: None }
+        Household { name: "Household".into(), funds: 20_000, members: Vec::new(), unpaid: 0, unpaid_since: None, home: Some(0) }
     }
 }
 
+/// What a lot's build and furniture are worth.
+pub fn build_value(lot: &crate::lot::Lot, object_prices: impl Iterator<Item = i64>) -> i64 {
+    object_prices.sum::<i64>() + lot.walls.len() as i64 * 70 + lot.floors.len() as i64 * 10
+}
+
+/// Value of the active lot.
 pub fn lot_value(world: &World) -> i64 {
-    world.query::<&ObjectInstance>().iter().map(|o| o.price_paid).sum::<i64>()
-        + world.res::<crate::lot::Lot>().walls.len() as i64 * 70
-        + world.res::<crate::lot::Lot>().floors.len() as i64 * 10
+    build_value(&world.res::<crate::lot::Lot>(), world.query::<&ObjectInstance>().iter().map(|o| o.price_paid))
+}
+
+/// Value of the active household's home, wherever they are right now.
+pub fn home_value(world: &World) -> i64 {
+    let home = world.res::<Household>().home;
+    let hood = world.res::<crate::neighborhood::Neighborhood>();
+    match home {
+        Some(h) if h != hood.active => hood.lots.get(h).map(|l| l.build_value()).unwrap_or(0),
+        _ => {
+            drop(hood);
+            lot_value(world)
+        }
+    }
+}
+
+/// Pays `amount` into the household `e` belongs to (the active one, or a neighbor's).
+pub fn credit(world: &World, e: Entity, amount: i64) {
+    let mut hh = world.res_mut::<Household>();
+    if hh.members.contains(&e) {
+        hh.funds += amount;
+        return;
+    }
+    drop(hh);
+    let mut hood = world.res_mut::<crate::neighborhood::Neighborhood>();
+    if let Some(h) = hood.households.iter_mut().find(|h| h.members.contains(&e)) {
+        h.funds += amount;
+    }
 }
 
 /// Bills arrive every three days at 9:00.
@@ -32,7 +70,7 @@ pub fn bills(world: &mut World) {
     if !world.res::<Settings>().bills || clock.minute_of_day() != 9 * 60 || clock.day() % 3 != 2 {
         return;
     }
-    let amount = 40 + lot_value(world) / 100;
+    let amount = 40 + home_value(world) / 100;
     let mut hh = world.res_mut::<Household>();
     let total = amount + hh.unpaid;
     if hh.funds >= total {
@@ -46,7 +84,8 @@ pub fn bills(world: &mut World) {
         let since = *hh.unpaid_since.get_or_insert(clock.day());
         drop(hh);
         log(world, LogKind::Warning, None, format!("Couldn't pay ${total} in bills! The envelopes are getting redder."));
-        if clock.day() >= since + 6 {
+        // the Repo-Gnome only calls when someone's home
+        if clock.day() >= since + 6 && crate::neighborhood::at_home(world) {
             repossess(world);
         }
     }

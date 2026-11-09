@@ -153,6 +153,17 @@ impl World {
         true
     }
 
+    /// The entity allocator's free list, for saving (see [`World::set_free_list`]).
+    pub fn free_list(&self) -> Vec<Entity> {
+        self.entities.free_list()
+    }
+
+    /// Restores an allocator free list after respawning a saved world with
+    /// [`World::spawn_empty_at`], so future spawns get the same handles as the original.
+    pub fn set_free_list(&mut self, list: &[Entity]) {
+        self.entities.set_free_list(list);
+    }
+
     pub fn despawn(&mut self, e: Entity) -> bool {
         let Some(loc) = self.entities.location(e) else { return false };
         let row = loc.row as usize;

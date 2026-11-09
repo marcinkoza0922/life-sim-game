@@ -201,7 +201,7 @@ pub fn player_order(world: &mut World, e: Entity, kind: ActionKind) -> Result<()
         ActionKind::Social { target, social } => {
             let sd = &data.socials[*social];
             social_allowed(world, sd, e, *target).map_err(String::from)?;
-            if world.has::<AtWork>(*target) || world.has::<Dead>(*target) {
+            if is_away(world, *target) || world.has::<Dead>(*target) {
                 return Err("they're not here".into());
             }
             (sd.tags.clone(), sd.rates.iter().map(|(n, r)| (*n, r * sd.minutes as f32 / 60.0)).collect())
@@ -264,7 +264,7 @@ pub fn run_actions(world: &mut World) {
     let tick = now(world);
     for e in present_peons(world) {
         // an earlier peon's action may have changed us (e.g. pulled into a conversation)
-        if !world.contains(e) || world.has::<Dead>(e) || world.has::<AtWork>(e) {
+        if !world.contains(e) || world.has::<Dead>(e) || is_away(world, e) {
             continue;
         }
         step(world, e, &data, tick);
@@ -482,7 +482,7 @@ fn crowd_ahead(world: &World, e: Entity, path: &[Vec3], idx: usize, ignore: Opti
     let goal = *path.last()?;
     let mut found: Option<(f32, Entity, Crowd)> = None;
     for (o, otf, posture) in world
-        .query_filtered::<(Entity, &Transform, &Posture), (hearth_ecs::Without<Dead>, hearth_ecs::Without<AtWork>)>()
+        .query_filtered::<(Entity, &Transform, &Posture), (hearth_ecs::Without<Dead>, hearth_ecs::Without<AtWork>, hearth_ecs::Without<Offlot>)>()
         .iter()
     {
         if o == e || Some(o) == ignore || (otf.pos.y - tf.pos.y).abs() > 1.0 {
@@ -660,7 +660,7 @@ fn begin(world: &World, e: Entity, data: &GameData, cur: &mut CurrentAction) -> 
             Ok(())
         }
         ActionKind::Social { target, .. } => {
-            if !world.contains(target) || world.has::<AtWork>(target) || world.has::<Dead>(target) {
+            if !world.contains(target) || is_away(world, target) || world.has::<Dead>(target) {
                 return Err("they're not around".into());
             }
             let path = path_next_to(world, e, target).ok_or("can't reach them")?;
@@ -813,7 +813,7 @@ fn arrive(world: &World, e: Entity, data: &GameData, cur: &mut CurrentAction, sl
                         || matches!(c.action.kind, ActionKind::Respond { .. } | ActionKind::Social { .. } | ActionKind::GoToWork | ActionKind::GoToSchool | ActionKind::PassOut)
                         || (!sd.care && autonomy::is_sleeping(world, data, c))
                 })
-            }) || world.has::<AtWork>(target);
+            }) || is_away(world, target);
             if target_busy {
                 set_bubble(world, e, Some("...".into()), None, 10);
                 return Err(format!("{} is busy", name_of(world, target)));

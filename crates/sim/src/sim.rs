@@ -94,9 +94,9 @@ pub(crate) fn say(world: &World, e: Entity, icon: Option<&str>, minutes: u64) {
 }
 
 /// Peons on the lot that are alive.
-pub(crate) fn present_peons(world: &World) -> Vec<Entity> {
+pub fn present_peons(world: &World) -> Vec<Entity> {
     let mut v: Vec<Entity> = world
-        .query_filtered::<Entity, (hearth_ecs::With<Peon>, Without<Dead>, Without<AtWork>)>()
+        .query_filtered::<Entity, (hearth_ecs::With<Peon>, Without<Dead>, Without<AtWork>, Without<Offlot>)>()
         .iter()
         .collect();
     v.sort();
@@ -332,7 +332,7 @@ impl Sim {
         world.insert_resource(career::PendingChoices::default());
         world.insert_resource(actions::NextActionId(1));
         world.insert_resource(needs::Nanny::default());
-        world.insert_resource(crate::townies::Neighborhood::default());
+        world.insert_resource(crate::neighborhood::Neighborhood::default());
         for_debug(&mut world);
 
         let mut schedule = Schedule::new();
@@ -350,7 +350,8 @@ impl Sim {
             .add_system("post", crate::school::run_school)
             .add_system("post", crate::family::pregnancies)
             .add_system("post", crate::ghosts::haunt)
-            .add_system("post", crate::townies::visits)
+            .add_system("post", crate::neighborhood::visits)
+            .add_system("post", crate::neighborhood::offlot_daily)
             .add_system("post", life::aging)
             .add_system("post", economy::bills)
             .add_system("post", daily_upkeep);
@@ -464,6 +465,54 @@ impl Sim {
 
     pub fn resolve_choice(&mut self, index: usize, choice: usize) {
         career::resolve_pending(&mut self.world, index, choice);
+    }
+
+    // -------------------------------------------------------------------- neighborhood
+
+    /// Fills out the street (neighbors, a house for sale, empty plots, a park).
+    pub fn populate_neighborhood(&mut self) {
+        crate::neighborhood::populate(&mut self.world);
+        self.world.flush();
+    }
+
+    /// Switches to the household living on `lot`.
+    pub fn play_household(&mut self, lot: usize) -> Result<(), String> {
+        let r = crate::neighborhood::play_household(&mut self.world, lot);
+        self.world.flush();
+        r
+    }
+
+    /// Takes the household to a community lot.
+    pub fn go_out(&mut self, lot: usize) -> Result<(), String> {
+        let r = crate::neighborhood::go_out(&mut self.world, lot);
+        self.world.flush();
+        r
+    }
+
+    pub fn go_home(&mut self) -> Result<(), String> {
+        let r = crate::neighborhood::go_home(&mut self.world);
+        self.world.flush();
+        r
+    }
+
+    /// Sells the home and moves the household to a vacant lot.
+    pub fn move_household(&mut self, lot: usize) -> Result<(), String> {
+        let r = crate::neighborhood::move_household(&mut self.world, lot);
+        self.world.flush();
+        r
+    }
+
+    /// Parks the played household and starts a new one on a vacant lot; members are spawned
+    /// next with [`Sim::spawn_peon`] at [`crate::neighborhood::move_in_spot`].
+    pub fn found_household(&mut self, lot: usize, name: String, funds: i64) -> Result<(), String> {
+        let r = crate::neighborhood::found_household(&mut self.world, lot, name, funds);
+        self.world.flush();
+        r
+    }
+
+    /// Asks a neighbor over.
+    pub fn invite(&mut self, e: Entity) {
+        crate::neighborhood::invite(&mut self.world, e);
     }
 
     // -------------------------------------------------------------------- build / buy
@@ -594,5 +643,6 @@ fn for_debug(world: &mut World) {
     world.register_debug::<Student>();
     world.register_debug::<Pregnant>();
     world.register_debug::<Ghost>();
-    world.register_debug::<crate::townies::Townie>();
+    world.register_debug::<Offlot>();
+    world.register_debug::<Visitor>();
 }

@@ -20,8 +20,8 @@ pub fn aging(world: &mut World) {
     let step = 1.0 / TICKS_PER_DAY as f32;
     let mut grow = Vec::new();
     let mut elders_due = Vec::new();
-    // townies live in their own (frozen) time; only the household ages
-    for (e, age) in world.query_filtered::<(Entity, &mut Age), (Without<Dead>, hearth_ecs::Without<crate::townies::Townie>)>().iter() {
+    // one clock for the whole neighborhood: everyone ages, wherever they are
+    for (e, age) in world.query_filtered::<(Entity, &mut Age), Without<Dead>>().iter() {
         age.days_in_stage += step;
         age.total_days += step;
         if age.days_in_stage >= age.stage_len {
@@ -146,7 +146,7 @@ pub fn die(world: &mut World, e: Entity, cause: &str) {
                 add_moodlet(world, other, "grieving");
             }
     }
-    world.res_mut::<Household>().members.retain(|m| *m != e);
+    crate::neighborhood::forget_member(world, e);
     world.remove::<Student>(e);
     if world.has::<Member>(e) {
         crate::ghosts::bury(world, e);

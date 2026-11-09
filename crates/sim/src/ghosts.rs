@@ -72,7 +72,7 @@ pub fn haunt(world: &mut World) {
     let tick = now(world);
     let clock = *world.res::<Clock>();
     let ghosts: Vec<(Entity, Ghost)> =
-        world.query_filtered::<(Entity, &Ghost), With<Dead>>().iter().map(|(e, g)| (e, g.clone())).collect();
+        world.query_filtered::<(Entity, &Ghost), (With<Dead>, hearth_ecs::Without<Offlot>)>().iter().map(|(e, g)| (e, g.clone())).collect();
     let mut ghosts = ghosts;
     ghosts.sort_by_key(|(e, _)| *e);
     for (e, g) in ghosts {
