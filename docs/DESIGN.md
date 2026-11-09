@@ -421,7 +421,14 @@ Added since:
   Autonomy and the pie menu count a free reachable seat as a free spot. `simctl render --order
   OBJECT:INTERACTION` stages the household doing something (e.g. `tv_basic:watch`) before rendering.
 
-**Known gaps / next up:** eye colour from genes
-(pupils are a fixed colour); infant-specific interaction clips; playable multi-lot
+- **Eye colour:** `Appearance::eyes` is expressed from `Genes::eyes` (old saves default to brown); the
+  models have a tinted `iris` material (palette slot 6) under a smaller dark pupil.
+- **Infant clips:** infants get their own sitting-base versions of the clips they play: `sleep` (crib,
+  arms up by the head), `play_floor` (toys), and as the target of baby care `laugh` (coo, peekaboo),
+  `drink` (bottle), `drowsy` (rocked), `kick_back` (diaper change; toddlers have it too), plus
+  `idle_sad` as crying. The clip test now checks each body against the clips its stage can be asked for
+  (`GameData::anims_for`). `simctl lineup --target -3.6,0 --dist 1.6` frames the infant.
+
+**Known gaps / next up:** playable multi-lot
 neighborhoods (switching households, community lots) — townies are the first step; multi-tile object
 picking polish; hygiene still occasionally bottoms out in long headless runs (warning, not a failure).

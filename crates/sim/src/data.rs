@@ -784,6 +784,17 @@ impl GameData {
         let socials = self.socials.iter().flat_map(|s| [s.anim.as_deref(), s.target_anim.as_deref()].into_iter().flatten());
         objs.chain(socials).collect()
     }
+    /// The body clips a peon at `stage` can be asked to play: interactions it may use (and their
+    /// seated variants), socials it may start, and socials' target clips when it may be the target.
+    pub fn anims_for(&self, stage: LifeStage) -> std::collections::BTreeSet<&str> {
+        let objs = self.objects.iter().flat_map(|o| o.interactions.iter()).filter(|i| i.allowed_stage(stage)).flat_map(|i| {
+            [i.anim.as_deref(), i.seat.as_ref().and_then(|s| s.anim.as_deref())].into_iter().flatten()
+        });
+        let socials = self.socials.iter().flat_map(|s| {
+            [s.anim.as_deref().filter(|_| s.initiator_ok(stage)), s.target_anim.as_deref().filter(|_| s.target_ok(stage))].into_iter().flatten()
+        });
+        objs.chain(socials).collect()
+    }
 }
 
 #[cfg(test)]

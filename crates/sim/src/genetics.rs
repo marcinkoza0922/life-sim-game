@@ -13,6 +13,10 @@ pub const EYE_COLORS: [[f32; 3]; 5] = [
     [0.5, 0.4, 0.25],   // hazel
 ];
 
+pub fn default_eyes() -> [f32; 3] {
+    EYE_COLORS[0]
+}
+
 pub const ELDER_HAIR: [f32; 3] = [0.82, 0.82, 0.84];
 
 /// Builds the rendered appearance for a genotype at a life stage.
@@ -25,12 +29,13 @@ pub fn express(g: &Genes, stage: LifeStage, shirt: [f32; 3], pants: [f32; 3], ha
         height: g.height,
         build: g.build,
         hair_style,
+        eyes: g.eyes,
     }
 }
 
 /// Best-effort genotype for peons created without one (older specs, hand-made peons).
 pub fn genes_from_appearance(a: &Appearance) -> Genes {
-    Genes { skin: a.skin, hair: a.hair, eyes: EYE_COLORS[0], height: a.height, build: a.build }
+    Genes { skin: a.skin, hair: a.hair, eyes: a.eyes, height: a.height, build: a.build }
 }
 
 fn mix3(rng: &mut SimRng, a: [f32; 3], b: [f32; 3], blend: bool, jitter: f32) -> [f32; 3] {

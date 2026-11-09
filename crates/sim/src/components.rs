@@ -185,6 +185,9 @@ pub struct Appearance {
     pub build: f32,
     /// Index of hair style.
     pub hair_style: u8,
+    /// Iris colour (from [`Genes::eyes`]; saves from before eye colour default to brown).
+    #[serde(default = "crate::genetics::default_eyes")]
+    pub eyes: [f32; 3],
 }
 
 /// What the body is currently doing (for rendering/animation).

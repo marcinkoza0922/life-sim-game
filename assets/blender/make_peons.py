@@ -9,11 +9,12 @@ four hair meshes (`hair0`..`hair3`, rigid on the head bone), and the animation c
 poses to: idle, walk, sit, lie, use, dance, exercise; walking bodies (toddler and up) also get the
 interaction clips the data names (`anim:` and `seat: (anim:)` in objects.ron, socials.ron) — standing,
 seated (origin on the seat, like `sit`), on the floor and lying (like `lie`) — and demeanor variants
-(idle_sad, walk_sad, idle_proud, walk_proud, idle_nervous). The game falls back to the pose clip
-for any clip a body lacks.
+(idle_sad, walk_sad, idle_proud, walk_proud, idle_nervous). Infants get their own versions of the
+clips they can play (sleep, play_floor, laugh, drink, drowsy, kick_back, and idle_sad as crying),
+built on their sitting base. The game falls back to the pose clip for any clip a body lacks.
 
 Materials are named after the palette slot the game tints them with (skin, hair, shirt, pants,
-shoes); `eye_white`, `pupil` and `mouth` keep their own colour. Blender faces -Y, so the exported
+shoes, iris); `eye_white`, `pupil` and `mouth` keep their own colour. Blender faces -Y, so the exported
 model faces glTF +Z, which is the game's forward.
 """
 
@@ -45,6 +46,7 @@ PALETTE = {
     "shirt": (1, 1, 1, 1),
     "pants": (1, 1, 1, 1),
     "shoes": (1, 1, 1, 1),
+    "iris": (1, 1, 1, 1),
     # fixed colours (sRGB)
     "eye_white": (0.95, 0.95, 0.93, 1),
     "pupil": (0.06, 0.05, 0.07, 1),
@@ -64,7 +66,7 @@ def reset():
         m.use_nodes = True
         bsdf = m.node_tree.nodes.get("Principled BSDF")
         bsdf.inputs["Base Color"].default_value = col
-        bsdf.inputs["Roughness"].default_value = 0.4 if name in ("eye_white", "pupil") else 0.75
+        bsdf.inputs["Roughness"].default_value = 0.4 if name in ("eye_white", "iris", "pupil") else 0.75
 
 
 def link(obj):
@@ -376,7 +378,9 @@ def make_head_parts(d):
     for side in (1, -1):
         eye = c + Vector((side * hh * 0.17, -hh * 0.385, hh * 0.06))
         parts.append(uv_sphere("eye", eye, (hh * 0.085, hh * 0.05, hh * 0.1), "eye_white", 16, 10))
-        parts.append(uv_sphere("pupil", eye + Vector((0, -hh * 0.04, -hh * 0.005)), (hh * 0.042, hh * 0.022, hh * 0.05), "pupil", 12, 8))
+        iris = eye + Vector((0, -hh * 0.04, -hh * 0.005))
+        parts.append(uv_sphere("iris", iris, (hh * 0.042, hh * 0.022, hh * 0.05), "iris", 12, 8))
+        parts.append(uv_sphere("pupil", iris + Vector((0, -hh * 0.014, 0)), (hh * 0.02, hh * 0.011, hh * 0.024), "pupil", 10, 6))
         parts.append(uv_sphere("ear", c + Vector((side * hh * 0.42, hh * 0.02, 0)), (hh * 0.06, hh * 0.1, hh * 0.13), "skin", 12, 8))
     parts.append(uv_sphere("nose", c + Vector((0, -hh * 0.45, -hh * 0.06)), (hh * 0.06, hh * 0.07, hh * 0.08), "skin", 12, 8))
     parts.append(uv_sphere("mouth", c + Vector((0, -hh * 0.405, -hh * 0.22)), (hh * 0.12, hh * 0.03, hh * 0.025), "mouth", 12, 8))
@@ -649,7 +653,9 @@ def make_clips(rig, d, infant):
         p.key(f)
     finish_action(rig, act, 15)
 
-    if not infant:
+    if infant:
+        make_infant_clips(rig, p)
+    else:
         make_activity_clips(rig, p)
     p.clear()
 
@@ -990,6 +996,15 @@ def make_activity_clips(rig, p):
         torso(p, lean=-2 * k, head=-4, head_turn=-28)
     clip(rig, p, "sleep", 180, [(0, 0), (90, 1), (180, 0)], sleep)
 
+    # having a diaper changed: on the back, legs pedalling, arms waving
+    def kick_back(p, k):
+        lying(p)
+        legs(p, (40 + 30 * k, 70 - 30 * k), (70 - 40 * k, 30 + 40 * k), foot=(-10, -10), spread=10)
+        arm(p, "R", down=0, fwd=40 + 20 * k, elbow=40)
+        arm(p, "L", down=0, fwd=60 - 20 * k, elbow=40)
+        torso(p, head=-6, head_turn=10 * k)
+    clip(rig, p, "kick_back", 30, [(0, -1), (15, 1), (30, -1)], kick_back)
+
     # bath: reclined against the tub end, knees up, waving the duck about and humming
     def bathe(p, k):
         lying(p, knee=(70, 64))
@@ -1021,6 +1036,77 @@ def make_activity_clips(rig, p):
 
     walk_clip(rig, p, "walk_sad", 16, 32, 8, lean=12, head=18, bounce=0.012, sway=0.1)
     walk_clip(rig, p, "walk_proud", 28, 50, 30, lean=-6, head=-8, bounce=0.035, sway=0.3)
+
+
+# ------------------------------------------------------------------------------------------------
+# infant clips (on the sitting base; the game plays them for crib sleep, toys and baby care)
+
+
+def make_infant_clips(rig, p):
+    d, H = p.d, p.d.H
+
+    def sit(p, bob=0.0):
+        """`sitting_infant`'s legs and hips (the origin on the floor), arms left free."""
+        legs(p, (80, 80), (20, 20), spread=22)
+        p.move("hips", (0, 0, -(d.legs - d.thigh_r * 1.1) + bob))
+
+    # laughing (cooed at, peekaboo): bouncing on the bottom, arms flapping, head thrown back
+    def laugh(p, k):
+        sit(p, bob=H * 0.025 * k)
+        arm(p, "R", down=10 - 30 * k, fwd=40 + 20 * k, elbow=30)
+        arm(p, "L", down=10 - 30 * k, fwd=40 + 20 * k, elbow=30)
+        torso(p, lean=-4 * k, head=-14 * k)
+    clip(rig, p, "laugh", 20, [(0, 0), (5, 1), (10, 0), (15, 1), (20, 0)], laugh)
+
+    # bottle feeding: both hands up at the mouth, head tipped back, sucking away
+    def drink(p, k):
+        sit(p)
+        arm(p, "R", fwd=60, inward=34, elbow=95)
+        arm(p, "L", fwd=60, inward=34, elbow=95)
+        torso(p, lean=-8, head=-16 + 4 * k)
+    clip(rig, p, "drink", 24, [(0, 0), (12, 1), (24, 0)], drink)
+
+    # being rocked to sleep: slumping, the head nodding down and jerking back up
+    def drowsy(p, k):
+        sit(p)
+        arm(p, "R", fwd=20, inward=20, elbow=40 - 10 * k)
+        arm(p, "L", fwd=20, inward=20, elbow=40 - 10 * k)
+        torso(p, lean=10 + 10 * k, head=10 + 30 * k, head_tilt=8 * k)
+    clip(rig, p, "drowsy", 120, [(0, 0), (80, 1), (90, 1), (96, 0.1), (120, 0)], drowsy)
+
+    # toys: whacking a block on the floor, head bobbing along
+    def play_floor(p, k):
+        sit(p)
+        arm(p, "R", down=10, fwd=55 + 40 * k, inward=10, elbow=30)
+        arm(p, "L", down=10, fwd=50 - 20 * k, inward=10, elbow=30)
+        torso(p, lean=12 + 6 * k, head=20 - 6 * k)
+    clip(rig, p, "play_floor", 16, [(0, 0), (8, 1), (16, 0)], play_floor)
+
+    # crib: on the back, arms up beside the head, knees flopped out, quick shallow breaths
+    def sleep(p, k):
+        lying(p)
+        legs(p, (30, 30), (50, 50), foot=(-10, -10), spread=30)
+        arm(p, "R", down=-70, elbow=10, bend_in=70)
+        arm(p, "L", down=-64, elbow=10, bend_in=76)
+        torso(p, lean=-3 * k, head_turn=25)
+    clip(rig, p, "sleep", 60, [(0, 0), (30, 1), (60, 0)], sleep)
+
+    # crying (bad mood): head back, arms flailing, bouncing with each wail
+    def idle_sad(p, k):
+        sit(p, bob=H * 0.012 * abs(k))
+        arm(p, "R", down=-10, fwd=50 + 30 * k, elbow=40)
+        arm(p, "L", down=-10, fwd=50 - 30 * k, elbow=40)
+        torso(p, lean=-6, head=-22, head_tilt=8 * k)
+    clip(rig, p, "idle_sad", 24, [(0, 0), (6, 1), (12, 0), (18, -1), (24, 0)], idle_sad)
+
+    # diaper change: on the back, legs pedalling (like the walking bodies' clip)
+    def kick_back(p, k):
+        lying(p)
+        legs(p, (40 + 30 * k, 70 - 30 * k), (70 - 40 * k, 30 + 40 * k), foot=(-10, -10), spread=16)
+        arm(p, "R", down=0, fwd=40 + 20 * k, elbow=40)
+        arm(p, "L", down=0, fwd=60 - 20 * k, elbow=40)
+        torso(p, head=-6, head_turn=10 * k)
+    clip(rig, p, "kick_back", 24, [(0, -1), (12, 1), (24, -1)], kick_back)
 
 
 # ------------------------------------------------------------------------------------------------

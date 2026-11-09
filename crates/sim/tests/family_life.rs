@@ -132,6 +132,7 @@ fn couples_can_have_babies_with_inherited_genes() {
     let hi = ga.skin[0].max(gb.skin[0]) + 0.03;
     assert!(gc.skin[0] >= lo && gc.skin[0] <= hi);
     assert_eq!(sim.world.get::<Appearance>(baby).unwrap().skin, gc.skin);
+    assert_eq!(sim.world.get::<Appearance>(baby).unwrap().eyes, gc.eyes);
 }
 
 #[test]
