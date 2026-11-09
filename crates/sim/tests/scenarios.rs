@@ -188,3 +188,73 @@ fn a_day_of_free_will_plays_many_clips() {
     }
     assert!(seen.len() >= 5, "only saw {seen:?}");
 }
+
+/// Orders `who` to watch TV and runs until they are performing; returns their posture then.
+fn start_watching(sim: &mut Sim, who: Entity) -> Posture {
+    {
+        let mut n = sim.world.get_mut::<Needs>(who).unwrap();
+        for k in Need::ALL {
+            n.set(k, 80.0);
+        }
+    }
+    let tv = find_object(sim, "tv_basic");
+    let i = interaction(sim, tv, "watch");
+    sim.order(who, ActionKind::Object { obj: tv, interaction: i }).expect("order accepted");
+    for _ in 0..240 {
+        sim.tick();
+        let q = sim.world.get::<ActionQueue>(who).unwrap();
+        if q.current.as_ref().is_some_and(|c| matches!(c.phase, Phase::Performing { .. })) {
+            return sim.world.get::<Posture>(who).unwrap().clone();
+        }
+    }
+    panic!("never started watching");
+}
+
+#[test]
+fn tv_is_watched_from_the_sofa_facing_it() {
+    let mut sim = starter_sim(5);
+    sim.world.res_mut::<Settings>().free_will = sim::time::FreeWill::Off;
+    let adult = sim.living_peons()[0];
+    let sofa = find_object(&sim, "sofa_basic");
+    let p = start_watching(&mut sim, adult);
+    assert_eq!((p.pose, p.anim.as_deref(), p.prop.as_deref()), (sim::data::Pose::Sit, Some("watch"), Some("remote")));
+    let o = sim.world.get::<sim::objects::ObjectInstance>(sofa).unwrap().clone();
+    assert!(o.slot_users.contains(&Some(adult)), "the sofa seat is taken");
+    let y = sim.world.get::<Transform>(adult).unwrap().pos.y;
+    assert!(y > 0.3, "sitting on the cushion, not the floor ({y})");
+
+    // getting up frees the seat and puts them back on their feet
+    let id = sim.world.get::<ActionQueue>(adult).unwrap().current.as_ref().unwrap().action.id;
+    sim.cancel(adult, id);
+    for _ in 0..5 {
+        sim.tick();
+    }
+    let o = sim.world.get::<sim::objects::ObjectInstance>(sofa).unwrap().clone();
+    assert!(!o.slot_users.contains(&Some(adult)));
+    assert!(sim.world.get::<Transform>(adult).unwrap().pos.y < 0.05);
+}
+
+#[test]
+fn tv_without_a_free_seat_is_watched_from_the_floor() {
+    let mut sim = starter_sim(5);
+    sim.world.res_mut::<Settings>().free_will = sim::time::FreeWill::Off;
+    let adult = sim.living_peons()[0];
+    let sofa = find_object(&sim, "sofa_basic");
+    sim.sell_object(sofa);
+    let p = start_watching(&mut sim, adult);
+    assert_eq!((p.pose, p.anim.as_deref()), (sim::data::Pose::Sit, Some("watch_floor")));
+    assert!(sim.world.get::<Transform>(adult).unwrap().pos.y < 0.05);
+}
+
+#[test]
+fn selling_the_seat_mid_show_stands_them_up() {
+    let mut sim = starter_sim(5);
+    sim.world.res_mut::<Settings>().free_will = sim::time::FreeWill::Off;
+    let adult = sim.living_peons()[0];
+    start_watching(&mut sim, adult);
+    sim.sell_object(find_object(&sim, "sofa_basic"));
+    sim.tick();
+    assert_eq!(*sim.world.get::<Posture>(adult).unwrap(), Posture::default());
+    assert!(sim.world.get::<Transform>(adult).unwrap().pos.y < 0.05, "back on the floor");
+    assert!(sim.world.get::<ActionQueue>(adult).unwrap().current.as_ref().is_none_or(|c| c.seat.is_none()));
+}

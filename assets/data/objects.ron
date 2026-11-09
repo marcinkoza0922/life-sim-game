@@ -86,7 +86,7 @@
         ],
         slots: [(stand: (0.5, 1.4), use_at: (0.5, 0.0, 0.55), facing: 0.0)],
         interactions: [
-            (id: "use", name: "Use Toilet", rates: {Bladder: 900.0, Comfort: 20.0}, duration: UntilFull(Bladder, 15), pose: Sit,
+            (id: "use", name: "Use Toilet", anim: "sit_phone", prop: "phone", rates: {Bladder: 900.0, Comfort: 20.0}, duration: UntilFull(Bladder, 15), pose: Sit,
              tags: ["bladder"], bubble: "...",
              outcomes: [Log(chance: 0.03, text: "{name} had a profound realization on the toilet, then immediately forgot it.")]),
             (id: "clean", name: "Scrub Toilet", anim: "fix", prop: "sponge", rates: {Fun: -20.0, Environment: 20.0}, duration: Minutes(20), pose: Use, tags: ["chore", "neat"],
@@ -122,7 +122,7 @@
         ],
         slots: [(stand: (1.5, 1.0), use_at: (0.5, 0.25, 1.0), facing: 0.0)],
         interactions: [
-            (id: "bath", name: "Take a Bubble Bath", rates: {Hygiene: 140.0, Comfort: 80.0, Fun: 20.0}, duration: UntilFull(Hygiene, 75), pose: Lie,
+            (id: "bath", name: "Take a Bubble Bath", anim: "bathe", prop: "rubber_duck", rates: {Hygiene: 140.0, Comfort: 80.0, Fun: 20.0}, duration: UntilFull(Hygiene, 75), pose: Lie,
              tags: ["hygiene", "rest"], bubble: "duck"),
         ],
         beauty: 1.0, dirt_per_use: 0.04,
@@ -138,9 +138,9 @@
         ],
         slots: [(stand: (1.5, 1.0), use_at: (0.5, 0.5, 1.0), facing: 0.0)],
         interactions: [
-            (id: "sleep", name: "Sleep", rates: {Energy: 13.0, Comfort: 40.0}, ads: {Energy: 90.0, Comfort: 20.0}, duration: UntilFull(Energy, 720),
+            (id: "sleep", name: "Sleep", anim: "sleep", rates: {Energy: 13.0, Comfort: 40.0}, ads: {Energy: 90.0, Comfort: 20.0}, duration: UntilFull(Energy, 720),
              pose: Lie, tags: ["sleep", "rest"], bubble: "Zzz"),
-            (id: "nap", name: "Nap", rates: {Energy: 13.0, Comfort: 40.0}, ads: {Energy: 25.0, Comfort: 12.0}, duration: Minutes(90), pose: Lie, tags: ["rest", "lazy"], bubble: "zz"),
+            (id: "nap", name: "Nap", anim: "sleep", rates: {Energy: 13.0, Comfort: 40.0}, ads: {Energy: 25.0, Comfort: 12.0}, duration: Minutes(90), pose: Lie, tags: ["rest", "lazy"], bubble: "zz"),
             (id: "jump", name: "Jump on Bed", rates: {Fun: 90.0, Energy: -15.0}, duration: Minutes(20), pose: Exercise,
              stages: [Toddler, Child, Teen], tags: ["fun", "playful"], bubble: "!",
              outcomes: [Log(chance: 0.05, text: "{name} achieved brief but glorious flight.")]),
@@ -162,9 +162,9 @@
             (stand: (2.5, 1.0), use_at: (1.5, 0.5, 1.0), facing: 0.0),
         ],
         interactions: [
-            (id: "sleep", name: "Sleep", rates: {Energy: 14.0, Comfort: 50.0}, ads: {Energy: 95.0, Comfort: 25.0}, duration: UntilFull(Energy, 720),
+            (id: "sleep", name: "Sleep", anim: "sleep", rates: {Energy: 14.0, Comfort: 50.0}, ads: {Energy: 95.0, Comfort: 25.0}, duration: UntilFull(Energy, 720),
              pose: Lie, tags: ["sleep", "rest"], bubble: "Zzz"),
-            (id: "nap", name: "Nap", rates: {Energy: 14.0, Comfort: 50.0}, ads: {Energy: 25.0, Comfort: 12.0}, duration: Minutes(90), pose: Lie, tags: ["rest", "lazy"], bubble: "zz"),
+            (id: "nap", name: "Nap", anim: "sleep", rates: {Energy: 14.0, Comfort: 50.0}, ads: {Energy: 25.0, Comfort: 12.0}, duration: Minutes(90), pose: Lie, tags: ["rest", "lazy"], bubble: "zz"),
             (id: "jump", name: "Jump on Bed", rates: {Fun: 90.0, Energy: -15.0}, duration: Minutes(20), pose: Exercise,
              stages: [Toddler, Child, Teen], tags: ["fun", "playful"], bubble: "!"),
         ],
@@ -182,7 +182,7 @@
         ],
         slots: [(stand: (0.5, 1.5), use_at: (0.5, 0.5, 0.5), facing: 0.0)],
         interactions: [
-            (id: "sleep", name: "Sleep in Crib", rates: {Energy: 20.0, Comfort: 40.0}, ads: {Energy: 90.0}, duration: UntilFull(Energy, 600),
+            (id: "sleep", name: "Sleep in Crib", anim: "sleep", rates: {Energy: 20.0, Comfort: 40.0}, ads: {Energy: 90.0}, duration: UntilFull(Energy, 600),
              pose: Lie, stages: [Infant, Toddler], tags: ["sleep"], bubble: "Zzz"),
         ],
         beauty: 1.0,
@@ -204,7 +204,7 @@
         ],
         interactions: [
             (id: "sit", name: "Sit", rates: {Comfort: 70.0}, duration: Minutes(30), pose: Sit, tags: ["seating", "rest", "chair"], bubble: "ahh"),
-            (id: "nap", name: "Nap", rates: {Energy: 10.0, Comfort: 45.0}, ads: {Energy: 25.0, Comfort: 12.0}, duration: Minutes(120), pose: Lie, tags: ["rest", "lazy"], bubble: "zz",
+            (id: "nap", name: "Nap", anim: "sleep", rates: {Energy: 10.0, Comfort: 45.0}, ads: {Energy: 25.0, Comfort: 12.0}, duration: Minutes(120), pose: Lie, tags: ["rest", "lazy"], bubble: "zz",
              slots: [0]),
             (id: "search", name: "Search Cushions for Change", anim: "fix", rates: {Fun: 30.0}, duration: Minutes(15), pose: Use, tags: ["mischief", "lazy"],
              outcomes: [
@@ -226,7 +226,7 @@
         slots: [(stand: (0.5, 1.5), use_at: (0.5, 0.45, 0.55), facing: 0.0)],
         interactions: [
             (id: "sit", name: "Sit", rates: {Comfort: 65.0}, duration: Minutes(30), pose: Sit, tags: ["seating", "rest", "chair"], bubble: "ahh"),
-            (id: "watch_door", name: "Sit and Watch the Door", rates: {Comfort: 30.0, Vigilance: 120.0}, duration: Minutes(30), pose: Sit,
+            (id: "watch_door", name: "Sit and Watch the Door", anim: "sit_lookout", rates: {Comfort: 30.0, Vigilance: 120.0}, duration: Minutes(30), pose: Sit,
              tags: ["seating", "paranoid", "chair"], requires_trait: "paranoid", bubble: "eye"),
         ],
         beauty: 1.0,
@@ -271,15 +271,19 @@
             (stand: (1.5, 2.5), use_at: (1.5, 0.0, 2.5), facing: 195.0),
         ],
         interactions: [
-            (id: "watch", name: "Watch TV", rates: {Fun: 55.0}, duration: Minutes(60), tags: ["fun", "screen", "lazy"], bubble: "tv"),
-            (id: "infomercial", name: "Watch Infomercials", rates: {Fun: 10.0}, ads: {Fun: 35.0}, duration: Minutes(45), tags: ["fun", "screen", "lazy"],
+            (id: "watch", name: "Watch TV", anim: "watch_floor", prop: "remote",
+             seat: (range: 5.0, anim: "watch"), rates: {Fun: 55.0}, duration: Minutes(60), pose: Sit, tags: ["fun", "screen", "lazy"], bubble: "tv"),
+            (id: "infomercial", name: "Watch Infomercials", anim: "watch_floor", prop: "remote",
+             seat: (range: 5.0, anim: "watch"), rates: {Fun: 10.0}, ads: {Fun: 35.0}, duration: Minutes(45), pose: Sit, tags: ["fun", "screen", "lazy"],
              outcomes: [
                 Money(chance: 0.25, min: -49, max: -19),
                 Log(chance: 0.25, text: "{name} ordered a {item} from an infomercial. It cannot be returned."),
              ], bubble: "$?"),
-            (id: "cooking_show", name: "Watch Cooking Show", rates: {Fun: 35.0}, duration: Minutes(60), tags: ["fun", "screen"],
+            (id: "cooking_show", name: "Watch Cooking Show", anim: "watch_floor", prop: "remote",
+             seat: (range: 5.0, anim: "watch"), rates: {Fun: 35.0}, duration: Minutes(60), pose: Sit, tags: ["fun", "screen"],
              skill: (Cooking, 1.0), bubble: "pan"),
-            (id: "soap_opera", name: "Watch Soap Opera", rates: {Fun: 40.0, Drama: 90.0}, duration: Minutes(60), tags: ["fun", "screen", "drama"],
+            (id: "soap_opera", name: "Watch Soap Opera", anim: "watch_floor", prop: "remote",
+             seat: (range: 5.0, anim: "watch"), rates: {Fun: 40.0, Drama: 90.0}, duration: Minutes(60), pose: Sit, tags: ["fun", "screen", "drama"],
              bubble: "!?"),
         ],
         dirt_per_use: 0.01,
@@ -407,7 +411,7 @@
         ],
         slots: [(stand: (0.5, 1.5), use_at: (0.5, 0.0, 0.95), facing: 180.0)],
         interactions: [
-            (id: "play", name: "Play With Toys", rates: {Fun: 110.0, Social: 10.0}, duration: Minutes(40), pose: Sit,
+            (id: "play", name: "Play With Toys", anim: "play_floor", prop: "toy_block", rates: {Fun: 110.0, Social: 10.0}, duration: Minutes(40), pose: Sit,
              stages: [Infant, Toddler, Child], tags: ["fun", "playful"], skill: (Creativity, 1.0), bubble: "toy"),
         ],
         beauty: 0.5,
@@ -441,7 +445,8 @@
             (stand: (0.5, -0.5), use_at: (0.5, 0.0, -0.05), facing: 0.0),
         ],
         interactions: [
-            (id: "play", name: "Play Chess Against Self", rates: {Fun: 35.0}, duration: Minutes(60), pose: Use, tags: ["fun", "learning", "quiet"],
+            (id: "play", name: "Play Chess Against Self", anim: "chess", prop: "chess_piece", seat: (range: 1.3, cone: 45.0, anim: "sit_chess"),
+             rates: {Fun: 35.0}, duration: Minutes(60), pose: Use, tags: ["fun", "learning", "quiet"],
              skill: (Logic, 3.0), bubble: "chess",
              outcomes: [Moodlet(chance: 0.3, id: "chess_win"), Log(chance: 0.05, text: "{name} lost to themself. They are taking it poorly.")]),
         ],

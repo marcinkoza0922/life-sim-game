@@ -340,6 +340,27 @@ pub struct InteractionDef {
     /// Prop held while performing (an id in `props.ron`).
     #[serde(default)]
     pub prop: Option<String>,
+    /// Perform from a free seat nearby when there is one (watching TV from the sofa, chess from a
+    /// chair pulled up to the table); otherwise from the object's own slots as usual.
+    #[serde(default)]
+    pub seat: Option<SeatDef>,
+}
+
+/// Where an interaction may be performed from a seat: any free slot of a `Sit` interaction tagged
+/// "seating" on another object, on the same level, within `range` meters (seat to the object's
+/// centre, horizontally) and facing the object to within `cone` degrees.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SeatDef {
+    pub range: f32,
+    #[serde(default = "default_seat_cone")]
+    pub cone: f32,
+    /// Body clip while seated (replaces `anim`); `prop` is still held.
+    #[serde(default)]
+    pub anim: Option<String>,
+}
+
+fn default_seat_cone() -> f32 {
+    40.0
 }
 
 impl InteractionDef {
@@ -757,7 +778,9 @@ impl GameData {
     }
     /// Every body clip named by an interaction or social (for checking against the models).
     pub fn anims(&self) -> std::collections::BTreeSet<&str> {
-        let objs = self.objects.iter().flat_map(|o| o.interactions.iter().filter_map(|i| i.anim.as_deref()));
+        let objs = self.objects.iter().flat_map(|o| {
+            o.interactions.iter().flat_map(|i| [i.anim.as_deref(), i.seat.as_ref().and_then(|s| s.anim.as_deref())].into_iter().flatten())
+        });
         let socials = self.socials.iter().flat_map(|s| [s.anim.as_deref(), s.target_anim.as_deref()].into_iter().flatten());
         objs.chain(socials).collect()
     }

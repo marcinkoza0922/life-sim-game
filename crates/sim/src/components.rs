@@ -266,6 +266,10 @@ pub struct CurrentAction {
     pub started: u64,
     /// Set when the action should wrap up at the next opportunity.
     pub cancel: bool,
+    /// Seat object and slot reserved to perform an object interaction from (see `SeatDef`); the
+    /// object's own slot is then None.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seat: Option<(Entity, usize)>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

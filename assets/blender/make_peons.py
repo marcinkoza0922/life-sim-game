@@ -7,7 +7,8 @@ Run headless from the repo root:
 Every stage file holds the same skeleton (bone names), a body mesh with `slim`/`heavy` shape keys,
 four hair meshes (`hair0`..`hair3`, rigid on the head bone), and the animation clips the game maps
 poses to: idle, walk, sit, lie, use, dance, exercise; walking bodies (toddler and up) also get the
-interaction clips the data names (`anim:` in objects.ron / socials.ron) and demeanor variants
+interaction clips the data names (`anim:` and `seat: (anim:)` in objects.ron, socials.ron) — standing,
+seated (origin on the seat, like `sit`), on the floor and lying (like `lie`) — and demeanor variants
 (idle_sad, walk_sad, idle_proud, walk_proud, idle_nervous). The game falls back to the pose clip
 for any clip a body lacks.
 
@@ -721,6 +722,31 @@ def crouch(p, depth=1.0):
     p.move("hips", (0, back, -drop))
 
 
+def seated(p):
+    """On a chair: the `sit` clip's legs and hips (the game puts the origin on the seat surface)."""
+    d = p.d
+    legs(p, (88, 88), (88, 88), foot=(-5, -5), spread=4)
+    p.move("hips", (0, d.thigh_r * 0.2, -(d.legs - d.thigh_r * 1.05)))
+
+
+def floor_sit(p, spread=10.0, knee=10.0):
+    """On the floor (origin on the floor): legs out in front, knees raised by `knee` degrees. The
+    thigh rises above level by `knee` and the shin falls back by as much, so the heel stays at hip
+    height (on the floor) for equal-length thigh and shin."""
+    d = p.d
+    legs(p, (90 + knee, 90 + knee), (2 * knee, 2 * knee), foot=(-30 + knee, -30 + knee), spread=spread)
+    p.move("hips", (0, d.thigh_r * 0.1, -(d.legs - d.thigh_r * 1.1)))
+
+
+def lying(p, knee=(4.0, 4.0)):
+    """On the back like the `lie` clip: body centred on the origin, head towards +Y, face up."""
+    d = p.d
+    legs(p, (3 + knee[0] * 0.5, 3 + knee[1] * 0.5), knee, foot=(-20, -20))
+    p.rot("hips", qx(-90))
+    span = d.torso + d.head_h - d.legs
+    p.move("hips", (0, -span * 0.5, -d.legs + d.depth * 0.5 + 0.015))
+
+
 def make_activity_clips(rig, p):
     d, H = p.d, p.d.H
     wave = lambda k: math.sin(k * math.tau)  # k in 0..1 around a loop
@@ -894,6 +920,83 @@ def make_activity_clips(rig, p):
         arm(p, "L", fwd=28, inward=58, elbow=92)
         torso(p, lean=-2, head=-4, head_tilt=8 * k)
     clip(rig, p, "admire", 120, [(0, -1), (60, 1), (120, -1)], admire)
+
+    # seated, floor and lying interactions ------------------------------------------------------
+
+    # watching TV with the remote in the lap: settled back, a channel flick (k = 1) now and then,
+    # a chuckle (k = 2)
+    def watch_upper(p, k):
+        click, chuckle = max(0.0, 1 - abs(k - 1)), max(0.0, 1 - abs(k - 2))
+        # (no hip offset here: `seated`/`floor_sit` own the hips' location)
+        arm(p, "R", fwd=12 + 10 * click, inward=18, elbow=64 + 16 * click, wrist=-14 * click)
+        arm(p, "L", fwd=8, inward=22, elbow=58)
+        torso(p, lean=-6 + 12 * chuckle, head=2 - 10 * chuckle, head_tilt=3)
+
+    watch_keys = [(0, 0), (70, 0), (76, 1), (82, 0), (150, 0), (156, 2), (162, 0.3), (168, 2), (178, 0), (240, 0)]
+
+    def watch(p, k):
+        seated(p)
+        watch_upper(p, k)
+    clip(rig, p, "watch", 240, watch_keys, watch)
+
+    def watch_floor(p, k):
+        floor_sit(p, spread=12, knee=16)
+        watch_upper(p, k)
+    clip(rig, p, "watch_floor", 240, watch_keys, watch_floor)
+
+    # chess: chin on the left hand, pondering; the right hand reaches out to move a piece (k = 1)
+    def chess_upper(p, k, standing):
+        arm(p, "L", fwd=46, inward=34, elbow=138)
+        arm(p, "R", fwd=34 + 26 * k, inward=16 - 6 * k, elbow=70 - 40 * k, wrist=12 * k)
+        torso(p, lean=(24 if standing else 14) + 8 * k, head=(26 if standing else 18) + 6 * k, head_tilt=6 * (1 - k))
+
+    chess_keys = [(0, 0), (80, 0), (95, 1), (105, 1), (120, 0), (200, 0)]
+
+    def sit_chess(p, k):
+        seated(p)
+        chess_upper(p, k, False)
+    clip(rig, p, "sit_chess", 200, chess_keys, sit_chess)
+    clip(rig, p, "chess", 200, chess_keys, lambda p, k: chess_upper(p, k, True))
+
+    # on the toilet, scrolling the phone
+    def sit_phone(p, k):
+        seated(p)
+        arm(p, "R", fwd=34, inward=18, elbow=92, wrist=-6 * k)
+        arm(p, "L", fwd=14, inward=20, elbow=40)
+        torso(p, lean=16, head=30, head_tilt=4 * k)
+    clip(rig, p, "sit_phone", 40, [(0, 0), (6, 1), (12, 0), (30, 0), (34, 1), (40, 0)], sit_phone)
+
+    # paranoid armchair vigil: gripping the arms, head snapping round to the door and back
+    def sit_lookout(p, k):
+        seated(p)
+        arm(p, "R", down=30, fwd=24, inward=-6, elbow=40)
+        arm(p, "L", down=30, fwd=24, inward=-6, elbow=40)
+        torso(p, lean=8, twist=8 * k, head=-2, head_turn=40 * k)
+    clip(rig, p, "sit_lookout", 150, [(0, 0), (40, 0), (46, 1), (80, 1), (88, 0), (110, -0.6), (130, -0.6), (150, 0)], sit_lookout)
+
+    # playing on the floor: legs splayed, banging a block about in front
+    def play_floor(p, k):
+        floor_sit(p, spread=28, knee=6)
+        arm(p, "R", fwd=46 + 22 * k, inward=12, elbow=50 - 20 * k, wrist=10 * k)
+        arm(p, "L", fwd=40 - 8 * k, inward=18, elbow=56)
+        torso(p, lean=18 + 6 * k, head=26, head_tilt=6 * (k - 0.5))
+    clip(rig, p, "play_floor", 30, [(0, 0), (8, 1), (15, 0), (23, 1), (30, 0)], play_floor)
+
+    # asleep: head rolled to one side, a hand on the chest, a knee drifting up, slow deep breaths
+    def sleep(p, k):
+        lying(p, knee=(30, 4))
+        arm(p, "R", down=22, fwd=6, elbow=20, bend_in=80)  # hand over the belly
+        arm(p, "L", down=12, fwd=2, elbow=12)
+        torso(p, lean=-2 * k, head=-4, head_turn=-28)
+    clip(rig, p, "sleep", 180, [(0, 0), (90, 1), (180, 0)], sleep)
+
+    # bath: reclined against the tub end, knees up, waving the duck about and humming
+    def bathe(p, k):
+        lying(p, knee=(70, 64))
+        arm(p, "R", down=16, fwd=14 + 10 * k, inward=12, elbow=70 + 10 * k, wrist=-10 * k)
+        arm(p, "L", down=22, fwd=4, elbow=20, bend_in=60)
+        torso(p, lean=34, head=10, head_tilt=6 * k)
+    clip(rig, p, "bathe", 60, [(0, 0), (30, 1), (60, 0)], bathe)
 
     # demeanor variants -----------------------------------------------------------------------
     def idle_sad(p, k):

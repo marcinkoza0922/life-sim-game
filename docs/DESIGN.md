@@ -409,8 +409,18 @@ Added since:
   idle/walk_sad (mood < −35), idle/walk_proud (Theatrical/Vain in a good mood), idle_nervous
   (Paranoid). `simctl lineup --anim CLIP --prop ID --demeanor D` previews them.
 
+- **Seated, floor and lying clips:** watch (TV from a seat, remote in hand), watch_floor, sit_chess /
+  chess (standing), sit_phone (toilet), sit_lookout (Paranoid armchair vigil), play_floor (toys),
+  sleep (beds, sofa nap, crib) and bathe. Chair clips put the origin on the seat like `sit`; floor
+  clips on the floor.
+- **Using an object from a seat:** an interaction's `seat: (range, cone, anim)` lets it be performed
+  from any free slot of a `Sit` + "seating" interaction on another object, within `range` m of the
+  object and facing it to within `cone`° (TV: 5 m from the sofa; chess: a chair pulled up to the
+  table). The seat slot is reserved on `CurrentAction::seat` and the peon sits there with the seat
+  clip; with no free seat, the object's own slots are used (TV: on the floor; chess: standing).
+
 **Known gaps / next up:** eye colour from genes
-(pupils are a fixed colour); clips for seated/lying interactions (watching TV, toys, chess) and
-infant-specific ones; playable multi-lot
+(pupils are a fixed colour); infant-specific interaction clips; autonomy only offers an object while
+one of its own slots is free (seats nearby don't count yet); playable multi-lot
 neighborhoods (switching households, community lots) — townies are the first step; multi-tile object
 picking polish; hygiene still occasionally bottoms out in long headless runs (warning, not a failure).
