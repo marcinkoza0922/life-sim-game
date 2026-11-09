@@ -400,7 +400,17 @@ Added since:
   `BLEND_SECS` (0.3 s, smoothstep) and eases the root offset/yaw with it, since the sim snaps a peon onto
   a seat or bed as the posture changes (jumps over 3 m, e.g. coming home, still snap).
 
+- **Interaction clips & props:** interactions and socials name a body clip (`anim:`; socials also
+  `target_anim:`) and a held prop (`prop:`, greyboxed from parts in `assets/data/props.ron`, in a
+  palm-centred grip frame). The sim stores both on `Posture` while performing; the game plays the
+  clip when the body has it (else the pose's clip, and no prop). 26 clips for toddler-and-up bodies:
+  eat, chop, stir, scrub, type, write, phone, phone_call, selfie, read, orate, talk, laugh, argue,
+  hug, mourn, shower, water, kick, fix (crouched), cradle, peekaboo, admire, plus demeanor variants
+  idle/walk_sad (mood < −35), idle/walk_proud (Theatrical/Vain in a good mood), idle_nervous
+  (Paranoid). `simctl lineup --anim CLIP --prop ID --demeanor D` previews them.
+
 **Known gaps / next up:** eye colour from genes
-(pupils are a fixed colour); per-object animation (holding a book, typing at a desk); playable multi-lot
+(pupils are a fixed colour); clips for seated/lying interactions (watching TV, toys, chess) and
+infant-specific ones; playable multi-lot
 neighborhoods (switching households, community lots) — townies are the first step; multi-tile object
 picking polish; hygiene still occasionally bottoms out in long headless runs (warning, not a failure).

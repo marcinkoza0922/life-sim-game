@@ -52,6 +52,7 @@ cargo run --release -p simctl -- run --days 3 --seed 1 --trace Priya   # every a
 cargo run --release -p simctl -- check --seeds 40 --days 6      # invariant sweep (starvation, collapse, idling, bankruptcy)
 cargo run --release -p simctl -- render --hour 21 --level 1 --out out/night.png   # offscreen PNG of the lot
 cargo run --release -p simctl -- lineup --pose walk --time 0.3 --out out/lineup.png  # every life stage's rigged body
+cargo run --release -p simctl -- lineup --anim read --prop book --time 1 --out out/read.png  # an interaction clip + prop
 ```
 
 ### Character models

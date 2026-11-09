@@ -142,3 +142,49 @@ fn careers_pay() {
     let job = sim.world.get::<Job>(adults[0]);
     assert!(job.is_none_or(|j| j.days_worked >= 1));
 }
+
+#[test]
+fn performing_sets_the_interaction_clip_and_prop_then_clears_them() {
+    let mut sim = starter_sim(5);
+    sim.world.res_mut::<Settings>().free_will = sim::time::FreeWill::Off;
+    let adult = sim.living_peons()[0];
+    {
+        let mut n = sim.world.get_mut::<Needs>(adult).unwrap();
+        for k in Need::ALL {
+            n.set(k, 80.0);
+        }
+    }
+    let shelf = find_object(&sim, "bookshelf");
+    let i = interaction(&sim, shelf, "read");
+    sim.order(adult, ActionKind::Object { obj: shelf, interaction: i }).expect("order accepted");
+    let (mut walked_bare, mut read_with_book) = (false, false);
+    for _ in 0..240 {
+        sim.tick();
+        let p = sim.world.get::<Posture>(adult).unwrap().clone();
+        if p.walking {
+            walked_bare |= p.anim.is_none() && p.prop.is_none();
+        }
+        read_with_book |= p.anim.as_deref() == Some("read") && p.prop.as_deref() == Some("book");
+        let idle = sim.world.get::<ActionQueue>(adult).unwrap().current.is_none();
+        if read_with_book && idle {
+            assert_eq!(p, Posture::default(), "the book is put back when done");
+            break;
+        }
+    }
+    assert!(walked_bare && read_with_book);
+}
+
+#[test]
+fn a_day_of_free_will_plays_many_clips() {
+    let mut sim = starter_sim(3);
+    let mut seen = std::collections::BTreeSet::new();
+    for _ in 0..24 * 60 {
+        sim.tick();
+        for e in sim.living_peons() {
+            if let Some(a) = sim.world.get::<Posture>(e).and_then(|p| p.anim.clone()) {
+                seen.insert(a);
+            }
+        }
+    }
+    assert!(seen.len() >= 5, "only saw {seen:?}");
+}

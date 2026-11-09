@@ -12,7 +12,7 @@ use sim::objects::ObjectInstance;
 use sim::time::Clock;
 use sim::Sim;
 
-use crate::peons::{AnimState, Animator, Look, PeonArt};
+use crate::peons::{AnimState, Animator, Demeanor, Look, PeonArt};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WallMode {
@@ -377,12 +377,21 @@ pub fn build(sim: &Sim, r: &Builtins, peons: Option<&PeonArt>, anims: &mut Anima
             continue;
         }
         let yaw = lerp_angle(tf.prev_yaw, tf.yaw, opts.alpha);
+        let mood = world.get::<Mood>(e).map(|m| m.value).unwrap_or(0.0);
+        let demeanor = Demeanor::of(mood, world.get::<Personality>(e).as_deref());
         let h = match peons {
-            Some(art) => art.draw((&mut frame.skinned, &mut frame.joints), pos, yaw, age.stage, app, posture, anims.state(e), opts.time + e.index() as f32 * 0.37, Look::Normal),
+            Some(art) => {
+                let drawn = art.draw((&mut frame.skinned, &mut frame.joints), pos, yaw, age.stage, app, posture, demeanor, anims.state(e), opts.time + e.index() as f32 * 0.37, Look::Normal);
+                if let Some(prop) = posture.prop.as_deref().and_then(|id| data.prop(id))
+                    && let Some(grip) = drawn.grip(prop.hand)
+                {
+                    prop_draws(d, r, prop, grip);
+                }
+                drawn.crown
+            }
             None => body_draws(d, r, pos, yaw, age.stage, app, posture, opts.time * 7.0 + e.index() as f32 * 1.7),
         };
         if opts.selected == Some(e) {
-            let mood = world.get::<Mood>(e).map(|m| m.value).unwrap_or(0.0);
             let floor_y = lvl as f32 * LEVEL_HEIGHT + 0.03;
             d.push(
                 Draw::new(r.disc, Mat4::from_scale_rotation_translation(Vec3::new(0.9, 1.0, 0.9), Quat::IDENTITY, Vec3::new(pos.x, floor_y, pos.z)), mood_color(mood))
@@ -424,7 +433,7 @@ pub fn build(sim: &Sim, r: &Builtins, peons: Option<&PeonArt>, anims: &mut Anima
             d.push(Draw::new(r.cylinder, Mat4::from_scale_rotation_translation(Vec3::new(0.9, 0.25, 0.9), Quat::IDENTITY, p - Vec3::Y * 0.125), if *editing { [0.95, 0.85, 0.4] } else { [0.7, 0.7, 0.72] }).rough(0.4));
             let posture = Posture::default();
             match peons {
-                Some(art) => _ = art.draw((&mut frame.skinned, &mut frame.joints), p, yaw, *stage, app, &posture, &mut AnimState::default(), opts.time + i as f32 * 0.5, Look::Normal),
+                Some(art) => _ = art.draw((&mut frame.skinned, &mut frame.joints), p, yaw, *stage, app, &posture, Demeanor::Normal, &mut AnimState::default(), opts.time + i as f32 * 0.5, Look::Normal),
                 None => _ = body_draws(d, r, p, yaw, *stage, app, &posture, opts.time * 2.0),
             }
         }
@@ -441,7 +450,7 @@ pub fn build(sim: &Sim, r: &Builtins, peons: Option<&PeonArt>, anims: &mut Anima
         let yaw = lerp_angle(tf.prev_yaw, tf.yaw, opts.alpha);
         let bob = (opts.time * 2.0 + e.index() as f32).sin() * 0.08;
         let h = match peons {
-            Some(art) => art.draw((&mut frame.skinned, &mut frame.joints), pos + Vec3::Y * bob, yaw, age.stage, &app, &Posture::default(), anims.state(e), opts.time, Look::Ghost),
+            Some(art) => art.draw((&mut frame.skinned, &mut frame.joints), pos + Vec3::Y * bob, yaw, age.stage, &app, &Posture::default(), Demeanor::Sad, anims.state(e), opts.time, Look::Ghost).crown,
             None => {
                 let first = d.len();
                 let h = body_draws(d, r, pos + Vec3::Y * bob, yaw, age.stage, &app, &Posture::default(), opts.time * 2.0);
@@ -610,6 +619,15 @@ fn shape_mesh(r: &Builtins, s: Shape) -> MeshId {
         Shape::Box => r.cube,
         Shape::Cylinder => r.cylinder,
         Shape::Sphere => r.sphere,
+    }
+}
+
+/// Draws a held prop's parts in a hand's world-space grip frame.
+pub fn prop_draws(d: &mut Vec<Draw>, r: &Builtins, prop: &sim::data::PropDef, grip: Mat4) {
+    let rot = Quat::from_euler(glam::EulerRot::ZYX, prop.rot.z.to_radians(), prop.rot.y.to_radians(), prop.rot.x.to_radians());
+    for p in &prop.parts {
+        let m = grip * Mat4::from_quat(rot) * Mat4::from_scale_rotation_translation(p.size, Quat::IDENTITY, p.at);
+        d.push(Draw::new(shape_mesh(r, p.shape), m, p.color).rough(p.rough).metal(p.metal).emissive(p.emissive));
     }
 }
 

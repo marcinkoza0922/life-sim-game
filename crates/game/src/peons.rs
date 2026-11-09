@@ -8,9 +8,9 @@ use std::collections::HashMap;
 use glam::{Mat4, Vec3};
 use hearth_render::model::{Model, Pose as JointPose};
 use hearth_render::{PALETTE_SLOTS, Renderer, SkinnedDraw, SkinnedMeshId};
-use sim::components::{Appearance, Posture};
+use sim::components::{Appearance, Personality, Posture};
 use sim::Entity;
-use sim::data::{LifeStage, Pose};
+use sim::data::{Hand, LifeStage, Pose};
 
 /// Palette slots, matched to material names in the glTF files.
 pub mod slot {
@@ -64,6 +64,71 @@ struct StageArt {
     height: f32,
     head_joint: Option<usize>,
     head_rest_y: f32,
+    /// Per hand (right, left): the joint and the grip frame relative to it (see `PropDef`).
+    grips: [Option<(usize, Mat4)>; 2],
+}
+
+/// The grip frame of a hand in the rest pose, relative to the hand joint: origin in the palm, +y
+/// along the bone, +z towards the body's forward (+z) made perpendicular to the bone.
+fn grip_offset(skel: &hearth_render::model::Skeleton, joint: usize, height: f32) -> Mat4 {
+    let g = skel.globals(&skel.rest_pose())[joint];
+    let y = g.y_axis.truncate().normalize();
+    let z = (Vec3::Z - y * y.dot(Vec3::Z)).normalize();
+    let x = y.cross(z);
+    let palm = g.w_axis.truncate() + y * height * 0.035;
+    let rest = Mat4::from_cols(x.extend(0.0), y.extend(0.0), z.extend(0.0), palm.extend(1.0));
+    g.inverse() * rest
+}
+
+/// How a peon carries themselves when not doing anything in particular (idle and walk variants).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Demeanor {
+    #[default]
+    Normal,
+    /// Bad mood: slumped shoulders, dragging feet.
+    Sad,
+    /// Theatrical or vain and in a good mood: chin up, strutting.
+    Proud,
+    /// Paranoid: glances over the shoulder.
+    Nervous,
+}
+
+impl Demeanor {
+    pub fn of(mood: f32, p: Option<&Personality>) -> Demeanor {
+        let has = |t: &str| p.is_some_and(|p| p.has(t));
+        if mood < -35.0 {
+            Demeanor::Sad
+        } else if has("paranoid") {
+            Demeanor::Nervous
+        } else if (has("theatrical") || has("vain")) && mood > 15.0 {
+            Demeanor::Proud
+        } else {
+            Demeanor::Normal
+        }
+    }
+}
+
+/// What a drawn body reports back: the height of the crown above the root (for labels), whether
+/// it is playing the interaction's own clip, and the world-space grip frame of each hand (right,
+/// left) for props.
+#[derive(Clone, Copy, Debug)]
+pub struct Drawn {
+    pub crown: f32,
+    pub acting: bool,
+    pub grips: [Mat4; 2],
+}
+
+impl Drawn {
+    /// Where to draw a prop held in `hand`; None when the body fell back to a generic pose clip
+    /// (an infant "reading"), whose hands aren't posed to hold anything.
+    pub fn grip(&self, hand: Hand) -> Option<Mat4> {
+        self.acting.then(|| {
+            self.grips[match hand {
+                Hand::Right => 0,
+                Hand::Left => 1,
+            }]
+        })
+    }
 }
 
 /// How to draw a body.
@@ -95,20 +160,21 @@ impl PeonArt {
             let height = body_mesh.data.vertices.iter().map(|v| v.pos[1]).fold(0.0, f32::max);
             let head_joint = model.skeleton.joint("head");
             let head_rest_y = head_joint.map_or(height, |j| model.skeleton.globals(&model.skeleton.rest_pose())[j].w_axis.y);
-            stages.push(StageArt { model, body, hair, slim, heavy, height, head_joint, head_rest_y });
+            let grips = ["hand.R", "hand.L"].map(|n| model.skeleton.joint(n).map(|j| (j, grip_offset(&model.skeleton, j, height))));
+            stages.push(StageArt { model, body, hair, slim, heavy, height, head_joint, head_rest_y, grips });
         }
         Ok(PeonArt { stages })
     }
 
     /// Adds a posed body to a frame's `skinned` draws and `joints`. `t` is a per-peon clock in
     /// seconds; `anim` carries the peon's playback between frames (a fresh [`AnimState`] poses it
-    /// straight from `t`, with no blending). Returns the height of the top of the head above `pos`
-    /// (for labels).
+    /// straight from `t`, with no blending).
     #[allow(clippy::too_many_arguments)]
-    pub fn draw(&self, out: (&mut Vec<SkinnedDraw>, &mut Vec<Mat4>), pos: Vec3, yaw: f32, stage: LifeStage, app: &Appearance, posture: &Posture, anim: &mut AnimState, t: f32, look: Look) -> f32 {
+    pub fn draw(&self, out: (&mut Vec<SkinnedDraw>, &mut Vec<Mat4>), pos: Vec3, yaw: f32, stage: LifeStage, app: &Appearance, posture: &Posture, demeanor: Demeanor, anim: &mut AnimState, t: f32, look: Look) -> Drawn {
         let fi = file_index(stage);
         let art = &self.stages[fi];
-        let (clip, rate) = clip_for(stage, posture, art.height);
+        let (clip, rate) = clip_for(&art.model, stage, posture, demeanor, art.height);
+        let acting = posture.anim.as_deref() == Some(clip);
         let skel = &art.model.skeleton;
         let (pos, yaw) = anim.update(&art.model, fi, clip, rate, t, pos, yaw);
         let pose = &anim.pose;
@@ -153,9 +219,11 @@ impl PeonArt {
         }
 
         // top of the head: the head joint's posed height plus its rest distance to the crown
-        let head_y = art.head_joint.map_or(art.head_rest_y, |j| skel.globals(pose)[j].w_axis.y);
+        let globals = skel.globals(pose);
+        let head_y = art.head_joint.map_or(art.head_rest_y, |j| globals[j].w_axis.y);
         let crown = if posture.pose == Pose::Lie { head_y + 0.1 } else { head_y + (art.height - art.head_rest_y) };
-        crown * scale
+        let grips = art.grips.map(|g| g.map_or(model, |(j, off)| model * globals[j] * off));
+        Drawn { crown: crown * scale, acting, grips }
     }
 }
 
@@ -169,8 +237,8 @@ const MAX_ROOT_EASE: f32 = 3.0;
 /// the root, because the sim snaps a peon onto a seat or bed at the moment its posture changes.
 #[derive(Clone, Debug, Default)]
 pub struct AnimState {
-    /// Body model and clip playing; None until the first update.
-    playing: Option<(usize, &'static str)>,
+    /// Body model and clip index playing (None = rest pose); None until the first update.
+    playing: Option<(usize, Option<usize>)>,
     /// Seconds into the clip (already scaled by playback rate).
     phase: f32,
     last_t: f32,
@@ -190,8 +258,9 @@ impl AnimState {
     /// Advances playback to `t` and writes the pose into `self.pose`. Returns the root position
     /// and yaw to draw at (eased during a fade).
     #[allow(clippy::too_many_arguments)]
-    pub fn update(&mut self, model: &Model, body: usize, clip: &'static str, rate: f32, t: f32, pos: Vec3, yaw: f32) -> (Vec3, f32) {
+    pub fn update(&mut self, model: &Model, body: usize, clip: &str, rate: f32, t: f32, pos: Vec3, yaw: f32) -> (Vec3, f32) {
         let skel = &model.skeleton;
+        let clip = model.clips.iter().position(|c| c.name == clip);
         match self.playing {
             Some((b, c)) if b == body && self.pose.len() == skel.joints.len() => {
                 let dt = (t - self.last_t).clamp(0.0, 0.25);
@@ -220,8 +289,8 @@ impl AnimState {
 
         self.pose.clear();
         self.pose.extend(skel.joints.iter().map(|j| j.rest));
-        if let Some(c) = model.clip(clip) {
-            c.sample(self.phase, &mut self.pose);
+        if let Some(c) = clip {
+            model.clips[c].sample(self.phase, &mut self.pose);
         }
         let (pos, yaw) = if self.fade < 1.0 {
             let w = self.fade * self.fade * (3.0 - 2.0 * self.fade);
@@ -264,12 +333,38 @@ impl Animator {
     }
 }
 
-/// Clip name and playback rate for a posture. Walk cadence speeds up for shorter legs.
-fn clip_for(stage: LifeStage, posture: &Posture, model_height: f32) -> (&'static str, f32) {
+/// Clip name and playback rate for a posture: the interaction's own clip when this body has it,
+/// else the pose's (with the demeanor's idle/walk variant). Walk cadence speeds up for shorter legs.
+fn clip_for<'a>(model: &Model, stage: LifeStage, posture: &'a Posture, demeanor: Demeanor, model_height: f32) -> (&'a str, f32) {
+    if !posture.walking
+        && let Some(a) = posture.anim.as_deref()
+        && model.clip(a).is_some()
+    {
+        return (a, 1.0);
+    }
+    let variant = |base: &'static str| -> &'static str {
+        let v = match (demeanor, base) {
+            (Demeanor::Sad, "walk") => "walk_sad",
+            (Demeanor::Sad, "idle") => "idle_sad",
+            (Demeanor::Proud, "walk") => "walk_proud",
+            (Demeanor::Proud, "idle") => "idle_proud",
+            (Demeanor::Nervous, "idle") => "idle_nervous",
+            _ => base,
+        };
+        if model.clip(v).is_some() { v } else { base }
+    };
     let stride = (1.75 / model_height.max(0.3)).sqrt().min(1.6);
     match posture.pose {
-        Pose::Stand if posture.walking => ("walk", 1.1 * stride * if stage == LifeStage::Elder { 0.85 } else { 1.0 }),
-        Pose::Stand => ("idle", 1.0),
+        Pose::Stand if posture.walking => {
+            let w = variant("walk");
+            let pace = match w {
+                "walk_sad" => 0.8,
+                "walk_proud" => 0.95,
+                _ => 1.0,
+            };
+            (w, 1.1 * stride * pace * if stage == LifeStage::Elder { 0.85 } else { 1.0 })
+        }
+        Pose::Stand => (variant("idle"), 1.0),
         Pose::Sit => ("sit", 1.0),
         Pose::Lie => ("lie", 1.0),
         Pose::Use => ("use", 1.0),
@@ -309,6 +404,42 @@ mod tests {
             .height();
             assert!((top - want).abs() < want * 0.05, "{name}: model height {top}, stage height {want}");
         }
+    }
+
+    #[test]
+    fn every_clip_the_data_names_exists_on_every_walking_body() {
+        let data = sim::data::GameData::embedded();
+        let wanted: Vec<&str> = data.anims().into_iter().chain(["idle_sad", "walk_sad", "idle_proud", "walk_proud", "idle_nervous"]).collect();
+        for (name, bytes) in &FILES[1..] {
+            let m = Model::load_glb(bytes, &slot_of).unwrap();
+            let missing: Vec<_> = wanted.iter().filter(|c| m.clip(c).is_none()).collect();
+            assert!(missing.is_empty(), "peon_{name}.glb lacks clips {missing:?}");
+        }
+    }
+
+    #[test]
+    fn interaction_clip_wins_and_falls_back_to_the_pose() {
+        let m = adult();
+        let mut p = Posture::performing(Pose::Use, Some("stir".into()), None);
+        assert_eq!(clip_for(&m, LifeStage::Adult, &p, Demeanor::Normal, 1.75).0, "stir");
+        p.anim = Some("no_such_clip".into());
+        assert_eq!(clip_for(&m, LifeStage::Adult, &p, Demeanor::Normal, 1.75).0, "use");
+        let walking = Posture { walking: true, ..Default::default() };
+        assert_eq!(clip_for(&m, LifeStage::Adult, &walking, Demeanor::Sad, 1.75).0, "walk_sad");
+    }
+
+    #[test]
+    fn grips_follow_the_hands() {
+        let m = adult();
+        let skel = &m.skeleton;
+        let j = skel.joint("hand.R").unwrap();
+        let off = grip_offset(skel, j, 1.75);
+        let rest = skel.globals(&skel.rest_pose())[j] * off;
+        // palm a little below and outside the wrist on the right (-x), grip z facing forward
+        let wrist = skel.globals(&skel.rest_pose())[j].w_axis.truncate();
+        let palm = rest.w_axis.truncate();
+        assert!(palm.y < wrist.y && palm.x < wrist.x, "palm {palm} wrist {wrist}");
+        assert!(rest.z_axis.truncate().dot(Vec3::Z) > 0.9);
     }
 
     fn adult() -> Model {

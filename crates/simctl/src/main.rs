@@ -11,9 +11,9 @@
 //!               [--target X,Z] [--mode cutaway|up|down] [--size WxH] [--rooms] [--greybox] [--out FILE]
 //!     Runs the starter household for M minutes and renders the lot offscreen to a PNG.
 //! simctl lineup [--pose stand|walk|sit|lie|use|dance|exercise] [--time T] [--yaw D] [--pitch D]
-//!               [--dist M] [--size WxH] [--out FILE]
+//!               [--anim CLIP] [--prop ID] [--demeanor normal|sad|proud|nervous] [--dist M] [--size WxH] [--out FILE]
 //!     Renders every life stage's rigged body side by side (slim, average and heavy builds, all
-//!     hair styles) in one pose at clip time T seconds.
+//!     hair styles) in one pose (or interaction clip, holding a prop) at clip time T seconds.
 //! ```
 
 use std::collections::BTreeMap;
@@ -54,11 +54,15 @@ struct RenderArgs {
     /// `lineup`: posture to show and clip time.
     pose: String,
     time: f32,
+    /// `lineup`: interaction clip, held prop and demeanor (normal|sad|proud|nervous).
+    anim: Option<String>,
+    prop: Option<String>,
+    demeanor: String,
 }
 
 fn parse() -> Args {
     let mut a = Args { cmd: "run".into(), days: 3, seed: 1, seeds: 8, echo: false, log: None, manual: false, trace: None,
-        render: RenderArgs { minutes: 60, hour: None, level: 0, yaw: 35.0, pitch: 45.0, dist: 30.0, target: None, mode: "cutaway".into(), size: (1600, 1000), rooms: false, greybox: false, out: "out/render.png".into(), pose: "stand".into(), time: 0.0 } };
+        render: RenderArgs { minutes: 60, hour: None, level: 0, yaw: 35.0, pitch: 45.0, dist: 30.0, target: None, mode: "cutaway".into(), size: (1600, 1000), rooms: false, greybox: false, out: "out/render.png".into(), pose: "stand".into(), time: 0.0, anim: None, prop: None, demeanor: "normal".into() } };
     let mut it = std::env::args().skip(1);
     if let Some(c) = it.next() {
         a.cmd = c;
@@ -91,6 +95,9 @@ fn parse() -> Args {
             "--greybox" => a.render.greybox = true,
             "--pose" => a.render.pose = it.next().unwrap(),
             "--time" => a.render.time = it.next().unwrap().parse().unwrap(),
+            "--anim" => a.render.anim = it.next(),
+            "--prop" => a.render.prop = it.next(),
+            "--demeanor" => a.render.demeanor = it.next().unwrap(),
             "--out" => a.render.out = it.next().unwrap(),
             other => {
                 eprintln!("unknown arg {other}");
@@ -296,7 +303,15 @@ fn lineup(ra: &RenderArgs) {
         "exercise" => (Pose::Exercise, false),
         _ => (Pose::Stand, false),
     };
-    let posture = Posture { pose, walking };
+    let posture = Posture { pose, walking, anim: ra.anim.clone(), prop: ra.prop.clone() };
+    let demeanor = match ra.demeanor.as_str() {
+        "sad" => game::peons::Demeanor::Sad,
+        "proud" => game::peons::Demeanor::Proud,
+        "nervous" => game::peons::Demeanor::Nervous,
+        _ => game::peons::Demeanor::Normal,
+    };
+    let data = sim::data::GameData::embedded();
+    let prop = ra.prop.as_deref().map(|id| data.prop(id).unwrap_or_else(|| panic!("unknown prop {id}")));
     let stages = [LifeStage::Infant, LifeStage::Toddler, LifeStage::Child, LifeStage::Teen, LifeStage::Adult, LifeStage::Adult, LifeStage::Elder];
     // skin, hair, shirt, pants
     let looks: [[[f32; 3]; 4]; 4] = [
@@ -326,7 +341,12 @@ fn lineup(ra: &RenderArgs) {
             frame.draws.push(hearth_render::Draw::new(r.builtins.cube, Mat4::from_scale_rotation_translation(Vec3::new(0.5, 0.45, 0.5), glam::Quat::IDENTITY, Vec3::new(x, 0.225, -0.05)), [0.55, 0.4, 0.3]));
         }
         let yaw = 0.0;
-        art.draw((&mut frame.skinned, &mut frame.joints), Vec3::new(x, y, 0.0), yaw, *stage, &app, &posture, &mut game::peons::AnimState::default(), ra.time, game::peons::Look::Normal);
+        let drawn = art.draw((&mut frame.skinned, &mut frame.joints), Vec3::new(x, y, 0.0), yaw, *stage, &app, &posture, demeanor, &mut game::peons::AnimState::default(), ra.time, game::peons::Look::Normal);
+        if let Some(p) = prop
+            && let Some(grip) = drawn.grip(p.hand)
+        {
+            game::scene::prop_draws(&mut frame.draws, &r.builtins, p, grip);
+        }
     }
     if let Some(dir) = std::path::Path::new(&ra.out).parent() {
         std::fs::create_dir_all(dir).ok();

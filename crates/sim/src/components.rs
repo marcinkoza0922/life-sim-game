@@ -188,10 +188,22 @@ pub struct Appearance {
 }
 
 /// What the body is currently doing (for rendering/animation).
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Posture {
     pub pose: Pose,
     pub walking: bool,
+    /// Specific clip for the current interaction (see `InteractionDef::anim`); None = by `pose`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anim: Option<String>,
+    /// Prop id held (see `PropDef`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prop: Option<String>,
+}
+
+impl Posture {
+    pub fn performing(pose: Pose, anim: Option<String>, prop: Option<String>) -> Posture {
+        Posture { pose, walking: false, anim, prop }
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

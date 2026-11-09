@@ -380,6 +380,8 @@ fn step(world: &mut World, e: Entity, data: &GameData, tick: u64) {
             if let Some(mut p) = world.get_mut::<Posture>(e) {
                 p.walking = !arrived && !wait;
                 p.pose = Pose::Stand;
+                p.anim = None;
+                p.prop = None;
             }
             if arrived {
                 match arrive(world, e, data, &mut cur, slot, retries) {
@@ -741,7 +743,7 @@ fn arrive(world: &World, e: Entity, data: &GameData, cur: &mut CurrentAction, sl
                 tf.pos = pos;
                 tf.yaw = yaw;
             }
-            world.get_mut::<Posture>(e).unwrap().pose = inter.pose;
+            *world.get_mut::<Posture>(e).unwrap() = Posture::performing(inter.pose, inter.anim.clone(), inter.prop.clone());
             if let Some(b) = &inter.bubble {
                 set_bubble(world, e, Some(b.clone()), None, inter.nominal_minutes().min(60) as u64);
             }
@@ -803,6 +805,10 @@ fn arrive(world: &World, e: Entity, data: &GameData, cur: &mut CurrentAction, sl
                 cancel: false,
             });
             say(world, e, sd.bubble.as_deref(), sd.minutes.min(20) as u64);
+            *world.get_mut::<Posture>(e).unwrap() = Posture::performing(Pose::Stand, sd.anim.clone(), sd.prop.clone());
+            if let Some(mut p) = world.get_mut::<Posture>(target) {
+                *p = Posture::performing(Pose::Stand, sd.target_anim.clone(), None);
+            }
             cur.phase = Phase::Performing { slot: None, elapsed: 0 };
             Ok(true)
         }
