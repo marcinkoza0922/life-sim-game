@@ -8,6 +8,7 @@
 pub mod model;
 pub mod shapes;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
@@ -123,14 +124,49 @@ impl SkinnedDraw {
     }
 }
 
-/// Built-in primitive meshes, always present.
-#[derive(Clone, Copy, Debug)]
+/// Built-in primitive meshes, always present, plus the materials registered with
+/// [`Renderer::set_materials`] by name.
+#[derive(Clone, Debug)]
 pub struct Builtins {
     pub cube: MeshId,
     pub cylinder: MeshId,
     pub sphere: MeshId,
     pub disc: MeshId,
     pub wedge: MeshId,
+    pub materials: HashMap<String, MaterialId>,
+}
+
+impl Builtins {
+    pub fn material(&self, name: &str) -> Option<MaterialId> {
+        self.materials.get(name).copied()
+    }
+}
+
+/// Edge length of every material map layer; larger or smaller images are resized on upload.
+pub const MATERIAL_SIZE: u32 = 512;
+
+/// A textured surface: a layer in the renderer's material arrays. [`MaterialId::NONE`] (layer 0)
+/// is flat: white albedo, flat normal, and the draw's own roughness/metallic.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct MaterialId(pub u32);
+
+impl MaterialId {
+    pub const NONE: MaterialId = MaterialId(0);
+}
+
+/// Source maps for one material. Textures are applied by triplanar box mapping in the draw's
+/// scaled object space (no mesh UVs needed, density stays constant on stretched primitives).
+#[derive(Clone, Debug)]
+pub struct MaterialMaps {
+    /// sRGB base colour; multiplied by the draw's colour.
+    pub albedo: image::RgbaImage,
+    /// Tangent-space normal map, OpenGL convention (green = +V, up the image). Flat if absent.
+    pub normal: Option<image::RgbaImage>,
+    /// Linear R = ambient occlusion, G = roughness, B = metallic (glTF packing). When absent,
+    /// AO is 1 and the draw's roughness/metallic are used.
+    pub orm: Option<image::RgbaImage>,
+    /// World meters covered by one repeat of the texture.
+    pub scale: f32,
 }
 
 pub mod flags {
@@ -140,6 +176,9 @@ pub mod flags {
     pub const NO_SHADOW_RECEIVE: u32 = 2;
     /// Does not cast shadows.
     pub const NO_SHADOW_CAST: u32 = 4;
+    /// Project the material in world space instead of the draw's object space, so tiled pieces
+    /// (floor tiles, wall segments) continue one texture across their seams.
+    pub const WORLD_TEXTURE: u32 = 8;
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -152,11 +191,17 @@ pub struct Draw {
     pub metallic: f32,
     pub emissive: f32,
     pub flags: u32,
+    pub material: MaterialId,
 }
 
 impl Draw {
     pub fn new(mesh: MeshId, model: Mat4, color: [f32; 3]) -> Self {
-        Draw { mesh, model, color: [color[0], color[1], color[2], 1.0], roughness: 0.6, metallic: 0.0, emissive: 0.0, flags: 0 }
+        Draw { mesh, model, color: [color[0], color[1], color[2], 1.0], roughness: 0.6, metallic: 0.0, emissive: 0.0, flags: 0, material: MaterialId::NONE }
+    }
+    /// Textures the draw; `None` leaves it flat.
+    pub fn material(mut self, m: Option<MaterialId>) -> Self {
+        self.material = m.unwrap_or_default();
+        self
     }
     pub fn rough(mut self, r: f32) -> Self {
         self.roughness = r;
@@ -321,6 +366,8 @@ struct InstanceRaw {
     model: [[f32; 4]; 4],
     color: [f32; 4],
     params: [f32; 4],
+    /// material layer, 1 / texture scale
+    tex: [f32; 4],
 }
 
 #[repr(C)]
@@ -385,9 +432,14 @@ pub struct Renderer {
     meshes: Vec<Option<GpuMesh>>,
     sk_meshes: Vec<Option<GpuMesh>>,
     globals_buf: wgpu::Buffer,
+    main_bgl: wgpu::BindGroupLayout,
     main_bg: wgpu::BindGroup,
     shadow_bg: wgpu::BindGroup,
     shadow_view: wgpu::TextureView,
+    shadow_sampler: wgpu::Sampler,
+    material_sampler: wgpu::Sampler,
+    /// 1 / scale per material layer (layer 0 = flat).
+    material_inv_scale: Vec<f32>,
     opaque: wgpu::RenderPipeline,
     transparent: wgpu::RenderPipeline,
     shadow: wgpu::RenderPipeline,
@@ -470,18 +522,29 @@ impl Renderer {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
                     count: None,
                 },
+                material_tex_entry(3),
+                material_tex_entry(4),
+                material_tex_entry(5),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
             ],
+        });
+        let material_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("material sampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            anisotropy_clamp: 8,
+            ..Default::default()
         });
         let shadow_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("shadow bgl"), entries: &[uniform_entry] });
-        let main_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("main bg"),
-            layout: &main_bgl,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: globals_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&shadow_view) },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&shadow_sampler) },
-            ],
-        });
+        let main_bg = main_bind_group(device, &main_bgl, &globals_buf, &shadow_view, &shadow_sampler, &MaterialArrays::new(device, &gpu.queue, &[]), &material_sampler);
         let shadow_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("shadow bg"),
             layout: &shadow_bgl,
@@ -497,7 +560,7 @@ impl Renderer {
             Some(wgpu::VertexBufferLayout {
                 array_stride: std::mem::size_of::<InstanceRaw>() as u64,
                 step_mode: wgpu::VertexStepMode::Instance,
-                attributes: &wgpu::vertex_attr_array![3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4, 7 => Float32x4, 8 => Float32x4],
+                attributes: &wgpu::vertex_attr_array![3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4, 7 => Float32x4, 8 => Float32x4, 9 => Float32x4],
             }),
         ];
 
@@ -610,13 +673,17 @@ impl Renderer {
         let mut r = Renderer {
             gpu: gpu.clone(),
             format,
-            builtins: Builtins { cube: MeshId(0), cylinder: MeshId(0), sphere: MeshId(0), disc: MeshId(0), wedge: MeshId(0) },
+            builtins: Builtins { cube: MeshId(0), cylinder: MeshId(0), sphere: MeshId(0), disc: MeshId(0), wedge: MeshId(0), materials: HashMap::new() },
             meshes: Vec::new(),
             sk_meshes: Vec::new(),
             globals_buf,
+            main_bgl,
             main_bg,
             shadow_bg,
             shadow_view,
+            shadow_sampler,
+            material_sampler,
+            material_inv_scale: vec![1.0],
             opaque,
             transparent,
             shadow,
@@ -640,8 +707,20 @@ impl Renderer {
             sphere: r.upload_mesh(&shapes::sphere(12, 20)),
             disc: r.upload_mesh(&shapes::disc(32)),
             wedge: r.upload_mesh(&shapes::wedge()),
+            materials: HashMap::new(),
         };
         r
+    }
+
+    /// Replaces every registered material (ids from earlier calls become invalid) and makes them
+    /// available by name through [`Builtins::material`].
+    pub fn set_materials(&mut self, mats: &[(String, MaterialMaps)]) {
+        let gpu = self.gpu.clone();
+        let maps: Vec<&MaterialMaps> = mats.iter().map(|(_, m)| m).collect();
+        let arrays = MaterialArrays::new(&gpu.device, &gpu.queue, &maps);
+        self.main_bg = main_bind_group(&gpu.device, &self.main_bgl, &self.globals_buf, &self.shadow_view, &self.shadow_sampler, &arrays, &self.material_sampler);
+        self.material_inv_scale = std::iter::once(1.0).chain(maps.iter().map(|m| 1.0 / m.scale.max(1e-3))).collect();
+        self.builtins.materials = mats.iter().enumerate().map(|(i, (name, _))| (name.clone(), MaterialId(i as u32 + 1))).collect();
     }
 
     pub fn upload_mesh(&mut self, m: &MeshData) -> MeshId {
@@ -761,10 +840,14 @@ impl Renderer {
         let raw: Vec<InstanceRaw> = opaque
             .iter()
             .chain(transparent.iter())
-            .map(|d| InstanceRaw {
-                model: d.model.to_cols_array_2d(),
-                color: d.color,
-                params: [d.roughness, d.metallic, d.emissive, (d.flags & 3) as f32],
+            .map(|d| {
+                let layer = if (d.material.0 as usize) < self.material_inv_scale.len() { d.material.0 } else { 0 };
+                InstanceRaw {
+                    model: d.model.to_cols_array_2d(),
+                    color: d.color,
+                    params: [d.roughness, d.metallic, d.emissive, (d.flags & 3) as f32],
+                    tex: [layer as f32, self.material_inv_scale[layer as usize], (d.flags & flags::WORLD_TEXTURE != 0) as u32 as f32, 0.0],
+                }
             })
             .collect();
         let need = raw.len() as u64;
@@ -1024,6 +1107,168 @@ fn storage_buffer(device: &wgpu::Device, size: u64) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor { label: Some("skin"), size, usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false })
 }
 
+fn material_tex_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::D2Array,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
+
+fn main_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    globals: &wgpu::Buffer,
+    shadow_view: &wgpu::TextureView,
+    shadow_sampler: &wgpu::Sampler,
+    mats: &MaterialArrays,
+    material_sampler: &wgpu::Sampler,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("main bg"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: globals.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(shadow_view) },
+            wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(shadow_sampler) },
+            wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&mats.albedo) },
+            wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&mats.normal) },
+            wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(&mats.orm) },
+            wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::Sampler(material_sampler) },
+        ],
+    })
+}
+
+/// Albedo, normal and ORM texture arrays: layer 0 is the flat material, then one layer per material.
+struct MaterialArrays {
+    albedo: wgpu::TextureView,
+    normal: wgpu::TextureView,
+    orm: wgpu::TextureView,
+}
+
+impl MaterialArrays {
+    fn new(device: &wgpu::Device, queue: &wgpu::Queue, maps: &[&MaterialMaps]) -> MaterialArrays {
+        let flat = |c: [u8; 4]| image::RgbaImage::from_pixel(1, 1, image::Rgba(c));
+        let (white, flat_n, flat_orm) = (flat([255; 4]), flat([128, 128, 255, 255]), flat([255, 255, 0, 255]));
+        let layers = |pick: &dyn Fn(&MaterialMaps) -> Option<&image::RgbaImage>, default: &image::RgbaImage| -> Vec<image::RgbaImage> {
+            std::iter::once(default.clone()).chain(maps.iter().map(|m| pick(m).unwrap_or(default).clone())).collect()
+        };
+        MaterialArrays {
+            albedo: texture_array(device, queue, "material albedo", wgpu::TextureFormat::Rgba8UnormSrgb, &layers(&|m| Some(&m.albedo), &white)),
+            normal: texture_array(device, queue, "material normal", wgpu::TextureFormat::Rgba8Unorm, &layers(&|m| m.normal.as_ref(), &flat_n)),
+            orm: texture_array(device, queue, "material orm", wgpu::TextureFormat::Rgba8Unorm, &layers(&|m| m.orm.as_ref(), &flat_orm)),
+        }
+    }
+}
+
+/// A full mip chain of `MATERIAL_SIZE` layers, each image resized to fit.
+fn texture_array(device: &wgpu::Device, queue: &wgpu::Queue, label: &str, format: wgpu::TextureFormat, images: &[image::RgbaImage]) -> wgpu::TextureView {
+    let size = MATERIAL_SIZE;
+    let mips = size.ilog2() + 1;
+    let tex = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d { width: size, height: size, depth_or_array_layers: images.len() as u32 },
+        mip_level_count: mips,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    for (layer, img) in images.iter().enumerate() {
+        for mip in 0..mips {
+            let s = size >> mip;
+            let level = image::imageops::resize(img, s, s, image::imageops::FilterType::Triangle);
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo { texture: &tex, mip_level: mip, origin: wgpu::Origin3d { x: 0, y: 0, z: layer as u32 }, aspect: wgpu::TextureAspect::All },
+                &level,
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(s * 4), rows_per_image: Some(s) },
+                wgpu::Extent3d { width: s, height: s, depth_or_array_layers: 1 },
+            );
+        }
+    }
+    tex.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() })
+}
+
 fn skin_bind_group(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, buf: &wgpu::Buffer) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("skin bg"), layout, entries: &[wgpu::BindGroupEntry { binding: 0, resource: buf.as_entire_binding() }] })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Renders one cube filling most of the view; returns the RGBA pixels. Skips (None) without a GPU.
+    fn render_cube(material: Option<(&str, MaterialMaps)>) -> Option<Vec<u8>> {
+        let gpu = Gpu::headless().ok()?;
+        let mut r = Renderer::new(gpu, wgpu::TextureFormat::Rgba8UnormSrgb);
+        let mut mat = None;
+        if let Some((name, maps)) = material {
+            r.set_materials(&[(name.to_string(), maps)]);
+            mat = r.builtins.material(name);
+            assert_eq!(mat, Some(MaterialId(1)));
+        }
+        let mut f = Frame::new(Camera::orbit(Vec3::ZERO, 0.6, 0.5, 4.0, 1.0));
+        f.draws.push(Draw::new(r.builtins.cube, Mat4::from_scale(Vec3::new(2.0, 1.0, 2.0)), [1.0; 3]).material(mat));
+        Some(r.capture(&f, 64, 64))
+    }
+
+    /// 2×2 black/white checker per repeat, one repeat per meter.
+    fn checker() -> MaterialMaps {
+        let albedo = image::RgbaImage::from_fn(64, 64, |x, y| if (x / 32 + y / 32) % 2 == 0 { image::Rgba([255; 4]) } else { image::Rgba([10, 10, 10, 255]) });
+        MaterialMaps { albedo, normal: None, orm: Some(image::RgbaImage::from_pixel(4, 4, image::Rgba([255, 200, 0, 255]))), scale: 1.0 }
+    }
+
+    /// Brightness of the middle of a wall (+Z face) lit from above, with a constant normal map.
+    fn lit_wall(normal: Option<[u8; 4]>) -> Option<u32> {
+        let gpu = Gpu::headless().ok()?;
+        let mut r = Renderer::new(gpu, wgpu::TextureFormat::Rgba8UnormSrgb);
+        let albedo = image::RgbaImage::from_pixel(4, 4, image::Rgba([180, 180, 180, 255]));
+        let normal = normal.map(|n| image::RgbaImage::from_pixel(4, 4, image::Rgba(n)));
+        r.set_materials(&[("m".into(), MaterialMaps { albedo, normal, orm: None, scale: 1.0 })]);
+        let mut f = Frame::new(Camera::orbit(Vec3::ZERO, 0.0, 0.0, 4.0, 1.0));
+        f.sun_dir = Vec3::new(0.0, 0.8, 0.6).normalize();
+        f.sky = Vec3::ZERO;
+        f.ground = Vec3::ZERO;
+        f.fog_density = 0.0;
+        f.draws.push(Draw::new(r.builtins.cube, Mat4::from_scale(Vec3::new(2.0, 2.0, 0.2)), [1.0; 3]).material(r.builtins.material("m")));
+        let px = r.capture(&f, 32, 32);
+        let i = (16 * 32 + 16) * 4;
+        Some(px[i] as u32)
+    }
+
+    #[test]
+    fn normal_map_green_tilts_walls_upward() {
+        let Some(flat) = lit_wall(None) else { return };
+        // green up = toward +V in OpenGL convention = up the image = world +Y on a wall
+        let up = lit_wall(Some([128, 230, 180, 255])).unwrap();
+        let down = lit_wall(Some([128, 26, 180, 255])).unwrap();
+        assert!(up > flat + 10 && down + 10 < flat, "flat {flat}, tilted up {up}, tilted down {down}");
+    }
+
+    #[test]
+    fn materials_texture_draws_and_flat_draws_stay_flat() {
+        let Some(flat) = render_cube(None) else { return };
+        let textured = render_cube(Some(("checker", checker()))).unwrap();
+        if let Ok(dir) = std::env::var("HEARTH_TEST_OUT") {
+            for (name, px) in [("flat", &flat), ("checker", &textured)] {
+                image::RgbaImage::from_raw(64, 64, px.clone()).unwrap().save(format!("{dir}/material_{name}.png")).unwrap();
+            }
+        }
+        // the flat cube's faces are uniform; the textured one has dark checker squares
+        let dark = |px: &[u8]| px.as_chunks::<4>().0.iter().filter(|p| p[0] < 40).count();
+        assert!(dark(&textured) > dark(&flat) + 300, "dark pixels: flat {} textured {}", dark(&flat), dark(&textured));
+        // registering materials doesn't change untextured draws
+        let gpu = Gpu::headless().unwrap();
+        let mut r = Renderer::new(gpu, wgpu::TextureFormat::Rgba8UnormSrgb);
+        r.set_materials(&[("checker".into(), checker())]);
+        let mut f = Frame::new(Camera::orbit(Vec3::ZERO, 0.6, 0.5, 4.0, 1.0));
+        f.draws.push(Draw::new(r.builtins.cube, Mat4::from_scale(Vec3::new(2.0, 1.0, 2.0)), [1.0; 3]));
+        assert_eq!(r.capture(&f, 64, 64), flat);
+    }
 }

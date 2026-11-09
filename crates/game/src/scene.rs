@@ -3,7 +3,7 @@
 //! procedural greybox body when no art is loaded), and overlays.
 
 use glam::{IVec2, Mat4, Quat, Vec3};
-use hearth_render::{Builtins, Camera, Draw, Frame, MeshId, PointLight, flags};
+use hearth_render::{Builtins, Camera, Draw, Frame, MaterialId, MeshId, PointLight, flags};
 use sim::Entity;
 use sim::components::*;
 use sim::data::{GameData, LifeStage, Pose, Shape};
@@ -126,6 +126,32 @@ pub fn floor_color(style: u16, x: i32, z: i32) -> [f32; 3] {
     }
 }
 
+/// Wall covering: the textured material and its tint when loaded, else the flat colour.
+pub fn wall_surface(r: &Builtins, style: u16) -> ([f32; 3], Option<MaterialId>) {
+    let (name, tint) = match style {
+        3 => ("wall_brick", [1.0; 3]),
+        s => ("wall_plaster", wall_color(s)),
+    };
+    match r.material(name) {
+        Some(m) => (tint, Some(m)),
+        None => (wall_color(style), None),
+    }
+}
+
+/// Floor tile: the textured material and its tint when loaded, else the flat colour.
+pub fn floor_surface(r: &Builtins, style: u16, x: i32, z: i32) -> ([f32; 3], Option<MaterialId>) {
+    let name = match style {
+        0 => "floor_wood",
+        1 => "floor_tile",
+        2 => "floor_carpet",
+        _ => "floor_concrete",
+    };
+    match r.material(name) {
+        Some(m) => ([1.0; 3], Some(m)),
+        None => (floor_color(style, x, z), None),
+    }
+}
+
 fn mood_color(mood: f32) -> [f32; 3] {
     let t = ((mood + 100.0) / 200.0).clamp(0.0, 1.0);
     if t > 0.5 {
@@ -232,7 +258,8 @@ pub fn build(sim: &Sim, r: &Builtins, peons: Option<&PeonArt>, anims: &mut Anima
         }
         let y = level as f32 * LEVEL_HEIGHT;
         let thick = if level == 0 { 0.06 } else { 0.25 };
-        d.push(bx(r, Vec3::new(x as f32 + 0.5, y + 0.02 - thick * 0.5, z as f32 + 0.5), Vec3::new(1.0, thick, 1.0), floor_color(f.style, x, z)).rough(0.55));
+        let (color, mat) = floor_surface(r, f.style, x, z);
+        d.push(bx(r, Vec3::new(x as f32 + 0.5, y + 0.02 - thick * 0.5, z as f32 + 0.5), Vec3::new(1.0, thick, 1.0), color).rough(0.55).material(mat).flags(flags::WORLD_TEXTURE));
     }
     // basement earth walls (dark slab under dug area so the basement doesn't float)
     if top < 0 {
@@ -271,7 +298,7 @@ pub fn build(sim: &Sim, r: &Builtins, peons: Option<&PeonArt>, anims: &mut Anima
                 }
             };
         let opening = lot.openings.get(e).copied();
-        wall_pieces(d, r, e, wall_color(wall.style), cut, opening);
+        d.extend(wall_piece_list(r, e, wall_surface(r, wall.style), cut, opening));
     }
 
     // ---------------------------------------------------------------- stairs
@@ -510,7 +537,7 @@ pub fn build(sim: &Sim, r: &Builtins, peons: Option<&PeonArt>, anims: &mut Anima
             Ghost::Walls { edges, valid } => {
                 let c = if *valid { [0.5, 0.9, 0.5] } else { [0.95, 0.35, 0.3] };
                 for e in edges {
-                    for mut piece in wall_piece_list(r, e, c, false, None) {
+                    for mut piece in wall_piece_list(r, e, (c, None), false, None) {
                         piece.color[3] = 0.5;
                         d.push(piece.flags(flags::NO_SHADOW_CAST));
                     }
@@ -572,8 +599,10 @@ fn lerp_angle(a: f32, b: f32, t: f32) -> f32 {
     a + d * t
 }
 
-/// Wall pieces for one edge as draws.
-pub fn wall_piece_list(r: &Builtins, e: &Edge, color: [f32; 3], cut: bool, opening: Option<Opening>) -> Vec<Draw> {
+/// Wall pieces for one edge as draws; `surface` (from [`wall_surface`]) covers the wall itself,
+/// not the door/window trim.
+pub fn wall_piece_list(r: &Builtins, e: &Edge, surface: ([f32; 3], Option<MaterialId>), cut: bool, opening: Option<Opening>) -> Vec<Draw> {
+    let (color, mat) = surface;
     let (a, b) = e.endpoints();
     let mid = (a + b) * 0.5;
     let along_x = e.axis == Axis::X;
@@ -584,7 +613,7 @@ pub fn wall_piece_list(r: &Builtins, e: &Edge, color: [f32; 3], cut: bool, openi
     let mut seg = |y0: f32, y1: f32, c: [f32; 3]| {
         let y1 = y1.min(full);
         if y1 > y0 {
-            out.push(bx(r, mid + Vec3::Y * ((y0 + y1) * 0.5), size(len, y1 - y0), c).rough(0.85));
+            out.push(bx(r, mid + Vec3::Y * ((y0 + y1) * 0.5), size(len, y1 - y0), c).rough(0.85).material(mat).flags(flags::WORLD_TEXTURE));
         }
     };
     match opening {
@@ -610,10 +639,6 @@ pub fn wall_piece_list(r: &Builtins, e: &Edge, color: [f32; 3], cut: bool, openi
     out
 }
 
-fn wall_pieces(d: &mut Vec<Draw>, r: &Builtins, e: &Edge, color: [f32; 3], cut: bool, opening: Option<Opening>) {
-    d.extend(wall_piece_list(r, e, color, cut, opening));
-}
-
 fn shape_mesh(r: &Builtins, s: Shape) -> MeshId {
     match s {
         Shape::Box => r.cube,
@@ -622,12 +647,16 @@ fn shape_mesh(r: &Builtins, s: Shape) -> MeshId {
     }
 }
 
+fn part_material(r: &Builtins, p: &sim::data::Part) -> Option<MaterialId> {
+    p.material.as_deref().and_then(|m| r.material(m))
+}
+
 /// Draws a held prop's parts in a hand's world-space grip frame.
 pub fn prop_draws(d: &mut Vec<Draw>, r: &Builtins, prop: &sim::data::PropDef, grip: Mat4) {
     let rot = Quat::from_euler(glam::EulerRot::ZYX, prop.rot.z.to_radians(), prop.rot.y.to_radians(), prop.rot.x.to_radians());
     for p in &prop.parts {
         let m = grip * Mat4::from_quat(rot) * Mat4::from_scale_rotation_translation(p.size, Quat::IDENTITY, p.at);
-        d.push(Draw::new(shape_mesh(r, p.shape), m, p.color).rough(p.rough).metal(p.metal).emissive(p.emissive));
+        d.push(Draw::new(shape_mesh(r, p.shape), m, p.color).rough(p.rough).metal(p.metal).emissive(p.emissive).material(part_material(r, p)));
     }
 }
 
@@ -645,7 +674,12 @@ pub fn object_draws(d: &mut Vec<Draw>, r: &Builtins, data: &GameData, def_id: us
         if let Some(t) = tint {
             c = [(c[0] * t[0]).min(1.0), (c[1] * t[1]).min(1.0), (c[2] * t[2]).min(1.0)];
         }
-        let mut dr = Draw::new(shape_mesh(r, p.shape), m, c).rough(p.rough).metal(p.metal).emissive(if inst.broken { 0.0 } else { p.emissive }).alpha(alpha);
+        let mut dr = Draw::new(shape_mesh(r, p.shape), m, c)
+            .rough(p.rough)
+            .metal(p.metal)
+            .emissive(if inst.broken { 0.0 } else { p.emissive })
+            .alpha(alpha)
+            .material(part_material(r, p));
         if alpha < 1.0 {
             dr = dr.flags(flags::NO_SHADOW_CAST);
         }

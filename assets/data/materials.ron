@@ -1,0 +1,15 @@
+// Textured surfaces. Maps live in assets/textures/<id>/: albedo.png (sRGB), and optionally
+// normal.png (tangent space, OpenGL / green-up convention) and orm.png (R = AO, G = roughness,
+// B = metallic). They're box-projected in each draw's scaled object space, so no UVs are needed.
+// `scale` is the world meters covered by one repeat. Parts reference these by id (`material:`);
+// floors and walls map styles to them in game/src/scene.rs. An id with no textures stays flat.
+[
+    (id: "floor_wood", scale: 2.0),
+    (id: "floor_tile", scale: 1.0),
+    (id: "floor_carpet", scale: 1.0),
+    (id: "floor_concrete", scale: 2.0),
+    (id: "wall_plaster", scale: 2.0),
+    (id: "wall_brick", scale: 1.5),
+    (id: "wood", scale: 1.0),
+    (id: "fabric", scale: 0.5),
+]

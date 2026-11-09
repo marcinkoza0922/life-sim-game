@@ -228,6 +228,24 @@ pub struct Part {
     pub metal: f32,
     #[serde(default)]
     pub emissive: f32,
+    /// A [`MaterialDef`] id: textures the part, with `color` as a tint (white = as authored).
+    /// Without textures loaded the part falls back to flat `color`/`rough`/`metal`.
+    #[serde(default)]
+    pub material: Option<String>,
+}
+
+/// A textured surface. Maps live in `assets/textures/<id>/` (`albedo.png`, optional
+/// `normal.png` and `orm.png`) and are loaded by the game; the sim only checks names.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MaterialDef {
+    pub id: String,
+    /// World meters covered by one repeat of the texture.
+    #[serde(default = "default_material_scale")]
+    pub scale: f32,
+}
+
+fn default_material_scale() -> f32 {
+    1.0
 }
 
 /// Where a peon stands to start using an object, and where/how it is positioned while using it.
@@ -637,6 +655,7 @@ pub struct GameData {
     pub careers: Vec<CareerDef>,
     pub names: NameLists,
     pub props: Vec<PropDef>,
+    pub materials: Vec<MaterialDef>,
 }
 
 pub type ObjectId = usize;
@@ -647,7 +666,8 @@ macro_rules! embedded {
     };
 }
 
-const EMBEDDED: [(&str, &str); 8] = [
+const EMBEDDED: [(&str, &str); 9] = [
+    embedded!("materials.ron"),
     embedded!("objects.ron"),
     embedded!("traits.ron"),
     embedded!("quirks.ron"),
@@ -689,6 +709,11 @@ impl GameData {
             careers: parse("careers.ron", &get("careers.ron")?)?,
             names: parse("names.ron", &get("names.ron")?)?,
             props: parse("props.ron", &get("props.ron")?)?,
+            // optional so older data directories still load
+            materials: match get("materials.ron") {
+                Ok(text) => parse("materials.ron", &text)?,
+                Err(_) => Vec::new(),
+            },
         };
         data.validate()?;
         Ok(data)
@@ -700,6 +725,12 @@ impl GameData {
         let moodlet = |id: &str| self.moodlets.iter().any(|m| m.id == id);
         let has_trait = |id: &str| self.traits.iter().any(|t| t.id == id);
         let has_prop = |id: &Option<String>| id.as_ref().is_none_or(|id| self.props.iter().any(|p| &p.id == id));
+        let has_material = |id: &Option<String>| id.as_ref().is_none_or(|id| self.materials.iter().any(|m| &m.id == id));
+        for (owner, parts) in self.objects.iter().map(|o| (&o.id, &o.parts)).chain(self.props.iter().map(|p| (&p.id, &p.parts))) {
+            for p in parts.iter().filter(|p| !has_material(&p.material)) {
+                errs.push(format!("{owner}: unknown material {}", p.material.as_deref().unwrap_or_default()));
+            }
+        }
         let mut seen = std::collections::HashSet::new();
         for o in &self.objects {
             if !seen.insert(&o.id) {

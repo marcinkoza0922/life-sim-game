@@ -567,6 +567,7 @@ impl ApplicationHandler for App {
         config.present_mode = wgpu::PresentMode::AutoVsync;
         surface.configure(&gpu.device, &config);
         let mut renderer = Renderer::new(gpu.clone(), srgb);
+        game::materials::install(&mut renderer, &self.game.sim.data());
         let peons = game::peons::PeonArt::load(&mut renderer).inspect_err(|e| log::error!("peon models: {e:#}; using greybox bodies")).ok();
         let format = base;
         let egui_ctx = egui::Context::default();

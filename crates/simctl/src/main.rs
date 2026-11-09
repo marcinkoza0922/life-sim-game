@@ -20,6 +20,8 @@
 //!               [--size WxH] [--out FILE]
 //!     Renders every life stage's rigged body side by side (slim, average and heavy builds, all
 //!     hair styles) in one pose (or interaction clip, holding a prop) at clip time T seconds.
+//! simctl materials [--yaw D] [--pitch D] [--dist M] [--hour H] [--size WxH] [--out FILE]
+//!     Renders every textured material (assets/textures) on a wall section and a floor patch.
 //! ```
 
 use std::collections::BTreeMap;
@@ -292,9 +294,10 @@ fn main() {
         }
         "render" => render(&a),
         "lineup" => lineup(&a.render),
+        "materials" => materials(&a.render),
         "hood" => hood_tour(a.seed, a.days),
         other => {
-            eprintln!("unknown command {other}; try `run`, `check`, `render`, `lineup` or `hood`");
+            eprintln!("unknown command {other}; try `run`, `check`, `render`, `lineup`, `materials` or `hood`");
             std::process::exit(2);
         }
     }
@@ -307,6 +310,7 @@ fn lineup(ra: &RenderArgs) {
     let gpu = hearth_render::Gpu::headless().expect("no GPU adapter");
     let mut r = hearth_render::Renderer::new(gpu, hearth_render::wgpu::TextureFormat::Rgba8UnormSrgb);
     let art = game::peons::PeonArt::load(&mut r).expect("peon models");
+    game::materials::install(&mut r, &sim::data::GameData::embedded());
     let (pose, walking) = match ra.pose.as_str() {
         "walk" => (Pose::Stand, true),
         "sit" => (Pose::Sit, false),
@@ -367,6 +371,46 @@ fn lineup(ra: &RenderArgs) {
     }
     r.save_png(&frame, w, h, std::path::Path::new(&ra.out)).expect("save png");
     println!("{} skinned draws -> {}", r.stats.skinned, ra.out);
+}
+
+/// One swatch per textured material: a wall section (with a floor patch in front), projected in
+/// world space like walls and floors are.
+fn materials(ra: &RenderArgs) {
+    use glam::{Mat4, Quat, Vec3};
+    use hearth_render::{Draw, flags};
+    let gpu = hearth_render::Gpu::headless().expect("no GPU adapter");
+    let mut r = hearth_render::Renderer::new(gpu, hearth_render::wgpu::TextureFormat::Rgba8UnormSrgb);
+    game::materials::install(&mut r, &sim::data::GameData::embedded());
+    let mut names: Vec<(String, hearth_render::MaterialId)> = r.builtins.materials.iter().map(|(n, m)| (n.clone(), *m)).collect();
+    names.sort();
+    let (w, h) = ra.size;
+    let spacing = 3.0;
+    let n = names.len().max(1) as f32;
+    // `render`'s camera defaults mean "not given": frame the whole row from the front
+    let yaw = if ra.yaw == 35.0 { 15.0 } else { ra.yaw };
+    let pitch = if ra.pitch == 45.0 { 20.0 } else { ra.pitch };
+    let dist = if ra.dist == 30.0 { 3.2 * n + 2.0 } else { ra.dist };
+    let target = ra.target.map_or(Vec3::new(0.0, 1.0, 0.5), |(x, z)| Vec3::new(x, 1.0, z));
+    let mut frame = hearth_render::Frame::new(hearth_render::Camera::orbit(target, yaw.to_radians(), pitch.to_radians(), dist, w as f32 / h as f32));
+    frame.shadow_radius = 2.0 * n + 4.0;
+    if let Some(hour) = ra.hour {
+        let t = ((hour - 6.0) / 12.0).clamp(0.0, 1.0) * std::f32::consts::PI;
+        frame.sun_dir = Vec3::new(-t.cos(), t.sin().max(0.15), 0.6).normalize();
+    }
+    frame.draws.push(Draw::new(r.builtins.cube, Mat4::from_scale_rotation_translation(Vec3::new(spacing * n + 4.0, 0.1, 8.0), Quat::IDENTITY, Vec3::new(0.0, -0.06, 1.0)), [0.45, 0.5, 0.4]).rough(0.95));
+    for (i, (_, m)) in names.iter().enumerate() {
+        let x = (i as f32 - (n - 1.0) * 0.5) * spacing;
+        let wall = Mat4::from_scale_rotation_translation(Vec3::new(2.4, 2.8, 0.12), Quat::IDENTITY, Vec3::new(x, 1.4, 0.0));
+        let floor = Mat4::from_scale_rotation_translation(Vec3::new(2.4, 0.06, 2.4), Quat::IDENTITY, Vec3::new(x, 0.0, 1.3));
+        for model in [wall, floor] {
+            frame.draws.push(Draw::new(r.builtins.cube, model, [1.0; 3]).material(Some(*m)).flags(flags::WORLD_TEXTURE));
+        }
+    }
+    if let Some(dir) = std::path::Path::new(&ra.out).parent() {
+        std::fs::create_dir_all(dir).ok();
+    }
+    r.save_png(&frame, w, h, std::path::Path::new(&ra.out)).expect("save png");
+    println!("{} materials ({}) -> {}", names.len(), names.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(", "), ra.out);
 }
 
 /// Orders every peon at home to do `OBJECT:INTERACTION` and runs (free will off) until they all are,
@@ -556,6 +600,7 @@ fn render(a: &Args) {
     }
     let gpu = hearth_render::Gpu::headless().expect("no GPU adapter");
     let mut r = hearth_render::Renderer::new(gpu, hearth_render::wgpu::TextureFormat::Rgba8UnormSrgb);
+    game::materials::install(&mut r, &sim.data());
     let (w, h) = ra.size;
     let target = ra.target.map(|(x, z)| glam::Vec3::new(x, 0.0, z)).unwrap_or(glam::Vec3::new(15.0, 0.0, 14.0));
     let mut cam = game::camera::OrbitCamera::new(target);

@@ -56,8 +56,10 @@ crates/
   simctl         Headless CLI: run the sim for N days, run scenario files,
                  dump event logs / stats as JSON, render screenshots offscreen.
 assets/
-  data/          RON content: objects, traits, quirks, careers, needs, names
+  data/          RON content: objects, traits, quirks, careers, needs, names, materials
   models/        peon_<stage>.glb rigged bodies (generated; embedded in the game binary)
+  textures/      <material id>/{albedo,normal,orm}.png tiling maps (embedded by game/build.rs)
+  materialcraft/ materials.py: generates the .sbs packages and textures/ maps headlessly
   blender/       make_peons.py: builds the bodies, rig, hair and clips headlessly
 docs/
 ```
@@ -100,7 +102,12 @@ in the game crate covers debug UI needs.)
 - wgpu 30 on Vulkan. HDR-ish linear pipeline into an sRGB surface.
 - **Shading:** PBR-lite (GGX specular, Lambert diffuse, metallic/roughness),
   one directional sun with a shadow map, hemispherical ambient. Real IBL later.
-- **Meshes:** CPU `MeshData` (pos/normal/uv/color) → GPU buffers; handle-based `MeshId`.
+- **Materials:** albedo / normal / ORM `texture_2d_array`s (512² layers with mips; layer 0 flat).
+  A draw's `MaterialId` picks a layer; it is box-projected (triplanar) in the draw's scaled object
+  space, so scaled primitives keep constant texel density, nothing swims when objects move, and no
+  UVs are needed. Tiled building pieces (floor tiles, wall segments) set `flags::WORLD_TEXTURE` to
+  project in world space instead, so one texture runs across their seams. The draw colour tints the albedo; textured draws take roughness/metallic from ORM.
+- **Meshes:** CPU `MeshData` (pos/normal/color; no UVs yet) → GPU buffers; handle-based `MeshId`.
   Per-instance data (model matrix, base color, roughness/metallic, flags) in an instance buffer;
   draws are batched by mesh.
 - **Placeholders:** procedural primitives (box, cylinder, capsule, plane, wedge) used for
