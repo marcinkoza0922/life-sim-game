@@ -16,8 +16,8 @@ the image is up.
 `crates/game/build.rs` embeds every folder here into the binary; an id without a folder renders
 flat.
 
-Every material here is generated (`floor_*`, `wall_*`, and the tintable `wood` and `fabric`, which
-stay near-neutral because parts multiply them by their colour): `python3 assets/materialcraft/materials.py
+Every material here is generated (`floor_*`, `wall_*`, and the tintable `wood`, `fabric`, `metal` and `stone`,
+which stay near-neutral because parts multiply them by their colour): `python3 assets/materialcraft/materials.py
 [id ...]` rebuilds `assets/materialcraft/<id>.sbs` and these maps headlessly with
 `materialcraft-cli` (edit the expressions there rather than the PNGs). Check the results with
 `simctl materials --out out/materials.png` (one swatch per material) or a `simctl render`.

@@ -21,7 +21,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from fngraph import E, c, pos, sx, sy, v4, floor, frac, sin, mn, mx, mod, lerp, clamp01, hash1, cellhash, graph
+from fngraph import E, c, pos, sx, sy, v4, floor, frac, sin, absf, mn, mx, mod, lerp, clamp01, hash1, cellhash, graph
 
 HERE = Path(__file__).resolve().parent
 TEXTURES = HERE.parent / "textures"
@@ -247,15 +247,188 @@ def fabric():
     return albedo, height, (ao, c(0.93), c(0.0)), 2.5
 
 
+def floor_marble():
+    """Polished marble slabs, 2 × 2 per repeat (1.2 m: 60 cm slabs): white with soft grey cloud and
+    turbulent diagonal veins whose phase shifts per slab, hairline grout."""
+    n = 2
+    p = pos()
+    px, py = sx(p), sy(p)
+    X, Y = px * n, py * n
+    fx, fy = frac(X), frac(Y)
+    ix, iy = floor(X), floor(Y)
+    d = mn(mn(fx, 1.0 - fx), mn(fy, 1.0 - fy)) * (SIZE / n)
+    face = sstep(0.8, 1.8, d)
+    # integer x/y multipliers keep the vein field periodic over the square
+    warp = fbm(px, py, 3, 3, 4, 111.0)
+    vein = clamp01(1.0 - absf(sin((px * 2.0 + py * 3.0 + warp * 1.7 + hash1(ix, iy, 113.0)) * (2.0 * math.pi))) * 6.0)
+    thread = clamp01(1.0 - absf(sin((px * 5.0 - py * 2.0 + vnoise(px, py, 5, 5, 119.0) * 2.5) * (2.0 * math.pi))) * 14.0)
+    cloud = vnoise(px, py, 6, 6, 117.0)
+    tone = lerp(0.5, clamp01(0.86 + 0.1 * cloud - 0.45 * vein - 0.15 * thread), face)
+    albedo = Gradient(tone, [(0.0, (0.30, 0.31, 0.33)), (0.5, (0.62, 0.62, 0.63)), (1.0, (0.95, 0.94, 0.92))])
+    height = 0.2 + face * 0.6
+    rough = lerp(0.9, 0.1 + 0.06 * cloud, face)
+    ao = lerp(0.6, 1.0, sstep(0.0, 3.0, d))
+    return albedo, height, (ao, rough, c(0.0)), 2.0
+
+
+def floor_stone():
+    """Sandstone pavers in staggered rows, 3 per row × 5 rows per repeat (2 m: ~67 × 40 cm), with
+    wide mortar joints, chipped edges and a bumpy cleft face."""
+    cols, rows = 3, 5
+    p = pos()
+    px, py = sx(p), sy(p)
+    row = floor(py * rows)
+    X = px * cols + hash1(row, 0.0, 121.0)
+    fx, fy = frac(X), frac(py * rows)
+    cx = mod(floor(X), float(cols))
+    chip = vnoise(px, py, 40, 40, 123.0)
+    d = mn(mn(fx, 1.0 - fx) * (SIZE / cols), mn(fy, 1.0 - fy) * (SIZE / rows)) + (chip - 0.5) * 5.0
+    face = sstep(3.0, 4.5, d)
+    r1 = hash1(cx, row, 125.0)
+    cleft = fbm(px, py, 10, 10, 3, 127.0)
+    g = grain(px, py, 129.0)
+    tone = lerp(0.18 + 0.1 * g, clamp01(0.35 + 0.45 * r1 + 0.25 * (cleft - 0.5) + 0.08 * g), face)
+    albedo = Gradient(tone, [(0.0, (0.30, 0.29, 0.27)), (0.35, (0.55, 0.50, 0.43)), (0.7, (0.72, 0.65, 0.54)), (1.0, (0.82, 0.77, 0.68))])
+    height = 0.1 + 0.05 * g + sstep(3.0, 14.0, d) * (0.5 + 0.3 * cleft)
+    rough = lerp(0.97, 0.8 + 0.1 * cleft, face)
+    ao = lerp(0.5, 1.0, sstep(2.0, 10.0, d))
+    return albedo, height, (ao, rough, c(0.0)), 4.0
+
+
+def floor_parquet():
+    """Basketweave parquet: 4 × 4 squares per repeat (1 m: 25 cm), each three slats that alternate
+    direction like a checkerboard, honey oak with per-slat shade."""
+    n = 4
+    p = pos()
+    px, py = sx(p), sy(p)
+    X, Y = px * n, py * n
+    fx, fy = frac(X), frac(Y)
+    ix, iy = floor(X), floor(Y)
+    chk = mod(ix + iy, 2.0)  # 0: slats run along x, 1: along y
+    across = lerp(fy, fx, chk) * 3.0
+    along = lerp(fx, fy, chk)
+    a = frac(across)
+    si = floor(across)
+    d = mn(mn(a, 1.0 - a) * (SIZE / n / 3), mn(along, 1.0 - along) * (SIZE / n))
+    open_ = sstep(0.5, 1.5, d)
+    r1 = hash1(ix * 3.0 + si, iy, 131.0)
+    # grain stretched along the slat: one noise per orientation, picked by the checker
+    streak = lerp(fbm(px, py, 4, 96, 2, 133.0), fbm(px, py, 96, 4, 2, 137.0), chk)
+    tone = open_ * (0.25 + 0.75 * clamp01(0.45 * r1 + 0.55 * streak))
+    albedo = Gradient(tone, [(0.0, (0.13, 0.08, 0.05)), (0.25, (0.40, 0.26, 0.13)), (0.6, (0.60, 0.42, 0.23)), (1.0, (0.76, 0.58, 0.36))])
+    height = open_ * 0.8 + 0.1
+    rough = lerp(0.9, 0.38 + 0.12 * r1, open_)
+    ao = lerp(0.5, 1.0, sstep(0.0, 3.0, d))
+    return albedo, height, (ao, rough, c(0.0)), 2.5
+
+
+def wall_tile():
+    """Glossy subway tile in running bond, 6 × 12 per repeat (0.9 m: 15 × 7.5 cm), near-white so
+    walls tint it, with rounded edges and pale grout."""
+    cols, rows = 6, 12
+    p = pos()
+    px, py = sx(p), sy(p)
+    row = floor(py * rows)
+    X = px * cols + mod(row, 2.0) * 0.5
+    fx, fy = frac(X), frac(py * rows)
+    d = mn(mn(fx, 1.0 - fx) * (SIZE / cols), mn(fy, 1.0 - fy) * (SIZE / rows))
+    face = sstep(1.0, 2.0, d)
+    r1 = hash1(mod(floor(X), float(cols)), row, 141.0)
+    ripple = vnoise(px, py, 24, 48, 143.0)
+    tone = lerp(0.72, 0.93 + 0.04 * r1 + 0.03 * ripple, face)
+    albedo = Gradient(tone, [(0.0, (0.0, 0.0, 0.0)), (1.0, (1.0, 1.0, 0.99))])
+    height = 0.1 + sstep(1.0, 8.0, d) * (0.8 + 0.03 * ripple)
+    rough = lerp(0.9, 0.06 + 0.04 * ripple, face)
+    ao = lerp(0.55, 1.0, sstep(0.0, 5.0, d))
+    return albedo, height, (ao, rough, c(0.0)), 4.0
+
+
+def wall_wallpaper():
+    """Striped wallpaper: 8 alternating stripes per repeat (1 m: 12.5 cm) with pinstripes at the
+    seams, on a fibrous matte paper; neutral so walls tint it."""
+    n = 8
+    p = pos()
+    px, py = sx(p), sy(p)
+    X = px * n
+    fx = frac(X)
+    band = mod(floor(X), 2.0)
+    edge = mn(fx, 1.0 - fx) * (SIZE / n)  # pixels to the stripe seam
+    pin = 1.0 - sstep(1.5, 2.5, absf(edge - 5.0))
+    fibre = fbm(px, py, 64, 160, 2, 151.0)
+    g = grain(px, py, 153.0)
+    tone = clamp01(0.94 - 0.13 * band - 0.22 * pin + 0.05 * (fibre - 0.5) + 0.02 * g)
+    albedo = Gradient(tone, [(0.0, (0.0, 0.0, 0.0)), (1.0, (1.0, 0.99, 0.97))])
+    height = 0.5 + 0.3 * fibre + 0.1 * g + 0.1 * pin
+    ao = 0.95 + 0.05 * fibre
+    return albedo, height, (ao, c(0.88), c(0.0)), 0.6
+
+
+def wall_panel():
+    """Painted beadboard: 10 vertical boards per repeat (1 m: 10 cm) with a V-groove and bead at
+    each joint and faint wood grain under the semi-gloss paint; neutral so walls tint it."""
+    n = 10
+    p = pos()
+    px, py = sx(p), sy(p)
+    fx = frac(px * n)
+    e = mn(fx, 1.0 - fx) * (SIZE / n)  # pixels to the joint
+    groove = sstep(0.5, 3.0, e)
+    bead = 1.0 - sstep(0.0, 3.0, absf(fx * (SIZE / n) - 9.0))  # half-round bead beside the joint
+    under = fbm(px, py, 40, 3, 2, 161.0)
+    tone = 0.62 + 0.3 * groove + 0.04 * bead + 0.03 * under
+    albedo = Gradient(tone, [(0.0, (0.0, 0.0, 0.0)), (1.0, (1.0, 1.0, 1.0))])
+    height = 0.1 + 0.7 * groove + 0.15 * bead + 0.04 * under
+    rough = 0.45 + 0.08 * under
+    ao = lerp(0.6, 1.0, sstep(0.0, 4.0, e))
+    return albedo, height, (ao, rough, c(0.0)), 3.0
+
+
+def metal():
+    """Brushed metal: fine streaks along image x, light and neutral so parts tint it (metallic in
+    the ORM, so the part's colour sets the reflectance)."""
+    p = pos()
+    px, py = sx(p), sy(p)
+    brush = fbm(px, py, 4, 256, 2, 171.0)
+    g = grain(px, py, 173.0)
+    smudge = vnoise(px, py, 3, 3, 177.0)
+    tone = clamp01(0.55 * brush + 0.25 * g + 0.2 * smudge)
+    albedo = Gradient(tone, [(0.0, (0.86, 0.86, 0.86)), (1.0, (1.0, 1.0, 1.0))])
+    height = 0.5 + 0.2 * brush + 0.05 * g
+    rough = 0.26 + 0.12 * brush + 0.03 * smudge
+    return albedo, height, (c(1.0), rough, c(1.0)), 0.4
+
+
+def stone():
+    """Polished granite for countertops: speckles of dark and light mineral over a mid ground,
+    near-neutral so parts tint it (0.6 m repeat)."""
+    p = pos()
+    px, py = sx(p), sy(p)
+    dark = sstep(0.62, 0.75, vnoise(px, py, 96, 96, 181.0))
+    light = sstep(0.7, 0.8, vnoise(px, py, 160, 160, 183.0))
+    cloud = vnoise(px, py, 8, 8, 187.0)
+    tone = clamp01(0.68 + 0.1 * cloud - 0.45 * dark + 0.25 * light)
+    albedo = Gradient(tone, [(0.0, (0.42, 0.41, 0.40)), (0.6, (0.80, 0.79, 0.77)), (1.0, (1.0, 1.0, 0.99))])
+    height = 0.5 + 0.05 * cloud
+    rough = 0.14 + 0.06 * cloud
+    return albedo, height, (c(1.0), rough, c(0.0)), 0.3
+
+
 MATERIALS = {
     "wall_brick": wall_brick,
     "wall_plaster": wall_plaster,
+    "wall_tile": wall_tile,
+    "wall_wallpaper": wall_wallpaper,
+    "wall_panel": wall_panel,
     "floor_wood": floor_wood,
     "floor_tile": floor_tile,
     "floor_carpet": floor_carpet,
     "floor_concrete": floor_concrete,
+    "floor_marble": floor_marble,
+    "floor_stone": floor_stone,
+    "floor_parquet": floor_parquet,
     "wood": wood,
     "fabric": fabric,
+    "metal": metal,
+    "stone": stone,
 }
 
 

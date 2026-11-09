@@ -6,8 +6,8 @@
         desc: "Keeps food cold and secrets colder.",
         parts: [
             (shape: Box, size: (0.8, 1.8, 0.7), at: (0.5, 0.9, 0.4), color: (0.92, 0.93, 0.95), rough: 0.3),
-            (shape: Box, size: (0.04, 0.5, 0.04), at: (0.82, 1.2, 0.77), color: (0.6, 0.6, 0.62), metal: 1.0, rough: 0.2),
-            (shape: Box, size: (0.04, 0.3, 0.04), at: (0.82, 0.5, 0.77), color: (0.6, 0.6, 0.62), metal: 1.0, rough: 0.2),
+            (shape: Box, size: (0.04, 0.5, 0.04), at: (0.82, 1.2, 0.77), color: (0.6, 0.6, 0.62), material: "metal", metal: 1.0, rough: 0.2),
+            (shape: Box, size: (0.04, 0.3, 0.04), at: (0.82, 0.5, 0.77), color: (0.6, 0.6, 0.62), material: "metal", metal: 1.0, rough: 0.2),
             (shape: Box, size: (0.79, 0.01, 0.01), at: (0.5, 0.75, 0.755), color: (0.3, 0.3, 0.32)),
         ],
         slots: [(stand: (0.5, 1.5), use_at: (0.5, 0.0, 1.3), facing: 180.0)],
@@ -64,7 +64,7 @@
         id: "counter_basic", name: "Countertop of Moderate Ambition", category: Surfaces, price: 150, footprint: (1, 1),
         parts: [
             (shape: Box, size: (1.0, 0.88, 0.65), at: (0.5, 0.44, 0.33), color: (0.66, 0.52, 0.39), material: "wood", rough: 0.7),
-            (shape: Box, size: (1.0, 0.04, 0.68), at: (0.5, 0.9, 0.34), color: (0.82, 0.8, 0.76), rough: 0.25),
+            (shape: Box, size: (1.0, 0.04, 0.68), at: (0.5, 0.9, 0.34), color: (0.82, 0.8, 0.76), material: "stone", rough: 0.25),
         ],
         beauty: 0.5,
     ),
@@ -72,9 +72,9 @@
         id: "kitchen_sink", name: "Gurgle Kitchen Sink", category: Kitchen, price: 250, footprint: (1, 1),
         parts: [
             (shape: Box, size: (1.0, 0.88, 0.65), at: (0.5, 0.44, 0.33), color: (0.66, 0.52, 0.39), material: "wood", rough: 0.7),
-            (shape: Box, size: (1.0, 0.04, 0.68), at: (0.5, 0.9, 0.34), color: (0.82, 0.8, 0.76), rough: 0.25),
-            (shape: Box, size: (0.5, 0.03, 0.4), at: (0.5, 0.925, 0.35), color: (0.7, 0.72, 0.75), metal: 1.0, rough: 0.2),
-            (shape: Cylinder, size: (0.04, 0.3, 0.04), at: (0.5, 1.05, 0.12), color: (0.7, 0.72, 0.75), metal: 1.0, rough: 0.2),
+            (shape: Box, size: (1.0, 0.04, 0.68), at: (0.5, 0.9, 0.34), color: (0.82, 0.8, 0.76), material: "stone", rough: 0.25),
+            (shape: Box, size: (0.5, 0.03, 0.4), at: (0.5, 0.925, 0.35), color: (0.7, 0.72, 0.75), material: "metal", metal: 1.0, rough: 0.2),
+            (shape: Cylinder, size: (0.04, 0.3, 0.04), at: (0.5, 1.05, 0.12), color: (0.7, 0.72, 0.75), material: "metal", metal: 1.0, rough: 0.2),
         ],
         slots: [(stand: (0.5, 1.5), use_at: (0.5, 0.0, 1.2), facing: 180.0)],
         interactions: [
@@ -110,7 +110,7 @@
             (shape: Box, size: (0.95, 0.06, 0.95), at: (0.5, 0.03, 0.5), color: (0.9, 0.9, 0.92), rough: 0.2),
             (shape: Box, size: (0.03, 2.0, 0.95), at: (0.03, 1.0, 0.5), color: (0.75, 0.85, 0.9), rough: 0.05),
             (shape: Box, size: (0.95, 2.0, 0.03), at: (0.5, 1.0, 0.03), color: (0.85, 0.87, 0.9), rough: 0.3),
-            (shape: Cylinder, size: (0.15, 0.03, 0.15), at: (0.5, 1.95, 0.2), color: (0.7, 0.7, 0.72), metal: 1.0, rough: 0.2),
+            (shape: Cylinder, size: (0.15, 0.03, 0.15), at: (0.5, 1.95, 0.2), color: (0.7, 0.7, 0.72), material: "metal", metal: 1.0, rough: 0.2),
         ],
         slots: [(stand: (0.5, 1.5), use_at: (0.5, 0.0, 0.5), facing: 180.0)],
         interactions: [
@@ -387,8 +387,8 @@
     (
         id: "floor_lamp", name: "Tall Lamp With Opinions", category: Lighting, price: 90, footprint: (1, 1),
         parts: [
-            (shape: Cylinder, size: (0.3, 0.03, 0.3), at: (0.5, 0.015, 0.5), color: (0.2, 0.2, 0.2), metal: 1.0, rough: 0.3),
-            (shape: Cylinder, size: (0.03, 1.5, 0.03), at: (0.5, 0.75, 0.5), color: (0.2, 0.2, 0.2), metal: 1.0, rough: 0.3),
+            (shape: Cylinder, size: (0.3, 0.03, 0.3), at: (0.5, 0.015, 0.5), color: (0.2, 0.2, 0.2), material: "metal", metal: 1.0, rough: 0.3),
+            (shape: Cylinder, size: (0.03, 1.5, 0.03), at: (0.5, 0.75, 0.5), color: (0.2, 0.2, 0.2), material: "metal", metal: 1.0, rough: 0.3),
             (shape: Cylinder, size: (0.4, 0.3, 0.4), at: (0.5, 1.55, 0.5), color: (1.0, 1.0, 0.86), material: "fabric", rough: 0.9, emissive: 0.8),
         ],
         beauty: 1.0, light: (4.0, (1.0, 0.85, 0.65)),
@@ -396,8 +396,8 @@
     (
         id: "trash_can", name: "Can of Regret", category: Misc, price: 30, footprint: (1, 1),
         parts: [
-            (shape: Cylinder, size: (0.4, 0.6, 0.4), at: (0.5, 0.3, 0.5), color: (0.45, 0.47, 0.5), metal: 0.8, rough: 0.4),
-            (shape: Cylinder, size: (0.43, 0.04, 0.43), at: (0.5, 0.62, 0.5), color: (0.4, 0.42, 0.45), metal: 0.8, rough: 0.4),
+            (shape: Cylinder, size: (0.4, 0.6, 0.4), at: (0.5, 0.3, 0.5), color: (0.45, 0.47, 0.5), material: "metal", metal: 0.8, rough: 0.4),
+            (shape: Cylinder, size: (0.43, 0.04, 0.43), at: (0.5, 0.62, 0.5), color: (0.4, 0.42, 0.45), material: "metal", metal: 0.8, rough: 0.4),
         ],
         slots: [(stand: (0.5, 1.5), use_at: (0.5, 0.0, 1.0), facing: 180.0)],
         interactions: [
@@ -572,7 +572,7 @@
             (shape: Box, size: (0.08, 0.42, 0.08), at: (0.5, 0.21, 1.45), color: (0.2, 0.2, 0.22), metal: 0.6),
             (shape: Box, size: (0.06, 1.0, 0.06), at: (0.12, 0.5, 0.3), color: (0.2, 0.2, 0.22), metal: 0.6),
             (shape: Box, size: (0.06, 1.0, 0.06), at: (0.88, 0.5, 0.3), color: (0.2, 0.2, 0.22), metal: 0.6),
-            (shape: Cylinder, size: (1.2, 0.03, 0.03), at: (0.5, 0.95, 0.3), color: (0.7, 0.7, 0.72), metal: 1.0, rough: 0.3),
+            (shape: Cylinder, size: (1.2, 0.03, 0.03), at: (0.5, 0.95, 0.3), color: (0.7, 0.7, 0.72), material: "metal", metal: 1.0, rough: 0.3),
             (shape: Cylinder, size: (0.05, 0.3, 0.3), at: (0.02, 0.95, 0.3), color: (0.1, 0.1, 0.1)),
             (shape: Cylinder, size: (0.05, 0.3, 0.3), at: (0.98, 0.95, 0.3), color: (0.1, 0.1, 0.1)),
         ],
@@ -592,7 +592,7 @@
         parts: [
             (shape: Box, size: (0.95, 0.9, 0.6), at: (0.5, 0.45, 0.35), color: (0.36, 0.25, 0.18), material: "wood", rough: 0.6),
             (shape: Box, size: (1.0, 0.04, 0.65), at: (0.5, 0.92, 0.35), color: (0.85, 0.85, 0.82), rough: 0.3),
-            (shape: Box, size: (0.5, 0.4, 0.35), at: (0.5, 1.14, 0.25), color: (0.75, 0.75, 0.78), metal: 1.0, rough: 0.25),
+            (shape: Box, size: (0.5, 0.4, 0.35), at: (0.5, 1.14, 0.25), color: (0.75, 0.75, 0.78), material: "metal", metal: 1.0, rough: 0.25),
             (shape: Cylinder, size: (0.07, 0.08, 0.07), at: (0.4, 0.98, 0.5), color: (0.95, 0.93, 0.88)),
             (shape: Cylinder, size: (0.07, 0.08, 0.07), at: (0.6, 0.98, 0.5), color: (0.95, 0.93, 0.88)),
         ],

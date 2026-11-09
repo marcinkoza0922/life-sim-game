@@ -105,6 +105,9 @@ pub fn wall_color(style: u16) -> [f32; 3] {
         2 => [0.72, 0.84, 0.88],
         3 => [0.75, 0.52, 0.45],
         4 => [0.55, 0.68, 0.55],
+        5 => [0.95, 0.96, 0.96],
+        6 => [0.90, 0.74, 0.72],
+        7 => [0.78, 0.86, 0.90],
         _ => [0.8, 0.8, 0.8],
     }
 }
@@ -122,6 +125,9 @@ pub fn floor_color(style: u16, x: i32, z: i32) -> [f32; 3] {
         }
         2 => [0.47, 0.52, 0.62],
         3 => [0.35, 0.33, 0.32],
+        4 => [0.88, 0.88, 0.87],
+        5 => [0.64, 0.58, 0.48],
+        6 => [0.55, 0.38, 0.21],
         _ => [0.6, 0.6, 0.6],
     }
 }
@@ -130,6 +136,9 @@ pub fn floor_color(style: u16, x: i32, z: i32) -> [f32; 3] {
 pub fn wall_surface(r: &Builtins, style: u16) -> ([f32; 3], Option<MaterialId>) {
     let (name, tint) = match style {
         3 => ("wall_brick", [1.0; 3]),
+        5 => ("wall_tile", wall_color(5)),
+        6 => ("wall_wallpaper", wall_color(6)),
+        7 => ("wall_panel", wall_color(7)),
         s => ("wall_plaster", wall_color(s)),
     };
     match r.material(name) {
@@ -144,6 +153,9 @@ pub fn floor_surface(r: &Builtins, style: u16, x: i32, z: i32) -> ([f32; 3], Opt
         0 => "floor_wood",
         1 => "floor_tile",
         2 => "floor_carpet",
+        4 => "floor_marble",
+        5 => "floor_stone",
+        6 => "floor_parquet",
         _ => "floor_concrete",
     };
     match r.material(name) {

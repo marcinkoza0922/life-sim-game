@@ -1073,15 +1073,18 @@ fn build_panel(ui: &mut Ui, g: &mut Game) {
             });
             ui.section("Wall covering", SKY);
             ui.wrap(|ui| {
-                for s in 0..5u16 {
-                    if ui.swatch(rgb(crate::scene::wall_color(s)), wall_style == s, 26.0).clicked {
+                let names = ["Cream plaster", "White plaster", "Sky plaster", "Brick", "Sage plaster", "Subway tile", "Striped wallpaper", "Beadboard"];
+                for (s, name) in (0u16..).zip(names) {
+                    let r = ui.swatch(rgb(crate::scene::wall_color(s)), wall_style == s, 26.0);
+                    ui.tooltip(&r, name);
+                    if r.clicked {
                         wall_style = s;
                     }
                 }
             });
             ui.section("Floor", SUN);
             ui.wrap(|ui| {
-                for (s, name) in [(0u16, "Wood"), (1, "Tile"), (2, "Carpet"), (3, "Concrete")] {
+                for (s, name) in [(0u16, "Wood"), (6, "Parquet"), (1, "Tile"), (4, "Marble"), (2, "Carpet"), (3, "Concrete"), (5, "Stone")] {
                     if ui.chip(name, floor_style == s).clicked {
                         floor_style = s;
                     }
