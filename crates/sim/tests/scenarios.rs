@@ -117,7 +117,7 @@ fn starving_alone_ends_badly() {
     sim.run_days(2);
     let log = sim.world.res::<SimLog>();
     let died = sim.world.has::<Dead>(p);
-    let haggled = log.contains("rock-paper-scissors");
+    let haggled = log.contains("The Reaper came for");
     assert!(died || haggled, "no food on the lot: starvation (or a Reaper bargain) must happen");
     if died {
         assert!(log.count(LogKind::Death) >= 1);

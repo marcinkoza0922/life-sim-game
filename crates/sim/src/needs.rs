@@ -277,6 +277,18 @@ pub fn consequences(world: &mut World) {
             n.starving_minutes = 0;
         }
 
+        // the Cheerful can have too much fun: at full Fun, still having more, a laughing fit may take them
+        if !small && tick.is_multiple_of(10) && laughing_too_hard(world, e) && world.res_mut::<crate::rng::SimRng>().chance(LAUGHING_FIT_CHANCE) {
+            crate::life::mishap(
+                world,
+                e,
+                "{name} is laughing so hard they can't breathe. Nobody is sure what was funny.",
+                Some("laughing_fit"),
+                LAUGHING_FIT_FATAL,
+                "laughter",
+            );
+        }
+
         // babies cry when something is wrong, and crying wakes the grown-ups
         if small && tick.is_multiple_of(20) {
             let (low_need, v) = world.get::<Needs>(e).unwrap().lowest_core();
@@ -286,6 +298,20 @@ pub fn consequences(world: &mut World) {
             }
         }
     }
+}
+
+/// Chance per 10 minutes of overflowing Fun that a Cheerful peon has a laughing fit, and that
+/// the fit is fatal. Tuned so a laughing death is a rare punchline, not a hazard of the trait.
+const LAUGHING_FIT_CHANCE: f32 = 0.006;
+const LAUGHING_FIT_FATAL: f32 = 0.01;
+
+/// Cheerful, Fun maxed out, and doing something that is still adding Fun.
+fn laughing_too_hard(world: &World, e: Entity) -> bool {
+    if !world.get::<Personality>(e).is_some_and(|p| p.has("cheerful")) || world.get::<Needs>(e).is_none_or(|n| n.get(Need::Fun) < 99.0) {
+        return false;
+    }
+    let data = data(world);
+    world.get::<ActionQueue>(e).is_some_and(|q| actions::active_rates(world, &data, &q)[Need::Fun.idx()] > 0.0)
 }
 
 fn dirty_room_of(world: &World, e: Entity, amount: f32) {

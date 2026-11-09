@@ -272,7 +272,9 @@ fn prank(world: &mut World, ghost: Entity) {
         }
     }
     let Some((_, oe)) = best else { return };
-    let breaks = world.res_mut::<SimRng>().chance(0.08);
+    // only things someone could fix (a broken bed would be broken for good)
+    let fixable = { let o = world.get::<ObjectInstance>(oe).unwrap(); data.object(o.def).interactions.iter().any(|i| i.repairs) };
+    let breaks = fixable && world.res_mut::<SimRng>().chance(0.08);
     let oname = {
         let mut o = world.get_mut::<ObjectInstance>(oe).unwrap();
         o.dirt = (o.dirt + 0.3).min(1.0);

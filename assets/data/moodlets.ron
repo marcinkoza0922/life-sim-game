@@ -38,5 +38,8 @@
     (id: "bad_report_card", name: "Bad Report Card", value: -12.0, hours: 12.0, desc: "Considering forging a signature."),
     (id: "expecting", name: "Expecting!", value: 15.0, hours: 24.0, desc: "Already picked out tiny shoes."),
     (id: "new_baby", name: "New Baby!", value: 25.0, hours: 48.0, desc: "Sleep is a distant memory. Worth it."),
+    (id: "singed", name: "Singed", value: -15.0, hours: 8.0, desc: "Smells faintly of toast. Hair now points upward on principle."),
+    (id: "flattened", name: "Flattened by Snacks", value: -12.0, hours: 6.0, desc: "Pinned under a vending machine until someone noticed. Ate the evidence."),
+    (id: "laughing_fit", name: "Laughing Fit", value: 10.0, hours: 3.0, desc: "Can't breathe. Still laughing. Somebody help. Don't stop."),
     (id: "paid_respects", name: "Paid Respects", value: 6.0, hours: 6.0, desc: "Said what needed saying."),
 ]

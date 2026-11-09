@@ -413,7 +413,13 @@ fn lattes_at_the_cafe_and_reps_at_the_gym() {
     run_until_hour(&mut sim, 10);
     sim.world.res_mut::<sim::time::Settings>().free_will = sim::time::FreeWill::Off;
     let adult = members(&sim).into_iter().find(|e| sim.world.get::<Age>(*e).unwrap().stage.is_adult()).unwrap();
-    for (place, obj, inter) in [("The Grumpy Bean", "espresso_bar", "latte"), ("Sweat Equity Gym", "treadmill", "run"), ("Sweat Equity Gym", "weight_bench", "lift")] {
+    for (place, obj, inter) in [
+        ("The Grumpy Bean", "espresso_bar", "latte"),
+        ("The Grumpy Bean", "vending_machine", "buy"),
+        ("Sweat Equity Gym", "treadmill", "run"),
+        ("Sweat Equity Gym", "weight_bench", "lift"),
+        ("Sweat Equity Gym", "vending_machine", "shake"),
+    ] {
         let lot = community(&sim, place);
         if hood::active_lot(&sim.world) != lot {
             if !hood::at_home(&sim.world) {
@@ -450,6 +456,9 @@ fn lattes_at_the_cafe_and_reps_at_the_gym() {
         assert!(did, "{obj}: {inter} gets done");
         if obj == "espresso_bar" {
             assert_eq!(sim.world.res::<Household>().funds, funds - 6, "a latte costs $6");
+        }
+        if inter == "buy" {
+            assert_eq!(sim.world.res::<Household>().funds, funds - 2, "a snack costs $2");
         }
     }
 }

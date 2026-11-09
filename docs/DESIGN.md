@@ -479,3 +479,13 @@ Added since:
   (off-lot meanwhile) finds it when the lot is next live. A visitor who dies on someone else's lot goes
   home to be buried, and the household dying while out no longer gets a grave at the park.
   `simctl hood` lists graves per lot.
+
+- **Accidents:** `Outcome::Accident` (chance cut by up to 80% by a skill, doubled for the Clumsy; logs a line,
+  applies a moodlet, fatal with probability `fatal`) and `CareerEffect::Accident`. Repairing live wiring
+  (stove, computer, treadmill) can shock (Singed; rarely **electrocution**); shaking the **Snackatron** vending
+  machine (café, gym, buyable) can tip it over (Flattened; rarely fatal); a Cheerful peon at full Fun still having
+  fun can get a laughing fit (rarely **laughter**); a Supervillain who monologues and fails can die of
+  **hubris**. Deaths at work end the shift and drop pending decisions. The Reaper can be talked round
+  (Charisma × 5%) or beaten at rock-paper-scissors (10%), not for old age, and not again within 24 h.
+  Everything that can break now has a Repair, and ghosts only break things that can be fixed. Over 30
+  seeds × 40 days, accidents caused one death; old age caused the rest.

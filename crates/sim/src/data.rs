@@ -278,6 +278,19 @@ pub enum Outcome {
     Log { chance: f32, text: String },
     Dirty { amount: f32 },
     Break { chance: f32 },
+    /// A mishap: with `chance` (scaled down by `skill`, doubled for the Clumsy) `text` is logged and
+    /// `moodlet` applied; it is fatal (`cause` of death, Reaper permitting) with probability `fatal`.
+    Accident {
+        chance: f32,
+        cause: String,
+        text: String,
+        #[serde(default)]
+        moodlet: Option<String>,
+        #[serde(default)]
+        fatal: f32,
+        #[serde(default)]
+        skill: Option<Skill>,
+    },
 }
 
 fn yes() -> bool {
@@ -560,6 +573,8 @@ pub enum CareerEffect {
     Log(String),
     /// Fired (or arrested) on the spot.
     Fired,
+    /// Dies at work with this probability, of the given cause (the Reaper may still be talked round).
+    Accident(f32, String),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -692,7 +707,12 @@ impl GameData {
             }
             for i in &o.interactions {
                 for out in &i.outcomes {
-                    if let Outcome::Moodlet { id, .. } = out
+                    let id = match out {
+                        Outcome::Moodlet { id, .. } => Some(id),
+                        Outcome::Accident { moodlet, .. } => moodlet.as_ref(),
+                        _ => None,
+                    };
+                    if let Some(id) = id
                         && !moodlet(id) {
                             errs.push(format!("{}.{}: unknown moodlet {id}", o.id, i.id));
                         }
@@ -712,6 +732,9 @@ impl GameData {
                 if o.slots.is_empty() {
                     errs.push(format!("{}: has interactions but no slots", o.id));
                 }
+            }
+            if o.break_chance > 0.0 && !o.interactions.iter().any(|i| i.repairs) {
+                errs.push(format!("{}: can break but has no repair interaction", o.id));
             }
         }
         for t in &self.traits {

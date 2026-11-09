@@ -1027,6 +1027,12 @@ fn finish(world: &World, e: Entity, data: &GameData, cur: &CurrentAction, comple
                             world.get_mut::<ObjectInstance>(*obj).unwrap().broken = true;
                         }
                     }
+                    Outcome::Accident { chance, cause, text, moodlet, fatal, skill } => {
+                        let p = crate::life::accident_chance(world, e, *chance, *skill);
+                        if world.res_mut::<SimRng>().chance(p) {
+                            crate::life::mishap(world, e, text, moodlet.as_deref(), *fatal, cause);
+                        }
+                    }
                 }
             }
             let clumsy = world.get::<Personality>(e).is_some_and(|p| p.has("clumsy"));
