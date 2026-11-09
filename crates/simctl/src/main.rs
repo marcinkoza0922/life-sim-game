@@ -11,7 +11,8 @@
 //!               [--target X,Z] [--mode cutaway|up|down] [--size WxH] [--rooms] [--greybox] [--out FILE]
 //!     Runs the starter household for M minutes and renders the lot offscreen to a PNG.
 //! simctl lineup [--pose stand|walk|sit|lie|use|dance|exercise] [--time T] [--yaw D] [--pitch D]
-//!               [--anim CLIP] [--prop ID] [--demeanor normal|sad|proud|nervous] [--dist M] [--size WxH] [--out FILE]
+//!               [--anim CLIP] [--prop ID] [--demeanor normal|sad|proud|nervous] [--dist M] [--target X,Z]
+//!               [--size WxH] [--out FILE]
 //!     Renders every life stage's rigged body side by side (slim, average and heavy builds, all
 //!     hair styles) in one pose (or interaction clip, holding a prop) at clip time T seconds.
 //! ```
@@ -326,7 +327,8 @@ fn lineup(ra: &RenderArgs) {
     let spacing = 1.2;
     let n = stages.len() as f32;
     let (w, h) = ra.size;
-    let target = Vec3::new(0.0, 0.7, 0.0);
+    // --target X,Z looks at that spot (e.g. -3.6,0 for the infant at the left end of the row)
+    let target = ra.target.map_or(Vec3::new(0.0, 0.7, 0.0), |(x, z)| Vec3::new(x, 0.3, z));
     // `render`'s camera defaults (yaw 35, pitch 45, dist 30) mean "not given": frame the whole row
     let yaw = if ra.yaw == 35.0 { 0.0 } else { ra.yaw };
     let pitch = if ra.pitch == 45.0 { 12.0 } else { ra.pitch };
@@ -338,7 +340,7 @@ fn lineup(ra: &RenderArgs) {
     for (i, stage) in stages.iter().enumerate() {
         let x = (i as f32 - (n - 1.0) * 0.5) * spacing;
         let [skin, hair, shirt, pants] = looks[i % looks.len()];
-        let app = Appearance { skin, hair, shirt, pants, height: 1.0, build: [0.5, 0.2, 0.5, 0.0, 0.5, 1.0, 0.6][i], hair_style: (i % 4) as u8 };
+        let app = Appearance { skin, hair, shirt, pants, height: 1.0, build: [0.5, 0.2, 0.5, 0.0, 0.5, 1.0, 0.6][i], hair_style: (i % 4) as u8, eyes: sim::genetics::EYE_COLORS[i % sim::genetics::EYE_COLORS.len()] };
         let y = if pose == Pose::Sit && *stage != LifeStage::Infant { 0.45 } else { 0.0 };
         if pose == Pose::Sit && *stage != LifeStage::Infant {
             frame.draws.push(hearth_render::Draw::new(r.builtins.cube, Mat4::from_scale_rotation_translation(Vec3::new(0.5, 0.45, 0.5), glam::Quat::IDENTITY, Vec3::new(x, 0.225, -0.05)), [0.55, 0.4, 0.3]));

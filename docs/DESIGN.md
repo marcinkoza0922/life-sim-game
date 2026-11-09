@@ -421,7 +421,24 @@ Added since:
   Autonomy and the pie menu count a free reachable seat as a free spot. `simctl render --order
   OBJECT:INTERACTION` stages the household doing something (e.g. `tv_basic:watch`) before rendering.
 
-**Known gaps / next up:** eye colour from genes
-(pupils are a fixed colour); infant-specific interaction clips; playable multi-lot
-neighborhoods (switching households, community lots) — townies are the first step; multi-tile object
-picking polish; hygiene still occasionally bottoms out in long headless runs (warning, not a failure).
+- **Eye colour:** `Appearance::eyes` is expressed from `Genes::eyes` (old saves default to brown); the
+  models have a tinted `iris` material (palette slot 6) under a smaller dark pupil.
+- **Infant clips:** infants get their own sitting-base versions of the clips they play: `sleep` (crib,
+  arms up by the head), `play_floor` (toys), and as the target of baby care `laugh` (coo, peekaboo),
+  `drink` (bottle), `drowsy` (rocked), `kick_back` (diaper change; toddlers have it too), plus
+  `idle_sad` as crying. The clip test now checks each body against the clips its stage can be asked for
+  (`GameData::anims_for`). `simctl lineup --target -3.6,0 --dist 1.6` frames the infant.
+
+- **Cleaning & hygiene balance:** every object that gets dirty has a cleaning chore (Scrub Stove/Shower/Tub,
+  Clean Out Fridge, Dust, Wipe Down; Do the Dishes cleans the sink and is only offered when it's dirty), checked
+  by a data test. Before, kitchen dirt could never be cleaned, rooms sat at Environment 0 and peons washed
+  dishes endlessly instead of showering. Hygiene also decays at 40% while asleep. `simctl check` over 20 seeds ×
+  20 days now shows Hygiene hitting zero only from the odd bedtime accident.
+
+- **Picking:** objects are hit-tested per part (each part's box, oriented like the drawn part, at least
+  8 cm thick, on top of terrain), so empty space under a table or beside a headboard no longer grabs the
+  click. Peons are hit where the body is: lower when seated, along the body when lying (selecting someone
+  asleep in a double bed works). In Live mode rugs are floor, so clicking one means "Go Here".
+
+**Known gaps / next up:** playable multi-lot
+neighborhoods (switching households, community lots) — townies are the first step.

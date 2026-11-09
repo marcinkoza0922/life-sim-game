@@ -784,6 +784,17 @@ impl GameData {
         let socials = self.socials.iter().flat_map(|s| [s.anim.as_deref(), s.target_anim.as_deref()].into_iter().flatten());
         objs.chain(socials).collect()
     }
+    /// The body clips a peon at `stage` can be asked to play: interactions it may use (and their
+    /// seated variants), socials it may start, and socials' target clips when it may be the target.
+    pub fn anims_for(&self, stage: LifeStage) -> std::collections::BTreeSet<&str> {
+        let objs = self.objects.iter().flat_map(|o| o.interactions.iter()).filter(|i| i.allowed_stage(stage)).flat_map(|i| {
+            [i.anim.as_deref(), i.seat.as_ref().and_then(|s| s.anim.as_deref())].into_iter().flatten()
+        });
+        let socials = self.socials.iter().flat_map(|s| {
+            [s.anim.as_deref().filter(|_| s.initiator_ok(stage)), s.target_anim.as_deref().filter(|_| s.target_ok(stage))].into_iter().flatten()
+        });
+        objs.chain(socials).collect()
+    }
 }
 
 #[cfg(test)]
@@ -795,5 +806,18 @@ mod tests {
         assert!(d.objects.len() >= 15);
         assert!(d.careers.len() >= 10);
         assert!(d.traits.len() >= 12);
+    }
+
+    /// Dirt with no way to clean it piles up until the room's Environment is stuck at zero.
+    #[test]
+    fn every_object_that_gets_dirty_can_be_cleaned() {
+        let d = GameData::embedded();
+        let stuck: Vec<&str> = d
+            .objects
+            .iter()
+            .filter(|o| o.dirt_per_use > 0.0 && !o.interactions.iter().any(|i| i.cleans))
+            .map(|o| o.id.as_str())
+            .collect();
+        assert!(stuck.is_empty(), "objects that get dirty but have no cleaning interaction: {stuck:?}");
     }
 }
