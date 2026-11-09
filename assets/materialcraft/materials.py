@@ -152,7 +152,111 @@ def floor_wood():
     return albedo, height, (ao, rough, c(0.0)), 2.5
 
 
-MATERIALS = {"wall_brick": wall_brick, "wall_plaster": wall_plaster, "floor_wood": floor_wood}
+def floor_tile():
+    """Glazed ceramic: 4 × 4 tiles per repeat (1 m: 25 cm tiles), alternating two greys like the
+    flat checker, with grey grout and a soft bevel."""
+    n = 4
+    p = pos()
+    px, py = sx(p), sy(p)
+    X, Y = px * n, py * n
+    fx, fy = frac(X), frac(Y)
+    ix, iy = floor(X), floor(Y)
+    d = mn(mn(fx, 1.0 - fx), mn(fy, 1.0 - fy)) * (SIZE / n)  # pixels to the tile's edge
+    face = sstep(1.5, 2.8, d)
+    bevel = sstep(1.5, 7.0, d)
+    checker = mod(ix + iy, 2.0)
+    r1 = cellhash(ix, iy, 1.0)
+    mottle = fbm(px, py, 8, 8, 3, 61.0)
+    g = grain(px, py, 63.0)
+    tile = 0.80 + 0.08 * checker + 0.03 * (r1 - 0.5) + 0.04 * (mottle - 0.5)
+    grout = 0.50 + 0.08 * mottle + 0.04 * g
+    tone = lerp(grout, tile, face)
+    albedo = Gradient(tone, [(0.0, (0.0, 0.0, 0.0)), (1.0, (1.0, 0.995, 0.97))])
+    height = 0.1 + 0.03 * g * (1.0 - face) + bevel * (0.8 + 0.01 * mottle)
+    rough = lerp(0.92, 0.16 + 0.08 * mottle, face)
+    ao = lerp(0.55, 1.0, sstep(0.0, 5.0, d))
+    return albedo, height, (ao, rough, c(0.0)), 3.0
+
+
+def floor_carpet():
+    """Dusty-blue loop pile: fine fibre noise over tufts, with soft wear patches (1 m repeat)."""
+    p = pos()
+    px, py = sx(p), sy(p)
+    pile = fbm(px, py, 128, 128, 2, 71.0)
+    tuft = vnoise(px, py, 48, 48, 77.0)
+    wear = fbm(px, py, 4, 4, 2, 79.0)
+    g = grain(px, py, 73.0)
+    h = 0.4 * pile + 0.3 * tuft + 0.3 * g
+    tone = clamp01(h * (0.85 + 0.3 * wear))
+    albedo = Gradient(tone, [(0.0, (0.22, 0.25, 0.33)), (0.5, (0.43, 0.48, 0.58)), (1.0, (0.58, 0.63, 0.73))])
+    ao = 0.7 + 0.3 * h
+    return albedo, h, (ao, c(0.96), c(0.0)), 2.0
+
+
+def floor_concrete():
+    """Sealed concrete slab: cloudy trowel blotches, light aggregate flecks and tiny pits (2 m repeat)."""
+    p = pos()
+    px, py = sx(p), sy(p)
+    blot = fbm(px, py, 6, 6, 4, 81.0)
+    agg = sstep(0.82, 0.95, vnoise(px, py, 192, 192, 87.0))
+    pits = sstep(0.985, 1.0, grain(px, py, 89.0))
+    g = grain(px, py, 83.0)
+    tone = clamp01(0.45 + 0.3 * (blot - 0.5) + 0.12 * agg + 0.06 * g - 0.35 * pits)
+    albedo = Gradient(tone, [(0.0, (0.16, 0.15, 0.15)), (0.5, (0.35, 0.33, 0.32)), (1.0, (0.52, 0.50, 0.48))])
+    height = 0.5 + 0.15 * blot + 0.08 * agg + 0.04 * g - 0.4 * pits
+    rough = 0.58 + 0.18 * blot + 0.08 * g
+    ao = 1.0 - 0.45 * pits
+    return albedo, height, (ao, rough, c(0.0)), 1.5
+
+
+def wood():
+    """Furniture wood: continuous grain along image x, nearly neutral because parts tint it with
+    their colour (1 m repeat). Kept light so tinted parts land close to their flat colour."""
+    p = pos()
+    px, py = sx(p), sy(p)
+    streak = fbm(px, py, 2, 32, 3, 91.0)
+    fine = fbm(px, py, 4, 192, 2, 93.0)
+    figure = sin((py * 48.0 + streak * 1.2) * (2.0 * math.pi)) * 0.5 + 0.5
+    tone = clamp01(0.4 * sstep(0.2, 0.8, streak) + 0.25 * figure * figure + 0.35 * fine)
+    albedo = Gradient(tone, [(0.0, (0.66, 0.62, 0.58)), (0.5, (0.84, 0.81, 0.77)), (1.0, (0.97, 0.95, 0.92))])
+    height = 0.5 + 0.12 * streak + 0.1 * fine - 0.08 * (1.0 - figure)
+    rough = 0.48 + 0.14 * fine + 0.12 * (1.0 - streak)
+    return albedo, height, (c(1.0), rough, c(0.0)), 0.8
+
+
+def fabric():
+    """Upholstery plain weave, 64 × 64 threads per repeat (0.5 m: ~8 mm threads), neutral so parts
+    tint it, with a per-thread shade so it reads as woven yarn."""
+    n = 64
+    p = pos()
+    px, py = sx(p), sy(p)
+    X, Y = px * n, py * n
+    fx, fy = frac(X), frac(Y)
+    ix, iy = floor(X), floor(Y)
+    over = mod(ix + iy, 2.0)  # 1: the warp (running along y) is on top in this cell
+    ax, ay = sin(fx * math.pi), sin(fy * math.pi)  # cross-section bumps
+    warp = ax * (0.55 + 0.45 * ay)
+    weft = ay * (0.55 + 0.45 * ax)
+    h = lerp(weft, warp, over)
+    shade = lerp(hash1(iy, 1.0, 101.0), hash1(ix, 2.0, 103.0), over)
+    g = grain(px, py, 107.0)
+    tone = clamp01(0.25 + 0.55 * h + 0.12 * shade + 0.08 * g)
+    albedo = Gradient(tone, [(0.0, (0.55, 0.55, 0.55)), (1.0, (1.0, 1.0, 1.0))])
+    height = 0.8 * h + 0.1 * g
+    ao = 0.55 + 0.45 * h
+    return albedo, height, (ao, c(0.93), c(0.0)), 2.5
+
+
+MATERIALS = {
+    "wall_brick": wall_brick,
+    "wall_plaster": wall_plaster,
+    "floor_wood": floor_wood,
+    "floor_tile": floor_tile,
+    "floor_carpet": floor_carpet,
+    "floor_concrete": floor_concrete,
+    "wood": wood,
+    "fabric": fabric,
+}
 
 
 # ------------------------------------------------------------------------------------------ building
