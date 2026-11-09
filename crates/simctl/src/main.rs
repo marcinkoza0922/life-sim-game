@@ -11,9 +11,9 @@
 //!               [--target X,Z] [--mode cutaway|up|down] [--size WxH] [--rooms] [--greybox] [--out FILE]
 //!     Runs the starter household for M minutes and renders the lot offscreen to a PNG.
 //! simctl lineup [--pose stand|walk|sit|lie|use|dance|exercise] [--time T] [--yaw D] [--pitch D]
-//!               [--dist M] [--size WxH] [--out FILE]
+//!               [--anim CLIP] [--prop ID] [--demeanor normal|sad|proud|nervous] [--dist M] [--size WxH] [--out FILE]
 //!     Renders every life stage's rigged body side by side (slim, average and heavy builds, all
-//!     hair styles) in one pose at clip time T seconds.
+//!     hair styles) in one pose (or interaction clip, holding a prop) at clip time T seconds.
 //! ```
 
 use std::collections::BTreeMap;
@@ -54,11 +54,17 @@ struct RenderArgs {
     /// `lineup`: posture to show and clip time.
     pose: String,
     time: f32,
+    /// `lineup`: interaction clip, held prop and demeanor (normal|sad|proud|nervous).
+    anim: Option<String>,
+    prop: Option<String>,
+    demeanor: String,
+    /// `render`: order everyone at home to do OBJECT:INTERACTION (ids) and render once they are.
+    order: Option<String>,
 }
 
 fn parse() -> Args {
     let mut a = Args { cmd: "run".into(), days: 3, seed: 1, seeds: 8, echo: false, log: None, manual: false, trace: None,
-        render: RenderArgs { minutes: 60, hour: None, level: 0, yaw: 35.0, pitch: 45.0, dist: 30.0, target: None, mode: "cutaway".into(), size: (1600, 1000), rooms: false, greybox: false, out: "out/render.png".into(), pose: "stand".into(), time: 0.0 } };
+        render: RenderArgs { minutes: 60, hour: None, level: 0, yaw: 35.0, pitch: 45.0, dist: 30.0, target: None, mode: "cutaway".into(), size: (1600, 1000), rooms: false, greybox: false, out: "out/render.png".into(), pose: "stand".into(), time: 0.0, anim: None, prop: None, demeanor: "normal".into(), order: None } };
     let mut it = std::env::args().skip(1);
     if let Some(c) = it.next() {
         a.cmd = c;
@@ -91,7 +97,11 @@ fn parse() -> Args {
             "--greybox" => a.render.greybox = true,
             "--pose" => a.render.pose = it.next().unwrap(),
             "--time" => a.render.time = it.next().unwrap().parse().unwrap(),
+            "--anim" => a.render.anim = it.next(),
+            "--prop" => a.render.prop = it.next(),
+            "--demeanor" => a.render.demeanor = it.next().unwrap(),
             "--out" => a.render.out = it.next().unwrap(),
+            "--order" => a.render.order = it.next(),
             other => {
                 eprintln!("unknown arg {other}");
                 std::process::exit(2);
@@ -296,7 +306,15 @@ fn lineup(ra: &RenderArgs) {
         "exercise" => (Pose::Exercise, false),
         _ => (Pose::Stand, false),
     };
-    let posture = Posture { pose, walking };
+    let posture = Posture { pose, walking, anim: ra.anim.clone(), prop: ra.prop.clone() };
+    let demeanor = match ra.demeanor.as_str() {
+        "sad" => game::peons::Demeanor::Sad,
+        "proud" => game::peons::Demeanor::Proud,
+        "nervous" => game::peons::Demeanor::Nervous,
+        _ => game::peons::Demeanor::Normal,
+    };
+    let data = sim::data::GameData::embedded();
+    let prop = ra.prop.as_deref().map(|id| data.prop(id).unwrap_or_else(|| panic!("unknown prop {id}")));
     let stages = [LifeStage::Infant, LifeStage::Toddler, LifeStage::Child, LifeStage::Teen, LifeStage::Adult, LifeStage::Adult, LifeStage::Elder];
     // skin, hair, shirt, pants
     let looks: [[[f32; 3]; 4]; 4] = [
@@ -326,13 +344,66 @@ fn lineup(ra: &RenderArgs) {
             frame.draws.push(hearth_render::Draw::new(r.builtins.cube, Mat4::from_scale_rotation_translation(Vec3::new(0.5, 0.45, 0.5), glam::Quat::IDENTITY, Vec3::new(x, 0.225, -0.05)), [0.55, 0.4, 0.3]));
         }
         let yaw = 0.0;
-        art.draw((&mut frame.skinned, &mut frame.joints), Vec3::new(x, y, 0.0), yaw, *stage, &app, &posture, &mut game::peons::AnimState::default(), ra.time, game::peons::Look::Normal);
+        let drawn = art.draw((&mut frame.skinned, &mut frame.joints), Vec3::new(x, y, 0.0), yaw, *stage, &app, &posture, demeanor, &mut game::peons::AnimState::default(), ra.time, game::peons::Look::Normal);
+        if let Some(p) = prop
+            && let Some(grip) = drawn.grip(p.hand)
+        {
+            game::scene::prop_draws(&mut frame.draws, &r.builtins, p, grip);
+        }
     }
     if let Some(dir) = std::path::Path::new(&ra.out).parent() {
         std::fs::create_dir_all(dir).ok();
     }
     r.save_png(&frame, w, h, std::path::Path::new(&ra.out)).expect("save png");
     println!("{} skinned draws -> {}", r.stats.skinned, ra.out);
+}
+
+/// Orders every peon at home to do `OBJECT:INTERACTION` and runs (free will off) until they all are,
+/// or two hours pass.
+fn stage_order(sim: &mut sim::Sim, order: &str) {
+    use sim::components::{ActionKind, ActionQueue, Phase};
+    let (obj_id, inter_id) = order.split_once(':').expect("--order OBJECT:INTERACTION");
+    let data = sim.data();
+    let obj = sim
+        .objects()
+        .into_iter()
+        .find(|e| sim.world.get::<sim::objects::ObjectInstance>(*e).is_some_and(|o| data.object(o.def).id == obj_id))
+        .unwrap_or_else(|| panic!("no {obj_id} on the lot"));
+    let def = data.object(sim.world.get::<sim::objects::ObjectInstance>(obj).unwrap().def);
+    let interaction = def.interactions.iter().position(|i| i.id == inter_id).unwrap_or_else(|| panic!("{obj_id} has no {inter_id}"));
+    sim.world.res_mut::<sim::time::Settings>().free_will = sim::time::FreeWill::Off;
+    let home: Vec<_> = sim.living_peons().into_iter().filter(|&p| !sim.world.has::<sim::components::AtWork>(p)).collect();
+    let mut taking = Vec::new();
+    for &p in &home {
+        match sim.order(p, ActionKind::Object { obj, interaction }) {
+            Ok(()) => taking.push(p),
+            Err(why) => println!("  {} won't: {why}", sim.name(p)),
+        }
+    }
+    let since = sim.world.res::<sim::log::SimLog>().total;
+    let doing = |sim: &sim::Sim, p| {
+        sim.world.get::<ActionQueue>(p).is_some_and(|q| {
+            q.current.as_ref().is_some_and(|c| matches!(c.action.kind, ActionKind::Object { obj: o, .. } if o == obj) && matches!(c.phase, Phase::Performing { .. }))
+        })
+    };
+    for i in 0..120 {
+        // (orders reach the action queue on the next tick)
+        if i >= 2 && taking.iter().all(|&p| doing(sim, p) || sim.world.get::<ActionQueue>(p).is_none_or(|q| q.current.is_none() && q.queue.is_empty())) {
+            break;
+        }
+        sim.tick();
+    }
+    {
+        let log = sim.world.res::<sim::log::SimLog>();
+        let new = (log.total - since) as usize;
+        for e in log.entries.iter().rev().take(new).rev() {
+            println!("  log: {}", e.text);
+        }
+    }
+    for &p in &taking {
+        let now = sim.world.get::<ActionQueue>(p).and_then(|q| q.current.as_ref().map(|c| format!("{} ({:?})", c.action.label, std::mem::discriminant(&c.phase))));
+        println!("  {}: {}", sim.name(p), if doing(sim, p) { "doing it".to_string() } else { format!("not doing it — {}", now.unwrap_or("idle".into())) });
+    }
 }
 
 fn render(a: &Args) {
@@ -348,6 +419,9 @@ fn render(a: &Args) {
         minutes = minutes.max(delta as u64);
     }
     sim.run_minutes(minutes);
+    if let Some(order) = &ra.order {
+        stage_order(&mut sim, order);
+    }
     let gpu = hearth_render::Gpu::headless().expect("no GPU adapter");
     let mut r = hearth_render::Renderer::new(gpu, hearth_render::wgpu::TextureFormat::Rgba8UnormSrgb);
     let (w, h) = ra.size;

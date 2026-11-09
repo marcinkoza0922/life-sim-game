@@ -6,7 +6,11 @@ Run headless from the repo root:
 
 Every stage file holds the same skeleton (bone names), a body mesh with `slim`/`heavy` shape keys,
 four hair meshes (`hair0`..`hair3`, rigid on the head bone), and the animation clips the game maps
-poses to: idle, walk, sit, lie, use, dance, exercise.
+poses to: idle, walk, sit, lie, use, dance, exercise; walking bodies (toddler and up) also get the
+interaction clips the data names (`anim:` and `seat: (anim:)` in objects.ron, socials.ron) — standing,
+seated (origin on the seat, like `sit`), on the floor and lying (like `lie`) — and demeanor variants
+(idle_sad, walk_sad, idle_proud, walk_proud, idle_nervous). The game falls back to the pose clip
+for any clip a body lacks.
 
 Materials are named after the palette slot the game tints them with (skin, hair, shirt, pants,
 shoes); `eye_white`, `pupil` and `mouth` keep their own colour. Blender faces -Y, so the exported
@@ -645,7 +649,378 @@ def make_clips(rig, d, infant):
         p.key(f)
     finish_action(rig, act, 15)
 
+    if not infant:
+        make_activity_clips(rig, p)
     p.clear()
+
+
+# ------------------------------------------------------------------------------------------------
+# interaction & demeanor clips (toddler and up)
+
+
+def arm(p, sfx, fwd=0.0, down=26.0, inward=0.0, elbow=8.0, wrist=0.0, bend_in=0.0):
+    """One arm, angles in degrees. From the A-pose: lower by `down` (26 = hanging; negative raises
+    it out sideways), raise forward by `fwd`, swing towards the midline by `inward`; bend the elbow
+    forward by `elbow` (or towards the body's midline by `bend_in`, for hands on hips), flex the
+    wrist forward by `wrist`."""
+    side = 1 if sfx == "L" else -1
+    # the elbow and wrist hinge about the axis perpendicular to the A-posed bone (not world X, or
+    # the forearm keeps the A-pose's outward angle and swings away from the face)
+    spread = math.degrees(ARM_SPREAD)
+    hinge = lambda deg: qy(-side * spread) @ qx(-deg) @ qy(side * spread)
+    p.rot(f"upper_arm.{sfx}", qz(-side * inward) @ qx(-fwd) @ qy(side * down))
+    p.rot(f"forearm.{sfx}", qy(side * bend_in) @ hinge(elbow))
+    p.rot(f"hand.{sfx}", hinge(wrist))
+
+
+def torso(p, lean=0.0, twist=0.0, tilt=0.0, head=0.0, head_turn=0.0, head_tilt=0.0):
+    """Chest lean (positive = forward), twist about the vertical, side tilt; head nod (positive =
+    down), turn and tilt. Keeps the elder hunch."""
+    hunch = qx(-10) if p.d.hunch else Quaternion()
+    p.rot("chest", qz(twist) @ qy(tilt) @ qx(lean) @ hunch)
+    p.rot("head", qz(head_turn) @ qy(head_tilt) @ qx(head))
+
+
+def clip(rig, p, name, frames, keys, pose):
+    """Keys a looping clip: `pose(p, k)` for each (frame, k); the last key should match the first."""
+    act = new_action(rig, name)
+    for f, k in keys:
+        base_pose(p)
+        pose(p, k)
+        p.key(f)
+    finish_action(rig, act, frames)
+
+
+def walk_clip(rig, p, name, swing, knee, arm_swing, lean=0.0, head=0.0, bounce=0.025, sway=0.15):
+    d, H = p.d, p.d.H
+    act = new_action(rig, name)
+    keys = [
+        (0, (swing, -swing), (4, 12), (-arm_swing, arm_swing), 0.0),
+        (8, (0, -8), (8, knee), (0, 0), bounce),
+        (15, (-swing, swing), (12, 4), (arm_swing, -arm_swing), 0.0),
+        (23, (-8, 0), (knee, 8), (0, 0), bounce),
+        (30, (swing, -swing), (4, 12), (-arm_swing, arm_swing), 0.0),
+    ]
+    for f, th, sh, ar, up in keys:
+        base_pose(p, arm_down=24, arm_fwd=ar, elbow=(14, 14))
+        legs(p, th, sh, foot=(-sh[0] * 0.25, -sh[1] * 0.25))
+        p.move("hips", (0, 0, H * up * 0.5 - H * 0.008))
+        p.rot("hips", qz(-th[0] * sway))
+        torso(p, lean=lean, twist=th[0] * 0.25, head=head)
+        p.key(f)
+    finish_action(rig, act, 30)
+
+
+def crouch(p, depth=1.0):
+    """Squat with feet kept in place: thighs forward, knees bent, hips lowered and moved back."""
+    d = p.d
+    th, sh = 70 * depth, 110 * depth
+    legs(p, (th, th), (sh, sh), foot=(th - sh, th - sh), spread=6)
+    L = d.legs - d.ankle_z
+    drop = L * (1 - 0.5 * (math.cos(math.radians(th)) + math.cos(math.radians(sh - th))))
+    back = 0.5 * L * (math.sin(math.radians(th)) - math.sin(math.radians(sh - th)))
+    p.move("hips", (0, back, -drop))
+
+
+def seated(p):
+    """On a chair: the `sit` clip's legs and hips (the game puts the origin on the seat surface)."""
+    d = p.d
+    legs(p, (88, 88), (88, 88), foot=(-5, -5), spread=4)
+    p.move("hips", (0, d.thigh_r * 0.2, -(d.legs - d.thigh_r * 1.05)))
+
+
+def floor_sit(p, spread=10.0, knee=10.0):
+    """On the floor (origin on the floor): legs out in front, knees raised by `knee` degrees. The
+    thigh rises above level by `knee` and the shin falls back by as much, so the heel stays at hip
+    height (on the floor) for equal-length thigh and shin."""
+    d = p.d
+    legs(p, (90 + knee, 90 + knee), (2 * knee, 2 * knee), foot=(-30 + knee, -30 + knee), spread=spread)
+    p.move("hips", (0, d.thigh_r * 0.1, -(d.legs - d.thigh_r * 1.1)))
+
+
+def lying(p, knee=(4.0, 4.0)):
+    """On the back like the `lie` clip: body centred on the origin, head towards +Y, face up."""
+    d = p.d
+    legs(p, (3 + knee[0] * 0.5, 3 + knee[1] * 0.5), knee, foot=(-20, -20))
+    p.rot("hips", qx(-90))
+    span = d.torso + d.head_h - d.legs
+    p.move("hips", (0, -span * 0.5, -d.legs + d.depth * 0.5 + 0.015))
+
+
+def make_activity_clips(rig, p):
+    d, H = p.d, p.d.H
+    wave = lambda k: math.sin(k * math.tau)  # k in 0..1 around a loop
+
+    # eating from the hand (snack, jar): food at the chest, then to the mouth
+    def eat(p, k):
+        arm(p, "R", fwd=35 + 15 * k, inward=20 + 22 * k, elbow=95 + 50 * k)
+        arm(p, "L", fwd=12, elbow=20)
+        torso(p, head=6 - 10 * k)
+    clip(rig, p, "eat", 60, [(0, 0), (15, 1), (25, 1), (40, 0), (60, 0)], eat)
+
+    # chopping at a counter: forearms level, right hand chops
+    def chop(p, k):
+        arm(p, "R", fwd=18, inward=12, elbow=72 + 14 * k, wrist=-10 * k)
+        arm(p, "L", fwd=18, inward=14, elbow=78)
+        torso(p, lean=8, head=18)
+    clip(rig, p, "chop", 12, [(0, 0), (6, 1), (12, 0)], chop)
+
+    # stirring a pot: right hand circles, left rests
+    def stir(p, k):
+        arm(p, "R", fwd=22 + 8 * math.cos(k * math.tau), inward=8 + 8 * wave(k), elbow=80)
+        arm(p, "L", fwd=10, elbow=35)
+        torso(p, lean=6, head=16)
+    clip(rig, p, "stir", 40, [(f, f / 40) for f in range(0, 41, 10)], stir)
+
+    # scrubbing (hands, dishes, toilets): both hands small alternating circles, low
+    def scrub(p, k):
+        c, s_ = math.cos(k * math.tau), wave(k)
+        arm(p, "R", fwd=16 + 6 * c, inward=30 + 6 * s_, elbow=68)
+        arm(p, "L", fwd=16 - 6 * c, inward=30 - 6 * s_, elbow=68)
+        torso(p, lean=12, head=18)
+    clip(rig, p, "scrub", 24, [(f, f / 24) for f in range(0, 25, 6)], scrub)
+
+    # typing at a desk: hands low and forward, fingers (forearms) tapping
+    def type_(p, k):
+        arm(p, "R", fwd=12, inward=26, elbow=62 + 4 * k, wrist=-8)
+        arm(p, "L", fwd=12, inward=26, elbow=66 - 4 * k, wrist=-8)
+        torso(p, lean=10, head=6)
+    clip(rig, p, "type", 8, [(0, 0), (4, 1), (8, 0)], type_)
+
+    # writing (homework, doodling): right hand scribbles, left holds the page
+    def write(p, k):
+        arm(p, "R", fwd=10 + 3 * wave(k), inward=26 + 5 * math.cos(k * math.tau), elbow=70, wrist=-15)
+        arm(p, "L", fwd=10, inward=32, elbow=66, wrist=-10)
+        torso(p, lean=16, head=18)
+    clip(rig, p, "write", 20, [(f, f / 20) for f in range(0, 21, 5)], write)
+
+    # phone at the chest, head down, thumb (wrist) twitching
+    def phone(p, k):
+        arm(p, "R", fwd=26, inward=18, elbow=84, wrist=-6 * k)
+        arm(p, "L", fwd=5, elbow=12)
+        torso(p, head=26, head_tilt=4 * k)
+    clip(rig, p, "phone", 40, [(0, 0), (6, 1), (12, 0), (30, 0), (34, 1), (40, 0)], phone)
+
+    # phone call: hand at the ear, the other gesturing
+    def phone_call(p, k):
+        arm(p, "R", fwd=22, down=12, inward=8, elbow=150)
+        arm(p, "L", fwd=20 + 18 * k, inward=10, elbow=60 + 20 * k)
+        torso(p, head=4, head_tilt=-8, head_turn=6 * k)
+    clip(rig, p, "phone_call", 90, [(0, 0), (20, 1), (45, 0), (65, 1), (90, 0)], phone_call)
+
+    # selfie: arm out high, head tilted, pout and re-pose
+    def selfie(p, k):
+        arm(p, "R", fwd=115, inward=12, elbow=18, wrist=10)
+        arm(p, "L", down=-8, fwd=-12, elbow=10, bend_in=80)  # hand on hip
+        torso(p, lean=-4, tilt=4 * k, head=-6, head_tilt=10 * k - 5, head_turn=-10)
+    clip(rig, p, "selfie", 60, [(0, 1), (20, 1), (28, -1), (52, -1), (60, 1)], selfie)
+
+    # reading a book held in both hands, turning a page now and then
+    def read(p, k):
+        arm(p, "R", fwd=26, inward=16, elbow=78)
+        arm(p, "L", fwd=26, inward=16 + 14 * k, elbow=78 - 8 * k)
+        torso(p, head=26)
+    clip(rig, p, "read", 90, [(0, 0), (60, 0), (68, 1), (76, 0), (90, 0)], read)
+
+    # oration (read aloud, monologues, speeches): one arm flung to the heavens, then to the heart
+    def orate(p, k):
+        arm(p, "R", fwd=50, inward=20, elbow=60)
+        if k > 0:
+            arm(p, "L", down=-30 * k, fwd=150 * k, elbow=15)
+        else:
+            arm(p, "L", fwd=30, inward=-60 * k, elbow=125)
+        torso(p, lean=-6 * k, head=-12 * k, head_turn=-10 * k)
+    clip(rig, p, "orate", 120, [(0, 0), (20, 1), (50, 1), (70, -1), (100, -1), (120, 0)], orate)
+
+    # talking: easy alternating hand gestures and nods
+    def talk(p, k):
+        arm(p, "R", fwd=22 + 16 * k, inward=12, elbow=70 + 15 * k, wrist=-10 * k)
+        arm(p, "L", fwd=22 + 16 * (1 - k), inward=12, elbow=70 + 15 * (1 - k))
+        torso(p, head=4 * k - 2, head_tilt=4 * (k - 0.5), twist=3 * (k - 0.5))
+    clip(rig, p, "talk", 60, [(0, 0), (15, 1), (30, 0.3), (45, 1), (60, 0)], talk)
+
+    # laughing: hands on the belly, chest bobbing, head thrown back
+    def laugh(p, k):
+        arm(p, "R", fwd=14, inward=36, elbow=80)
+        arm(p, "L", fwd=14, inward=36, elbow=80)
+        torso(p, lean=6 - 12 * k, head=-10 - 8 * k)
+        p.move("hips", (0, 0, -H * 0.01 * k))
+    clip(rig, p, "laugh", 24, [(0, 0), (6, 1), (12, 0.2), (18, 1), (24, 0)], laugh)
+
+    # arguing: leaning in, fists shaking
+    def argue(p, k):
+        arm(p, "R", fwd=55 + 15 * k, inward=12, elbow=95 - 15 * k)
+        arm(p, "L", fwd=55 - 15 * k, inward=12, elbow=95 + 15 * k)
+        torso(p, lean=12, head=6, head_turn=6 * (2 * k - 1))
+    clip(rig, p, "argue", 16, [(0, 0), (8, 1), (16, 0)], argue)
+
+    # hug (or an enthusiastic air hug): arms out and wrapping, gentle sway
+    def hug(p, k):
+        arm(p, "R", fwd=78, inward=6, elbow=30)
+        arm(p, "L", fwd=80, inward=6, elbow=26)
+        torso(p, lean=8, tilt=4 * k, head=4, head_tilt=-8)
+    clip(rig, p, "hug", 60, [(0, -1), (30, 1), (60, -1)], hug)
+
+    # mourning: bowed, a hand to the eyes, shoulders shaking
+    def mourn(p, k):
+        arm(p, "R", fwd=48, inward=34, elbow=140)
+        arm(p, "L", fwd=6, elbow=10)
+        torso(p, lean=14 + 3 * k, head=30)
+    clip(rig, p, "mourn", 40, [(0, 0), (6, 1), (12, 0), (18, 1), (40, 0)], mourn)
+
+    # shower: both hands scrubbing the hair
+    def shower(p, k):
+        arm(p, "R", down=-10, fwd=40 + 10 * k, inward=28, elbow=150)
+        arm(p, "L", down=-10, fwd=40 + 10 * (1 - k), inward=28, elbow=150)
+        torso(p, head=-14, head_tilt=6 * (k - 0.5))
+    clip(rig, p, "shower", 20, [(0, 0), (10, 1), (20, 0)], shower)
+
+    # watering a plant: can held out, tipped
+    def water(p, k):
+        arm(p, "R", fwd=42, inward=10, elbow=30, wrist=20 + 15 * k)
+        arm(p, "L", fwd=8, elbow=15)
+        torso(p, lean=8, head=22)
+    clip(rig, p, "water", 60, [(0, 0), (30, 1), (60, 0)], water)
+
+    # kicking something over: wind up, kick, recover
+    def kick(p, k):
+        arm(p, "R", down=6 * k, fwd=-10 * k, elbow=20)
+        arm(p, "L", down=6 * k, fwd=30 * k, elbow=20)
+        th = 70 * k if k > 0 else -25 * -k
+        legs(p, (0, th), (0, 30 if k < 0 else 5))
+        torso(p, lean=-14 * max(k, 0) + 6 * max(-k, 0), head=10)
+    clip(rig, p, "kick", 40, [(0, 0), (8, -1), (14, 1), (20, 0.4), (30, 0), (40, 0)], kick)
+
+    # fixing (repair, unclog): crouched, right hand working
+    def fix(p, k):
+        crouch(p)
+        arm(p, "R", fwd=55 + 18 * k, inward=18, elbow=55 - 15 * k)
+        arm(p, "L", fwd=35, inward=10, elbow=40)
+        torso(p, lean=30, head=10)
+    clip(rig, p, "fix", 16, [(0, 0), (8, 1), (16, 0)], fix)
+
+    # cradling (rocking a baby, bottle feeding): arms cupped at the waist, swaying
+    def cradle(p, k):
+        arm(p, "R", fwd=30, inward=26, elbow=88)
+        arm(p, "L", fwd=24, inward=30, elbow=80)
+        p.rot("hips", qz(6 * k))
+        torso(p, twist=-4 * k, head=24, head_tilt=4 * k)
+    clip(rig, p, "cradle", 90, [(0, -1), (45, 1), (90, -1)], cradle)
+
+    # peekaboo: hands over the face... then BOO
+    def peekaboo(p, k):
+        arm(p, "R", down=26 - 40 * (1 - k), fwd=50 + 20 * (1 - k), inward=40 * k, elbow=150 - 70 * (1 - k))
+        arm(p, "L", down=26 - 40 * (1 - k), fwd=50 + 20 * (1 - k), inward=40 * k, elbow=150 - 70 * (1 - k))
+        torso(p, lean=14, head=6 - 14 * (1 - k))
+    clip(rig, p, "peekaboo", 70, [(0, 1), (35, 1), (40, 0), (58, 0), (64, 1), (70, 1)], peekaboo)
+
+    # admiring / pondering: hand on the chin, other arm across, head tilting
+    def admire(p, k):
+        arm(p, "R", fwd=40, inward=30, elbow=140)
+        arm(p, "L", fwd=28, inward=58, elbow=92)
+        torso(p, lean=-2, head=-4, head_tilt=8 * k)
+    clip(rig, p, "admire", 120, [(0, -1), (60, 1), (120, -1)], admire)
+
+    # seated, floor and lying interactions ------------------------------------------------------
+
+    # watching TV with the remote in the lap: settled back, a channel flick (k = 1) now and then,
+    # a chuckle (k = 2)
+    def watch_upper(p, k):
+        click, chuckle = max(0.0, 1 - abs(k - 1)), max(0.0, 1 - abs(k - 2))
+        # (no hip offset here: `seated`/`floor_sit` own the hips' location)
+        arm(p, "R", fwd=12 + 10 * click, inward=18, elbow=64 + 16 * click, wrist=-14 * click)
+        arm(p, "L", fwd=8, inward=22, elbow=58)
+        torso(p, lean=-6 + 12 * chuckle, head=2 - 10 * chuckle, head_tilt=3)
+
+    watch_keys = [(0, 0), (70, 0), (76, 1), (82, 0), (150, 0), (156, 2), (162, 0.3), (168, 2), (178, 0), (240, 0)]
+
+    def watch(p, k):
+        seated(p)
+        watch_upper(p, k)
+    clip(rig, p, "watch", 240, watch_keys, watch)
+
+    def watch_floor(p, k):
+        floor_sit(p, spread=12, knee=16)
+        watch_upper(p, k)
+    clip(rig, p, "watch_floor", 240, watch_keys, watch_floor)
+
+    # chess: chin on the left hand, pondering; the right hand reaches out to move a piece (k = 1)
+    def chess_upper(p, k, standing):
+        arm(p, "L", fwd=46, inward=34, elbow=138)
+        arm(p, "R", fwd=34 + 26 * k, inward=16 - 6 * k, elbow=70 - 40 * k, wrist=12 * k)
+        torso(p, lean=(24 if standing else 14) + 8 * k, head=(26 if standing else 18) + 6 * k, head_tilt=6 * (1 - k))
+
+    chess_keys = [(0, 0), (80, 0), (95, 1), (105, 1), (120, 0), (200, 0)]
+
+    def sit_chess(p, k):
+        seated(p)
+        chess_upper(p, k, False)
+    clip(rig, p, "sit_chess", 200, chess_keys, sit_chess)
+    clip(rig, p, "chess", 200, chess_keys, lambda p, k: chess_upper(p, k, True))
+
+    # on the toilet, scrolling the phone
+    def sit_phone(p, k):
+        seated(p)
+        arm(p, "R", fwd=34, inward=18, elbow=92, wrist=-6 * k)
+        arm(p, "L", fwd=14, inward=20, elbow=40)
+        torso(p, lean=16, head=30, head_tilt=4 * k)
+    clip(rig, p, "sit_phone", 40, [(0, 0), (6, 1), (12, 0), (30, 0), (34, 1), (40, 0)], sit_phone)
+
+    # paranoid armchair vigil: gripping the arms, head snapping round to the door and back
+    def sit_lookout(p, k):
+        seated(p)
+        arm(p, "R", down=30, fwd=24, inward=-6, elbow=40)
+        arm(p, "L", down=30, fwd=24, inward=-6, elbow=40)
+        torso(p, lean=8, twist=8 * k, head=-2, head_turn=40 * k)
+    clip(rig, p, "sit_lookout", 150, [(0, 0), (40, 0), (46, 1), (80, 1), (88, 0), (110, -0.6), (130, -0.6), (150, 0)], sit_lookout)
+
+    # playing on the floor: legs splayed, banging a block about in front
+    def play_floor(p, k):
+        floor_sit(p, spread=28, knee=6)
+        arm(p, "R", fwd=46 + 22 * k, inward=12, elbow=50 - 20 * k, wrist=10 * k)
+        arm(p, "L", fwd=40 - 8 * k, inward=18, elbow=56)
+        torso(p, lean=18 + 6 * k, head=26, head_tilt=6 * (k - 0.5))
+    clip(rig, p, "play_floor", 30, [(0, 0), (8, 1), (15, 0), (23, 1), (30, 0)], play_floor)
+
+    # asleep: head rolled to one side, a hand on the chest, a knee drifting up, slow deep breaths
+    def sleep(p, k):
+        lying(p, knee=(30, 4))
+        arm(p, "R", down=22, fwd=6, elbow=20, bend_in=80)  # hand over the belly
+        arm(p, "L", down=12, fwd=2, elbow=12)
+        torso(p, lean=-2 * k, head=-4, head_turn=-28)
+    clip(rig, p, "sleep", 180, [(0, 0), (90, 1), (180, 0)], sleep)
+
+    # bath: reclined against the tub end, knees up, waving the duck about and humming
+    def bathe(p, k):
+        lying(p, knee=(70, 64))
+        arm(p, "R", down=16, fwd=14 + 10 * k, inward=12, elbow=70 + 10 * k, wrist=-10 * k)
+        arm(p, "L", down=22, fwd=4, elbow=20, bend_in=60)
+        torso(p, lean=34, head=10, head_tilt=6 * k)
+    clip(rig, p, "bathe", 60, [(0, 0), (30, 1), (60, 0)], bathe)
+
+    # demeanor variants -----------------------------------------------------------------------
+    def idle_sad(p, k):
+        arm(p, "R", down=30, fwd=6, elbow=4)
+        arm(p, "L", down=30, fwd=6, elbow=4)
+        torso(p, lean=14 + 2 * k, head=22)
+        p.move("hips", (0, 0, -H * 0.004 * k))
+    clip(rig, p, "idle_sad", 90, [(0, 0), (45, 1), (90, 0)], idle_sad)
+
+    def idle_proud(p, k):
+        for sfx in ("R", "L"):
+            arm(p, sfx, down=-10, fwd=-14, elbow=10, bend_in=85)  # hands on hips
+        torso(p, lean=-6, head=-10, head_turn=12 * k)
+    clip(rig, p, "idle_proud", 120, [(0, -1), (50, -1), (60, 1), (110, 1), (120, -1)], idle_proud)
+
+    def idle_nervous(p, k):
+        arm(p, "R", down=30, fwd=14, inward=14, elbow=40)
+        arm(p, "L", down=30, fwd=14, inward=14, elbow=40)
+        torso(p, lean=6, twist=10 * k, head=2, head_turn=35 * k)
+        p.move("hips", (0, 0, -H * 0.01))
+    clip(rig, p, "idle_nervous", 120, [(0, 0), (12, -1), (35, -1), (45, 0), (62, 1), (85, 1), (95, 0), (120, 0)], idle_nervous)
+
+    walk_clip(rig, p, "walk_sad", 16, 32, 8, lean=12, head=18, bounce=0.012, sway=0.1)
+    walk_clip(rig, p, "walk_proud", 28, 50, 30, lean=-6, head=-8, bounce=0.035, sway=0.3)
 
 
 # ------------------------------------------------------------------------------------------------

@@ -242,6 +242,28 @@ pub struct SlotDef {
     pub facing: f32,
 }
 
+/// Which hand holds a prop.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Hand {
+    #[default]
+    Right,
+    Left,
+}
+
+/// A small object a peon holds while performing (book, phone, spoon), greyboxed from parts.
+/// Parts are in *grip space*: origin in the palm, +y along the hand towards the fingertips, +z
+/// out of the back of the hand's forward side (the body's forward when the arm hangs), meters.
+/// `rot` (degrees, applied x then y then z) turns the whole prop within the grip.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PropDef {
+    pub id: String,
+    #[serde(default)]
+    pub hand: Hand,
+    #[serde(default)]
+    pub rot: Vec3,
+    pub parts: Vec<Part>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum DurationDef {
     Minutes(u32),
@@ -311,6 +333,34 @@ pub struct InteractionDef {
     pub cleans: bool,
     #[serde(default)]
     pub repairs: bool,
+    /// Body clip while performing (a clip name in the peon models). Falls back to the clip for
+    /// `pose` when absent or when a body (e.g. an infant's) lacks it.
+    #[serde(default)]
+    pub anim: Option<String>,
+    /// Prop held while performing (an id in `props.ron`).
+    #[serde(default)]
+    pub prop: Option<String>,
+    /// Perform from a free seat nearby when there is one (watching TV from the sofa, chess from a
+    /// chair pulled up to the table); otherwise from the object's own slots as usual.
+    #[serde(default)]
+    pub seat: Option<SeatDef>,
+}
+
+/// Where an interaction may be performed from a seat: any free slot of a `Sit` interaction tagged
+/// "seating" on another object, on the same level, within `range` meters (seat to the object's
+/// centre, horizontally) and facing the object to within `cone` degrees.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SeatDef {
+    pub range: f32,
+    #[serde(default = "default_seat_cone")]
+    pub cone: f32,
+    /// Body clip while seated (replaces `anim`); `prop` is still held.
+    #[serde(default)]
+    pub anim: Option<String>,
+}
+
+fn default_seat_cone() -> f32 {
+    40.0
 }
 
 impl InteractionDef {
@@ -450,6 +500,14 @@ pub struct SocialDef {
     /// Requires both to be unrelated adults (romance).
     #[serde(default)]
     pub romantic: bool,
+    /// Body clips for the initiator and the target while it plays (see [`InteractionDef::anim`]).
+    #[serde(default)]
+    pub anim: Option<String>,
+    #[serde(default)]
+    pub target_anim: Option<String>,
+    /// Prop the initiator holds.
+    #[serde(default)]
+    pub prop: Option<String>,
 }
 
 fn default_min_friendship() -> f32 {
@@ -563,6 +621,7 @@ pub struct GameData {
     pub moodlets: Vec<MoodletDef>,
     pub careers: Vec<CareerDef>,
     pub names: NameLists,
+    pub props: Vec<PropDef>,
 }
 
 pub type ObjectId = usize;
@@ -573,7 +632,7 @@ macro_rules! embedded {
     };
 }
 
-const EMBEDDED: [(&str, &str); 7] = [
+const EMBEDDED: [(&str, &str); 8] = [
     embedded!("objects.ron"),
     embedded!("traits.ron"),
     embedded!("quirks.ron"),
@@ -581,6 +640,7 @@ const EMBEDDED: [(&str, &str); 7] = [
     embedded!("moodlets.ron"),
     embedded!("careers.ron"),
     embedded!("names.ron"),
+    embedded!("props.ron"),
 ];
 
 fn parse<T: for<'de> Deserialize<'de>>(name: &str, text: &str) -> Result<T, String> {
@@ -613,6 +673,7 @@ impl GameData {
             moodlets: parse("moodlets.ron", &get("moodlets.ron")?)?,
             careers: parse("careers.ron", &get("careers.ron")?)?,
             names: parse("names.ron", &get("names.ron")?)?,
+            props: parse("props.ron", &get("props.ron")?)?,
         };
         data.validate()?;
         Ok(data)
@@ -623,6 +684,7 @@ impl GameData {
         let mut errs = Vec::new();
         let moodlet = |id: &str| self.moodlets.iter().any(|m| m.id == id);
         let has_trait = |id: &str| self.traits.iter().any(|t| t.id == id);
+        let has_prop = |id: &Option<String>| id.as_ref().is_none_or(|id| self.props.iter().any(|p| &p.id == id));
         let mut seen = std::collections::HashSet::new();
         for o in &self.objects {
             if !seen.insert(&o.id) {
@@ -639,6 +701,9 @@ impl GameData {
                     && !has_trait(t) {
                         errs.push(format!("{}.{}: unknown trait {t}", o.id, i.id));
                     }
+                if !has_prop(&i.prop) {
+                    errs.push(format!("{}.{}: unknown prop {}", o.id, i.id, i.prop.as_deref().unwrap_or_default()));
+                }
                 for &s in &i.slots {
                     if s >= o.slots.len() {
                         errs.push(format!("{}.{}: slot {s} out of range", o.id, i.id));
@@ -661,6 +726,9 @@ impl GameData {
                 && !has_trait(t) {
                     errs.push(format!("social {}: unknown trait {t}", s.id));
                 }
+            if !has_prop(&s.prop) {
+                errs.push(format!("social {}: unknown prop {}", s.id, s.prop.as_deref().unwrap_or_default()));
+            }
         }
         for c in &self.careers {
             let check = |effs: &Vec<CareerEffect>, errs: &mut Vec<String>| {
@@ -704,6 +772,17 @@ impl GameData {
     }
     pub fn social(&self, id: &str) -> Option<&SocialDef> {
         self.socials.iter().find(|t| t.id == id)
+    }
+    pub fn prop(&self, id: &str) -> Option<&PropDef> {
+        self.props.iter().find(|t| t.id == id)
+    }
+    /// Every body clip named by an interaction or social (for checking against the models).
+    pub fn anims(&self) -> std::collections::BTreeSet<&str> {
+        let objs = self.objects.iter().flat_map(|o| {
+            o.interactions.iter().flat_map(|i| [i.anim.as_deref(), i.seat.as_ref().and_then(|s| s.anim.as_deref())].into_iter().flatten())
+        });
+        let socials = self.socials.iter().flat_map(|s| [s.anim.as_deref(), s.target_anim.as_deref()].into_iter().flatten());
+        objs.chain(socials).collect()
     }
 }
 

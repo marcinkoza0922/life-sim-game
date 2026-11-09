@@ -1,0 +1,76 @@
+// Hand props shown while performing. Parts are in grip space: origin in the palm, +y along the hand
+// towards the fingertips, +z out of the hand's forward side, meters. `rot` turns the whole prop
+// (degrees about x, then y, then z). Shapes are unit primitives scaled by `size`, centred on `at`.
+[
+    (id: "book", parts: [
+        (shape: Box, size: (0.03, 0.2, 0.15), at: (0.0, 0.02, 0.06), color: (0.55, 0.12, 0.12), rough: 0.8),
+        (shape: Box, size: (0.026, 0.19, 0.14), at: (0.004, 0.02, 0.065), color: (0.95, 0.93, 0.85), rough: 0.9),
+    ]),
+    (id: "phone", parts: [
+        (shape: Box, size: (0.012, 0.13, 0.065), at: (0.0, 0.0, 0.03), color: (0.08, 0.08, 0.1), rough: 0.25, metal: 0.3),
+        (shape: Box, size: (0.002, 0.115, 0.055), at: (0.007, 0.0, 0.03), color: (0.4, 0.6, 0.9), emissive: 0.8),
+    ]),
+    (id: "spoon", parts: [
+        (shape: Cylinder, size: (0.02, 0.3, 0.02), at: (0.0, 0.05, 0.0), color: (0.7, 0.5, 0.3), rough: 0.7),
+        (shape: Sphere, size: (0.06, 0.08, 0.03), at: (0.0, 0.22, 0.0), color: (0.7, 0.5, 0.3), rough: 0.7),
+    ]),
+    (id: "knife", parts: [
+        (shape: Box, size: (0.025, 0.1, 0.03), at: (0.0, 0.0, 0.0), color: (0.15, 0.12, 0.1)),
+        (shape: Box, size: (0.004, 0.16, 0.035), at: (0.0, 0.13, 0.005), color: (0.8, 0.82, 0.85), metal: 1.0, rough: 0.2),
+    ]),
+    (id: "sponge", parts: [
+        (shape: Box, size: (0.06, 0.1, 0.04), at: (0.0, 0.02, -0.03), color: (0.95, 0.85, 0.2), rough: 0.95),
+        (shape: Box, size: (0.06, 0.1, 0.012), at: (0.0, 0.02, -0.056), color: (0.2, 0.55, 0.25), rough: 0.95),
+    ]),
+    (id: "wrench", parts: [
+        (shape: Cylinder, size: (0.025, 0.24, 0.025), at: (0.0, 0.04, 0.0), color: (0.6, 0.62, 0.65), metal: 1.0, rough: 0.3),
+        (shape: Box, size: (0.05, 0.04, 0.02), at: (0.0, 0.17, 0.0), color: (0.6, 0.62, 0.65), metal: 1.0, rough: 0.3),
+    ]),
+    (id: "plunger", parts: [
+        (shape: Cylinder, size: (0.025, 0.5, 0.025), at: (0.0, 0.1, 0.0), color: (0.65, 0.45, 0.25), rough: 0.7),
+        (shape: Sphere, size: (0.12, 0.08, 0.12), at: (0.0, 0.36, 0.0), color: (0.75, 0.1, 0.1), rough: 0.5),
+    ]),
+    (id: "watering_can", parts: [
+        (shape: Cylinder, size: (0.14, 0.16, 0.14), at: (0.0, -0.02, 0.1), color: (0.3, 0.6, 0.35), metal: 0.4, rough: 0.4),
+        (shape: Cylinder, size: (0.025, 0.2, 0.025), at: (0.0, 0.08, 0.2), color: (0.3, 0.6, 0.35), metal: 0.4, rough: 0.4),
+    ]),
+    (id: "sandwich", parts: [
+        (shape: Box, size: (0.1, 0.03, 0.08), at: (0.0, 0.04, 0.03), color: (0.9, 0.78, 0.55), rough: 0.9),
+        (shape: Box, size: (0.105, 0.012, 0.085), at: (0.0, 0.06, 0.03), color: (0.35, 0.7, 0.3), rough: 0.8),
+        (shape: Box, size: (0.1, 0.02, 0.08), at: (0.0, 0.075, 0.03), color: (0.9, 0.78, 0.55), rough: 0.9),
+    ]),
+    (id: "apple", parts: [
+        (shape: Sphere, size: (0.075, 0.075, 0.075), at: (0.0, 0.03, 0.04), color: (0.8, 0.12, 0.1), rough: 0.35),
+    ]),
+    (id: "jar", parts: [
+        (shape: Cylinder, size: (0.08, 0.11, 0.08), at: (0.0, 0.02, 0.05), color: (0.55, 0.3, 0.12), rough: 0.2),
+        (shape: Cylinder, size: (0.085, 0.02, 0.085), at: (0.0, 0.085, 0.05), color: (0.85, 0.2, 0.15), rough: 0.5),
+    ]),
+    (id: "pencil", parts: [
+        (shape: Cylinder, size: (0.01, 0.15, 0.01), at: (0.0, 0.05, 0.02), color: (0.95, 0.8, 0.1), rough: 0.6),
+    ]),
+    (id: "bottle", parts: [
+        (shape: Cylinder, size: (0.05, 0.12, 0.05), at: (0.0, 0.04, 0.04), color: (0.95, 0.95, 0.92), rough: 0.3),
+        (shape: Cylinder, size: (0.025, 0.04, 0.025), at: (0.0, 0.12, 0.04), color: (0.9, 0.7, 0.45), rough: 0.5),
+    ]),
+    (id: "controller", parts: [
+        (shape: Box, size: (0.04, 0.06, 0.14), at: (0.0, 0.03, 0.06), color: (0.15, 0.15, 0.17), rough: 0.4),
+    ]),
+    (id: "remote", parts: [
+        (shape: Box, size: (0.035, 0.15, 0.02), at: (0.0, 0.03, 0.03), color: (0.12, 0.12, 0.14), rough: 0.5),
+        (shape: Box, size: (0.012, 0.012, 0.004), at: (0.0, 0.09, 0.041), color: (0.85, 0.15, 0.12), rough: 0.4),
+    ]),
+    (id: "chess_piece", parts: [
+        (shape: Cylinder, size: (0.03, 0.012, 0.03), at: (0.0, 0.03, 0.03), color: (0.95, 0.93, 0.88), rough: 0.4),
+        (shape: Cylinder, size: (0.014, 0.04, 0.014), at: (0.0, 0.055, 0.03), color: (0.95, 0.93, 0.88), rough: 0.4),
+        (shape: Sphere, size: (0.024, 0.024, 0.024), at: (0.0, 0.08, 0.03), color: (0.95, 0.93, 0.88), rough: 0.4),
+    ]),
+    (id: "toy_block", parts: [
+        (shape: Box, size: (0.07, 0.07, 0.07), at: (0.0, 0.03, 0.045), color: (0.25, 0.5, 0.9), rough: 0.6),
+    ]),
+    (id: "rubber_duck", parts: [
+        (shape: Sphere, size: (0.08, 0.06, 0.1), at: (0.0, 0.03, 0.05), color: (0.98, 0.85, 0.15), rough: 0.4),
+        (shape: Sphere, size: (0.05, 0.05, 0.05), at: (0.0, 0.07, 0.07), color: (0.98, 0.85, 0.15), rough: 0.4),
+        (shape: Box, size: (0.02, 0.012, 0.025), at: (0.0, 0.07, 0.1), color: (0.95, 0.5, 0.1), rough: 0.4),
+    ]),
+]

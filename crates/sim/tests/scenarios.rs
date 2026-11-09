@@ -142,3 +142,152 @@ fn careers_pay() {
     let job = sim.world.get::<Job>(adults[0]);
     assert!(job.is_none_or(|j| j.days_worked >= 1));
 }
+
+#[test]
+fn performing_sets_the_interaction_clip_and_prop_then_clears_them() {
+    let mut sim = starter_sim(5);
+    sim.world.res_mut::<Settings>().free_will = sim::time::FreeWill::Off;
+    let adult = sim.living_peons()[0];
+    {
+        let mut n = sim.world.get_mut::<Needs>(adult).unwrap();
+        for k in Need::ALL {
+            n.set(k, 80.0);
+        }
+    }
+    let shelf = find_object(&sim, "bookshelf");
+    let i = interaction(&sim, shelf, "read");
+    sim.order(adult, ActionKind::Object { obj: shelf, interaction: i }).expect("order accepted");
+    let (mut walked_bare, mut read_with_book) = (false, false);
+    for _ in 0..240 {
+        sim.tick();
+        let p = sim.world.get::<Posture>(adult).unwrap().clone();
+        if p.walking {
+            walked_bare |= p.anim.is_none() && p.prop.is_none();
+        }
+        read_with_book |= p.anim.as_deref() == Some("read") && p.prop.as_deref() == Some("book");
+        let idle = sim.world.get::<ActionQueue>(adult).unwrap().current.is_none();
+        if read_with_book && idle {
+            assert_eq!(p, Posture::default(), "the book is put back when done");
+            break;
+        }
+    }
+    assert!(walked_bare && read_with_book);
+}
+
+#[test]
+fn a_day_of_free_will_plays_many_clips() {
+    let mut sim = starter_sim(3);
+    let mut seen = std::collections::BTreeSet::new();
+    for _ in 0..24 * 60 {
+        sim.tick();
+        for e in sim.living_peons() {
+            if let Some(a) = sim.world.get::<Posture>(e).and_then(|p| p.anim.clone()) {
+                seen.insert(a);
+            }
+        }
+    }
+    assert!(seen.len() >= 5, "only saw {seen:?}");
+}
+
+/// Orders `who` to watch TV and runs until they are performing; returns their posture then.
+fn start_watching(sim: &mut Sim, who: Entity) -> Posture {
+    {
+        let mut n = sim.world.get_mut::<Needs>(who).unwrap();
+        for k in Need::ALL {
+            n.set(k, 80.0);
+        }
+    }
+    let tv = find_object(sim, "tv_basic");
+    let i = interaction(sim, tv, "watch");
+    sim.order(who, ActionKind::Object { obj: tv, interaction: i }).expect("order accepted");
+    for _ in 0..240 {
+        sim.tick();
+        let q = sim.world.get::<ActionQueue>(who).unwrap();
+        if q.current.as_ref().is_some_and(|c| matches!(c.phase, Phase::Performing { .. })) {
+            return sim.world.get::<Posture>(who).unwrap().clone();
+        }
+    }
+    panic!("never started watching");
+}
+
+#[test]
+fn tv_is_watched_from_the_sofa_facing_it() {
+    let mut sim = starter_sim(5);
+    sim.world.res_mut::<Settings>().free_will = sim::time::FreeWill::Off;
+    let adult = sim.living_peons()[0];
+    let sofa = find_object(&sim, "sofa_basic");
+    let p = start_watching(&mut sim, adult);
+    assert_eq!((p.pose, p.anim.as_deref(), p.prop.as_deref()), (sim::data::Pose::Sit, Some("watch"), Some("remote")));
+    let o = sim.world.get::<sim::objects::ObjectInstance>(sofa).unwrap().clone();
+    assert!(o.slot_users.contains(&Some(adult)), "the sofa seat is taken");
+    let y = sim.world.get::<Transform>(adult).unwrap().pos.y;
+    assert!(y > 0.3, "sitting on the cushion, not the floor ({y})");
+
+    // getting up frees the seat and puts them back on their feet
+    let id = sim.world.get::<ActionQueue>(adult).unwrap().current.as_ref().unwrap().action.id;
+    sim.cancel(adult, id);
+    for _ in 0..5 {
+        sim.tick();
+    }
+    let o = sim.world.get::<sim::objects::ObjectInstance>(sofa).unwrap().clone();
+    assert!(!o.slot_users.contains(&Some(adult)));
+    assert!(sim.world.get::<Transform>(adult).unwrap().pos.y < 0.05);
+}
+
+#[test]
+fn tv_without_a_free_seat_is_watched_from_the_floor() {
+    let mut sim = starter_sim(5);
+    sim.world.res_mut::<Settings>().free_will = sim::time::FreeWill::Off;
+    let adult = sim.living_peons()[0];
+    let sofa = find_object(&sim, "sofa_basic");
+    sim.sell_object(sofa);
+    let p = start_watching(&mut sim, adult);
+    assert_eq!((p.pose, p.anim.as_deref()), (sim::data::Pose::Sit, Some("watch_floor")));
+    assert!(sim.world.get::<Transform>(adult).unwrap().pos.y < 0.05);
+}
+
+#[test]
+fn selling_the_seat_mid_show_stands_them_up() {
+    let mut sim = starter_sim(5);
+    sim.world.res_mut::<Settings>().free_will = sim::time::FreeWill::Off;
+    let adult = sim.living_peons()[0];
+    start_watching(&mut sim, adult);
+    sim.sell_object(find_object(&sim, "sofa_basic"));
+    sim.tick();
+    assert_eq!(*sim.world.get::<Posture>(adult).unwrap(), Posture::default());
+    assert!(sim.world.get::<Transform>(adult).unwrap().pos.y < 0.05, "back on the floor");
+    assert!(sim.world.get::<ActionQueue>(adult).unwrap().current.as_ref().is_none_or(|c| c.seat.is_none()));
+}
+
+#[test]
+fn a_full_floor_in_front_of_the_tv_still_leaves_the_sofa() {
+    let sim = starter_sim(5);
+    sim.world.res_mut::<Settings>().free_will = sim::time::FreeWill::Off;
+    let adult = sim.living_peons()[0];
+    let tv = find_object(&sim, "tv_basic");
+    let watch = interaction(&sim, tv, "watch");
+    let is_watch = |k: &ActionKind| matches!(k, ActionKind::Object { obj, interaction } if *obj == tv && *interaction == watch);
+    // three others already on the floor in front of it
+    let others: Vec<Entity> = sim.living_peons().into_iter().filter(|&p| p != adult).collect();
+    {
+        let mut o = sim.world.get_mut::<sim::objects::ObjectInstance>(tv).unwrap();
+        for s in o.slot_users.iter_mut() {
+            *s = Some(others[0]);
+        }
+    }
+    let offered = |sim: &Sim| sim.options(adult, tv).into_iter().find(|(_, k, _)| is_watch(k)).unwrap().2;
+    let considered = |sim: &Sim| sim::autonomy::candidates(&sim.world, adult, &sim.data()).iter().any(|c| is_watch(&c.kind));
+    assert_eq!(offered(&sim), Ok(()), "the sofa is free");
+    assert!(considered(&sim), "autonomy counts the sofa");
+
+    // and with the sofa taken too, it really is full
+    let sofa = find_object(&sim, "sofa_basic");
+    {
+        let mut o = sim.world.get_mut::<sim::objects::ObjectInstance>(sofa).unwrap();
+        for s in o.slot_users.iter_mut() {
+            *s = Some(others[0]);
+        }
+    }
+    assert!(offered(&sim).is_err());
+    assert!(!considered(&sim));
+}

@@ -125,6 +125,12 @@ fn cleanup(world: &World, e: Entity, cur: &CurrentAction) {
             if let Phase::Performing { slot: Some(s), .. } = cur.phase {
                 stand_up(world, e, *obj, s);
             }
+            if let Some((seat, s)) = cur.seat {
+                release_slot(world, seat, e);
+                if matches!(cur.phase, Phase::Performing { .. }) {
+                    stand_up(world, e, seat, s);
+                }
+            }
         }
         ActionKind::Social { target, .. } => {
             let responding = world.get::<ActionQueue>(*target).is_some_and(|q| {
@@ -151,7 +157,13 @@ fn end_posture(world: &World, e: Entity) {
 
 fn stand_up(world: &World, e: Entity, obj: Entity, slot: usize) {
     let data = data(world);
-    let Some(o) = world.get::<ObjectInstance>(obj) else { return };
+    let Some(o) = world.get::<ObjectInstance>(obj) else {
+        // sold out from under them: drop to the floor where they are
+        if let Some(mut tf) = world.get_mut::<Transform>(e) {
+            tf.pos.y = tf.level() as f32 * crate::lot::LEVEL_HEIGHT;
+        }
+        return;
+    };
     let def = data.object(o.def);
     let t = o.slot_stand_tile(def, slot);
     let level = o.level;
@@ -290,7 +302,7 @@ fn step(world: &mut World, e: Entity, data: &GameData, tick: u64) {
         };
         let Some(action) = action else { return };
         world.get_mut::<ActionQueue>(e).unwrap().current =
-            Some(CurrentAction { action, phase: Phase::Start, started: tick, cancel: false });
+            Some(CurrentAction { action, phase: Phase::Start, started: tick, cancel: false, seat: None });
     }
 
     let mut cur = world.get_mut::<ActionQueue>(e).unwrap().current.take().unwrap();
@@ -380,6 +392,8 @@ fn step(world: &mut World, e: Entity, data: &GameData, tick: u64) {
             if let Some(mut p) = world.get_mut::<Posture>(e) {
                 p.walking = !arrived && !wait;
                 p.pose = Pose::Stand;
+                p.anim = None;
+                p.prop = None;
             }
             if arrived {
                 match arrive(world, e, data, &mut cur, slot, retries) {
@@ -600,17 +614,34 @@ fn begin(world: &World, e: Entity, data: &GameData, cur: &mut CurrentAction) -> 
             let stage = world.get::<Age>(e).unwrap().stage;
             let pers = world.get::<Personality>(e).unwrap().clone();
             let funds = world.res::<Household>().funds;
+            let tf = *world.get::<Transform>(e).unwrap();
+            let field = NavField::flood(&world.res::<Lot>(), NavNode::new(tf.level(), tf.tile()), 400.0);
+            let seat = {
+                let inst = world.get::<ObjectInstance>(obj).ok_or("it's gone")?;
+                let def = data.object(inst.def);
+                let inter = &def.interactions[interaction];
+                interaction_check(data, inter, &inst, stage, &pers, funds)?;
+                inter.seat.as_ref().and_then(|sd| autonomy::nearest_seat(world, data, e, obj, &inst, sd, &field))
+            };
+            if let Some((seat, slot, node)) = seat {
+                let nodes = field.path_to(node).unwrap();
+                let mut path = waypoints(&world.res::<Lot>(), &nodes);
+                if nodes.len() > 1 {
+                    path.remove(0);
+                }
+                world.get_mut::<ObjectInstance>(seat).unwrap().slot_users[slot] = Some(e);
+                cur.seat = Some((seat, slot));
+                cur.phase = Phase::Walking { path, idx: 0, slot: None, retries: 0, blocked: 0 };
+                return Ok(());
+            }
             let mut inst = world.get_mut::<ObjectInstance>(obj).ok_or("it's gone")?;
             let def = data.object(inst.def);
             let inter = &def.interactions[interaction];
-            interaction_check(data, inter, &inst, stage, &pers, funds)?;
             let slots = free_slots(def, inter, &inst, e);
             if slots.is_empty() {
                 return Err("someone else is using it".into());
             }
-            let tf = *world.get::<Transform>(e).unwrap();
             let lot = world.res::<Lot>();
-            let field = NavField::flood(&lot, NavNode::new(tf.level(), tf.tile()), 400.0);
             let best = slots
                 .iter()
                 .filter_map(|&s| {
@@ -723,11 +754,24 @@ fn arrive(world: &World, e: Entity, data: &GameData, cur: &mut CurrentAction, sl
     let tick = now(world);
     match cur.action.kind.clone() {
         ActionKind::Object { obj, interaction } => {
-            let slot = slot.ok_or("no slot")?;
-            let (pos, yaw, inter) = {
+            let inter = {
                 let inst = world.get::<ObjectInstance>(obj).ok_or("it's gone")?;
+                data.object(inst.def).interactions[interaction].clone()
+            };
+            // performing from a seat (see `SeatDef`) or from one of the object's own slots
+            let (spot, slot) = match (cur.seat, slot) {
+                (Some((seat, s)), _) => ((seat, s), None),
+                (None, Some(s)) => ((obj, s), Some(s)),
+                (None, None) => return Err("no slot".into()),
+            };
+            let (pos, yaw) = {
+                let inst = world.get::<ObjectInstance>(spot.0).ok_or("it's gone")?;
                 let def = data.object(inst.def);
-                (inst.slot_use_pos(def, slot), inst.slot_yaw(def, slot), def.interactions[interaction].clone())
+                (inst.slot_use_pos(def, spot.1), inst.slot_yaw(def, spot.1))
+            };
+            let (pose, anim) = match (&cur.seat, &inter.seat) {
+                (Some(_), Some(sd)) => (Pose::Sit, sd.anim.clone()),
+                _ => (inter.pose, inter.anim.clone()),
             };
             if inter.cost > 0 {
                 let mut hh = world.res_mut::<Household>();
@@ -741,11 +785,11 @@ fn arrive(world: &World, e: Entity, data: &GameData, cur: &mut CurrentAction, sl
                 tf.pos = pos;
                 tf.yaw = yaw;
             }
-            world.get_mut::<Posture>(e).unwrap().pose = inter.pose;
+            *world.get_mut::<Posture>(e).unwrap() = Posture::performing(pose, anim, inter.prop.clone());
             if let Some(b) = &inter.bubble {
                 set_bubble(world, e, Some(b.clone()), None, inter.nominal_minutes().min(60) as u64);
             }
-            cur.phase = Phase::Performing { slot: Some(slot), elapsed: 0 };
+            cur.phase = Phase::Performing { slot, elapsed: 0 };
             Ok(true)
         }
         ActionKind::Social { target, social } => {
@@ -801,8 +845,13 @@ fn arrive(world: &World, e: Entity, data: &GameData, cur: &mut CurrentAction, sl
                 phase: Phase::Performing { slot: None, elapsed: 0 },
                 started: tick,
                 cancel: false,
+                seat: None,
             });
             say(world, e, sd.bubble.as_deref(), sd.minutes.min(20) as u64);
+            *world.get_mut::<Posture>(e).unwrap() = Posture::performing(Pose::Stand, sd.anim.clone(), sd.prop.clone());
+            if let Some(mut p) = world.get_mut::<Posture>(target) {
+                *p = Posture::performing(Pose::Stand, sd.target_anim.clone(), None);
+            }
             cur.phase = Phase::Performing { slot: None, elapsed: 0 };
             Ok(true)
         }
@@ -829,7 +878,10 @@ fn perform(world: &World, e: Entity, data: &GameData, cur: &CurrentAction, slot:
         ActionKind::Object { obj, interaction } => {
             let inter = {
                 let inst = world.get::<ObjectInstance>(*obj).ok_or("it vanished")?;
-                if slot.is_some_and(|s| inst.slot_users.get(s).copied().flatten() != Some(e)) {
+                let seat_lost = cur.seat.is_some_and(|(seat, s)| {
+                    world.get::<ObjectInstance>(seat).is_none_or(|i| i.slot_users.get(s).copied().flatten() != Some(e))
+                });
+                if seat_lost || slot.is_some_and(|s| inst.slot_users.get(s).copied().flatten() != Some(e)) {
                     return Err("lost their spot".into());
                 }
                 data.object(inst.def).interactions[*interaction].clone()

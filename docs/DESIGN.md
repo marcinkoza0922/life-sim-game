@@ -400,7 +400,28 @@ Added since:
   `BLEND_SECS` (0.3 s, smoothstep) and eases the root offset/yaw with it, since the sim snaps a peon onto
   a seat or bed as the posture changes (jumps over 3 m, e.g. coming home, still snap).
 
+- **Interaction clips & props:** interactions and socials name a body clip (`anim:`; socials also
+  `target_anim:`) and a held prop (`prop:`, greyboxed from parts in `assets/data/props.ron`, in a
+  palm-centred grip frame). The sim stores both on `Posture` while performing; the game plays the
+  clip when the body has it (else the pose's clip, and no prop). 26 clips for toddler-and-up bodies:
+  eat, chop, stir, scrub, type, write, phone, phone_call, selfie, read, orate, talk, laugh, argue,
+  hug, mourn, shower, water, kick, fix (crouched), cradle, peekaboo, admire, plus demeanor variants
+  idle/walk_sad (mood < −35), idle/walk_proud (Theatrical/Vain in a good mood), idle_nervous
+  (Paranoid). `simctl lineup --anim CLIP --prop ID --demeanor D` previews them.
+
+- **Seated, floor and lying clips:** watch (TV from a seat, remote in hand), watch_floor, sit_chess /
+  chess (standing), sit_phone (toilet), sit_lookout (Paranoid armchair vigil), play_floor (toys),
+  sleep (beds, sofa nap, crib) and bathe. Chair clips put the origin on the seat like `sit`; floor
+  clips on the floor.
+- **Using an object from a seat:** an interaction's `seat: (range, cone, anim)` lets it be performed
+  from any free slot of a `Sit` + "seating" interaction on another object, within `range` m of the
+  object and facing it to within `cone`° (TV: 5 m from the sofa; chess: a chair pulled up to the
+  table). The seat slot is reserved on `CurrentAction::seat` and the peon sits there with the seat
+  clip; with no free seat, the object's own slots are used (TV: on the floor; chess: standing).
+  Autonomy and the pie menu count a free reachable seat as a free spot. `simctl render --order
+  OBJECT:INTERACTION` stages the household doing something (e.g. `tv_basic:watch`) before rendering.
+
 **Known gaps / next up:** eye colour from genes
-(pupils are a fixed colour); per-object animation (holding a book, typing at a desk); playable multi-lot
+(pupils are a fixed colour); infant-specific interaction clips; playable multi-lot
 neighborhoods (switching households, community lots) — townies are the first step; multi-tile object
 picking polish; hygiene still occasionally bottoms out in long headless runs (warning, not a failure).
