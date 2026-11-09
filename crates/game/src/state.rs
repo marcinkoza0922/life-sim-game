@@ -309,13 +309,12 @@ impl Game {
         let world = &self.sim.world;
         let top = self.level;
         let visible = |lvl: i32| lvl <= top && (top < 0 || lvl >= 0);
-        for (e, tf, age) in world.query_filtered::<(Entity, &Transform, &Age), (hearth_ecs::Without<AtWork>, hearth_ecs::Without<Dead>)>().iter() {
+        for (e, tf, age, posture) in world.query_filtered::<(Entity, &Transform, &Age, &Posture), (hearth_ecs::Without<AtWork>, hearth_ecs::Without<Dead>)>().iter() {
             if !visible(tf.level()) {
                 continue;
             }
-            let c = tf.pos + Vec3::Y * (age.stage.height() * 0.5);
-            if let Some(t) = ray_sphere(o, d, c, 0.45) {
-                consider(t - 0.3, Pick::Peon(e)); // peons win ties against what they stand on
+            if let Some(t) = ray_peon(o, d, tf, age.stage.height(), posture.pose) {
+                consider(t - 0.3, Pick::Peon(e)); // peons win ties against what they stand, sit or lie on
             }
         }
         let data = self.sim.data();
@@ -324,12 +323,11 @@ impl Game {
                 continue;
             }
             let def = data.object(inst.def);
-            let size = sim::objects::rotated_size(def, inst.rot).as_vec2();
-            let height = def.parts.iter().map(|p| p.at.y + p.size.y * 0.5).fold(0.2f32, f32::max).min(2.2);
-            let y0 = inst.level as f32 * LEVEL_HEIGHT;
-            let min = Vec3::new(inst.tile.x as f32 + 0.05, y0, inst.tile.y as f32 + 0.05);
-            let max = Vec3::new(inst.tile.x as f32 + size.x - 0.05, y0 + height, inst.tile.y as f32 + size.y - 0.05);
-            if let Some(t) = ray_aabb(o, d, min, max) {
+            // in live mode a rug is floor: clicking it means "go here"
+            if self.mode == Mode::Live && def.walkable && def.interactions.is_empty() {
+                continue;
+            }
+            if let Some(t) = ray_object(o, d, def, inst) {
                 consider(t, Pick::Object(e));
             }
         }
@@ -664,6 +662,42 @@ pub fn nearest_edge(level: i32, p: Vec3) -> Edge {
     if dx < dz { ex } else { ez }
 }
 
+/// Parts thinner than this (rugs, shelves, pictures) are picked as if this thick.
+const MIN_PICK: f32 = 0.08;
+
+/// Ray distance to the nearest of an object's parts: each part's box, oriented like the drawn part
+/// (round parts use their bounding box, which is forgiving to click). Empty space within the
+/// footprint, under a table or beside a headboard, doesn't count.
+pub fn ray_object(o: Vec3, d: Vec3, def: &sim::data::ObjectDef, inst: &ObjectInstance) -> Option<f32> {
+    let rot = glam::Quat::from_rotation_y(inst.yaw());
+    def.parts
+        .iter()
+        .filter_map(|p| {
+            // same transform as `scene::object_draws`; the ray parameter is unchanged by it
+            let m = glam::Mat4::from_scale_rotation_translation(p.size.max(Vec3::splat(MIN_PICK)), rot, inst.local_to_world(def, p.at));
+            let inv = m.inverse();
+            ray_aabb(inv.transform_point3(o), inv.transform_vector3(d), Vec3::splat(-0.5), Vec3::splat(0.5))
+        })
+        .min_by(f32::total_cmp)
+}
+
+/// Ray distance to a peon's body: a sphere around a standing body's middle, lower for a seated one
+/// (the origin is on the seat), and a row of spheres along a lying body (centred on the origin,
+/// head towards the model's -z).
+pub fn ray_peon(o: Vec3, d: Vec3, tf: &Transform, height: f32, pose: sim::data::Pose) -> Option<f32> {
+    use sim::data::Pose;
+    match pose {
+        Pose::Lie => {
+            let head = glam::Quat::from_rotation_y(tf.yaw) * Vec3::NEG_Z;
+            let c = tf.pos + Vec3::Y * 0.12;
+            let r = 0.12 * height + 0.12;
+            [-0.33, 0.0, 0.33].into_iter().filter_map(|k| ray_sphere(o, d, c + head * (k * height), r)).min_by(f32::total_cmp)
+        }
+        Pose::Sit => ray_sphere(o, d, tf.pos + Vec3::Y * (height * 0.3), 0.4),
+        _ => ray_sphere(o, d, tf.pos + Vec3::Y * (height * 0.5), 0.45),
+    }
+}
+
 fn ray_sphere(o: Vec3, d: Vec3, c: Vec3, r: f32) -> Option<f32> {
     let oc = o - c;
     let b = oc.dot(d);
@@ -683,4 +717,54 @@ fn ray_aabb(o: Vec3, d: Vec3, min: Vec3, max: Vec3) -> Option<f32> {
     let tmin = t1.min(t2).max_element();
     let tmax = t1.max(t2).min_element();
     (tmax >= tmin.max(0.0)).then_some(tmin.max(0.0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sim::data::{GameData, Pose};
+
+    fn placed(data: &GameData, id: &str, tile: (i32, i32), rot: u8) -> (sim::data::ObjectDef, ObjectInstance) {
+        let def_id = data.object_id(id).unwrap();
+        let def = data.object(def_id).clone();
+        let inst = ObjectInstance::new(def_id, &def, 0, IVec2::new(tile.0, tile.1), rot);
+        (def, inst)
+    }
+
+    #[test]
+    fn objects_are_picked_by_their_parts_not_their_footprint_box() {
+        let data = GameData::embedded();
+        let (table, t) = placed(&data, "dining_table", (0, 0), 0);
+        // straight down onto the top (5 cm thick at 0.75, padded to MIN_PICK)
+        let hit = ray_object(Vec3::new(1.0, 5.0, 0.5), Vec3::NEG_Y, &table, &t).unwrap();
+        assert!((hit - (5.0 - 0.75 - MIN_PICK * 0.5)).abs() < 0.01, "table top at t={hit}");
+        // level with the legs, between them: nothing there
+        assert_eq!(ray_object(Vec3::new(-3.0, 0.4, 0.5), Vec3::X, &table, &t), None);
+
+        // rotated a quarter turn the table spans 1x2 tiles
+        let (_, t1) = placed(&data, "dining_table", (0, 0), 1);
+        assert!(ray_object(Vec3::new(0.5, 5.0, 1.0), Vec3::NEG_Y, &table, &t1).is_some());
+        assert_eq!(ray_object(Vec3::new(1.5, 5.0, 0.5), Vec3::NEG_Y, &table, &t1), None);
+
+        // a double bed is only headboard-tall at the head end
+        let (bed, b) = placed(&data, "bed_double", (0, 0), 0);
+        assert!(ray_object(Vec3::new(-3.0, 0.9, 0.03), Vec3::X, &bed, &b).is_some());
+        assert_eq!(ray_object(Vec3::new(-3.0, 0.9, 1.8), Vec3::X, &bed, &b), None);
+
+        // a rug is a hair thick but still clickable (in buy mode)
+        let (rug, r) = placed(&data, "rug", (4, 4), 0);
+        assert!(ray_object(Vec3::new(5.0, 3.0, 5.0), Vec3::NEG_Y, &rug, &r).is_some());
+    }
+
+    #[test]
+    fn peons_lying_down_are_picked_where_the_body_is() {
+        let tf = Transform { pos: Vec3::new(1.0, 0.5, 1.0), yaw: 0.0, prev_pos: Vec3::ZERO, prev_yaw: 0.0 };
+        // looking straight down at the shins of someone asleep in bed (head towards -z)
+        let shins = Vec3::new(1.0, 4.0, 1.0 + 0.55);
+        assert!(ray_peon(shins, Vec3::NEG_Y, &tf, 1.75, Pose::Lie).is_some());
+        // the standing sphere would float over the pillow instead
+        assert!(ray_peon(shins, Vec3::NEG_Y, &tf, 1.75, Pose::Stand).is_none());
+        // and a lying body doesn't reach up there
+        assert!(ray_peon(Vec3::new(-3.0, 1.4, 1.0), Vec3::X, &tf, 1.75, Pose::Lie).is_none());
+    }
 }

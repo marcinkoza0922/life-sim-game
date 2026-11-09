@@ -435,6 +435,10 @@ Added since:
   dishes endlessly instead of showering. Hygiene also decays at 40% while asleep. `simctl check` over 20 seeds ×
   20 days now shows Hygiene hitting zero only from the odd bedtime accident.
 
+- **Picking:** objects are hit-tested per part (each part's box, oriented like the drawn part, at least
+  8 cm thick, on top of terrain), so empty space under a table or beside a headboard no longer grabs the
+  click. Peons are hit where the body is: lower when seated, along the body when lying (selecting someone
+  asleep in a double bed works). In Live mode rugs are floor, so clicking one means "Go Here".
+
 **Known gaps / next up:** playable multi-lot
-neighborhoods (switching households, community lots) — townies are the first step; multi-tile object
-picking polish.
+neighborhoods (switching households, community lots) — townies are the first step.
