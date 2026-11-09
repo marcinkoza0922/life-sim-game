@@ -807,4 +807,17 @@ mod tests {
         assert!(d.careers.len() >= 10);
         assert!(d.traits.len() >= 12);
     }
+
+    /// Dirt with no way to clean it piles up until the room's Environment is stuck at zero.
+    #[test]
+    fn every_object_that_gets_dirty_can_be_cleaned() {
+        let d = GameData::embedded();
+        let stuck: Vec<&str> = d
+            .objects
+            .iter()
+            .filter(|o| o.dirt_per_use > 0.0 && !o.interactions.iter().any(|i| i.cleans))
+            .map(|o| o.id.as_str())
+            .collect();
+        assert!(stuck.is_empty(), "objects that get dirty but have no cleaning interaction: {stuck:?}");
+    }
 }

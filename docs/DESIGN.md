@@ -429,6 +429,12 @@ Added since:
   `idle_sad` as crying. The clip test now checks each body against the clips its stage can be asked for
   (`GameData::anims_for`). `simctl lineup --target -3.6,0 --dist 1.6` frames the infant.
 
+- **Cleaning & hygiene balance:** every object that gets dirty has a cleaning chore (Scrub Stove/Shower/Tub,
+  Clean Out Fridge, Dust, Wipe Down; Do the Dishes cleans the sink and is only offered when it's dirty), checked
+  by a data test. Before, kitchen dirt could never be cleaned, rooms sat at Environment 0 and peons washed
+  dishes endlessly instead of showering. Hygiene also decays at 40% while asleep. `simctl check` over 20 seeds ×
+  20 days now shows Hygiene hitting zero only from the odd bedtime accident.
+
 **Known gaps / next up:** playable multi-lot
 neighborhoods (switching households, community lots) — townies are the first step; multi-tile object
-picking polish; hygiene still occasionally bottoms out in long headless runs (warning, not a failure).
+picking polish.

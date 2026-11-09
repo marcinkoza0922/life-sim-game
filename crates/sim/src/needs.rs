@@ -115,6 +115,8 @@ pub fn decay_needs(world: &mut World) {
             match n {
                 Need::Comfort if matches!(posture.pose, Pose::Sit | Pose::Lie) => rate = 0.0,
                 Need::Hunger | Need::Bladder if sleeping => rate *= 0.5,
+                // nobody gets much grubbier in bed (full rate emptied a 30% tank overnight)
+                Need::Hygiene if sleeping => rate *= 0.4,
                 Need::Social | Need::Fun if sleeping => rate *= 0.2,
                 Need::Energy if posture.walking => rate *= 1.2,
                 _ => {}
