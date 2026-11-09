@@ -5,7 +5,7 @@
 //! Home focus · L story log · F1 inspector · F2 autonomy · F3 overlays · F4 profiler · F8 settings ·
 //! F12 screenshot · Esc cancel.
 //!
-//! Ctrl+S quick save · Ctrl+O quick load · ☰ Game → Saves… · `--continue` resumes the newest save · T roofs · M mute voices.
+//! Ctrl+S quick save · Ctrl+O quick load · ☰ Game → Saves… · `--continue` resumes the newest save · T roofs · M mute.
 //!
 //! Test hooks: `--seed N --minutes M --screenshot-after FRAMES PATH --mode live|buy|build --level L
 //! --debug --size WxH --cam YAW,PITCH,DIST --menu-on OBJECT_ID --speed I --load SAVE --creator --walls up|cutaway|down --show saves|neighborhood`
@@ -141,6 +141,8 @@ struct App {
     last: Instant,
     frames: u32,
     audio: game::audio::Audio,
+    /// Seconds until changed volumes are written to `settings.ron` (debounces slider drags).
+    volumes_save_in: Option<f32>,
 }
 
 impl App {
@@ -197,8 +199,13 @@ impl App {
         }
         game.log_seen = game.sim.world.res::<sim::log::SimLog>().total;
         // automated captures stay silent
-        let audio = if args.screenshot_after.is_some() { game::audio::Audio::disabled() } else { game::audio::Audio::new() };
-        App { args, game, gfx: None, cursor: (0.0, 0.0), keys: HashSet::new(), rmb: false, mmb: false, lmb_down_at: None, last: Instant::now(), frames: 0, audio }
+        let audio = if args.screenshot_after.is_some() {
+            game::audio::Audio::disabled()
+        } else {
+            game.volumes = game::audio::Volumes::load();
+            game::audio::Audio::new()
+        };
+        App { args, game, gfx: None, cursor: (0.0, 0.0), keys: HashSet::new(), rmb: false, mmb: false, lmb_down_at: None, last: Instant::now(), frames: 0, audio, volumes_save_in: None }
     }
 
     fn ndc(&self) -> Option<(f32, f32)> {
@@ -415,7 +422,19 @@ impl App {
 
         // voices for visible speakers (louder when the camera is close)
         {
-            self.audio.muted = self.game.mute || self.game.paused;
+            self.audio.muted = self.game.mute;
+            self.audio.paused = self.game.paused;
+            if self.audio.available() && self.audio.volumes != self.game.volumes {
+                self.volumes_save_in = Some(1.0);
+            }
+            self.audio.volumes = self.game.volumes;
+            if let Some(t) = self.volumes_save_in.as_mut() {
+                *t -= dt;
+                if *t <= 0.0 {
+                    self.game.volumes.save();
+                    self.volumes_save_in = None;
+                }
+            }
             let w = &self.game.sim.world;
             let eye = cam.eye;
             let mut speakers = Vec::new();

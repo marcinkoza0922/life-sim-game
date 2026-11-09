@@ -123,6 +123,8 @@ pub struct Game {
     /// Day of the last autosave (`None` until the first day change is seen).
     pub autosave_day: Option<u64>,
     pub mute: bool,
+    /// Sound volumes (☰ Game menu); saved to `settings.ron` when changed.
+    pub volumes: crate::audio::Volumes,
     /// The lot that was live last frame (see [`Game::check_lot_change`]).
     pub shown_lot: usize,
     /// Interface-only state (open menus, tabs).
@@ -171,6 +173,7 @@ impl Game {
             save_name: String::new(),
             autosave_day: None,
             mute: false,
+            volumes: Default::default(),
             shown_lot,
             hud: Default::default(),
         }
