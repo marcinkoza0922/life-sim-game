@@ -66,6 +66,8 @@ assets/
   textures/      <material id>/{albedo,normal,orm}.png tiling maps (embedded by game/build.rs)
   materialcraft/ materials.py: generates the .sbs packages and textures/ maps headlessly
   blender/       make_peons.py: builds the bodies, rig, hair and clips headlessly
+  vectorcraft/   make_icons.py: UI icon SVGs (icons/, sheet.svg) rasterised by vectorcraft-cli
+  ui/icons/      <name>.png 128 px UI icons (generated; embedded by game/src/icons.rs)
   fonts/         Nunito, Fredoka, Noto Emoji (OFL, licences alongside; embedded by hearth_ui)
 docs/
 ```

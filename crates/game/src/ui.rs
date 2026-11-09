@@ -19,6 +19,7 @@ use sim::log::LogKind;
 use sim::social::Relationships;
 use sim::time::FreeWill;
 
+use crate::icons::{Icon, IconSize, Icons};
 use crate::scene::{Label, LabelKind, WallMode};
 use crate::state::*;
 
@@ -48,12 +49,14 @@ pub struct HudState {
     pub buy_cat: Option<Category>,
     /// The peon the side panel showed last frame (a change makes it wobble).
     pub shown_peon: Option<Entity>,
+    pub icons: Icons,
 }
 
 const PANEL_W: f32 = 350.0;
 const PANEL_TOP: f32 = 116.0;
 
 pub fn draw(ui: &mut Ui, g: &mut Game, cx: &UiCtx) {
+    g.hud.icons.ensure(ui);
     labels(ui, cx);
     if g.creator.is_some() {
         creator_screen(ui, g);
@@ -896,9 +899,9 @@ fn peon_panel(ui: &mut Ui, g: &mut Game, e: Entity) {
 // ------------------------------------------------------------------------------------------------
 // Buy and Build
 
-/// A catalog tile: icon blob (colour or emoji), name and a price tag.
+/// A catalog tile: icon (a colour blob or icon art), name and a price tag.
 #[allow(clippy::too_many_arguments)]
-fn tile(ui: &mut Ui, label: &str, price: &str, color: Option<Color>, emoji: Option<&str>, selected: bool, enabled: bool, size: Vec2) -> Resp {
+fn tile(ui: &mut Ui, label: &str, price: &str, color: Option<Color>, icon: Option<hearth_ui::ImageId>, selected: bool, enabled: bool, size: Vec2) -> Resp {
     let id = ui.make_id(("tile", label));
     let slot = ui.alloc(size + vec2(0.0, LIP));
     let body = Rect::from_min_size(slot.min, size);
@@ -909,8 +912,9 @@ fn tile(ui: &mut Ui, label: &str, price: &str, color: Option<Color>, emoji: Opti
         let c = if enabled { c } else { c.desaturate(0.8) };
         ui.painter.rect_rotated(Rect::from_center_size(ic, Vec2::splat(22.0)), 7.0, 0.2, Paint::gradient(c.lighten(0.25), c).stroke(2.0, INK));
     }
-    if let Some(e) = emoji {
-        ui.paint_text(ic, Vec2::splat(0.5), e, FontId::Body, 20.0, INK.alpha(if enabled { 1.0 } else { 0.5 }));
+    if let Some(im) = icon {
+        let r = Rect::from_center_size(ic + vec2(2.0, 2.0), Vec2::splat(IconSize::Tile.points()));
+        ui.painter.image(&ui.images, im, r, 0.0, Color::WHITE.alpha(if enabled { 1.0 } else { 0.5 }), None);
     }
     let tg = ui.fonts.layout(price, FontId::Bold, 11.5, None);
     let tr = Rect::from_min_size(vec2(body.max.x - tg.size.x - 18.0, body.min.y + 8.0), tg.size + vec2(12.0, 4.0));
@@ -930,12 +934,21 @@ fn buy_panel(ui: &mut Ui, g: &mut Game) {
     let funds = g.sim.world.res::<Household>().funds;
     let mut new_tool = None;
     let cat = &mut g.hud.buy_cat;
+    let icons = &g.hud.icons;
     let tool = g.tool.clone();
+    // a chip with icon art (when it loaded)
+    let chip = |ui: &mut Ui, label: &str, icon: Option<Icon>, on: bool| {
+        let mut b = Button::new(label).small().selected(on);
+        b.icon = icon.and_then(|i| icons.get(i, IconSize::Chip));
+        ui.btn(b)
+    };
     side_panel(ui, "buy", 0.0, |ui| {
         ui.row(36.0, |ui| {
             ui.heading("Buy");
             ui.space((ui.avail_w() - 120.0).max(0.0));
-            let r = ui.btn(Button::new("💲 Sell").small().color(CORAL).selected(tool == Tool::Sell));
+            let mut b = Button::new("Sell").small().color(CORAL).selected(tool == Tool::Sell);
+            b.icon = icons.get(Icon::Sell, IconSize::Chip);
+            let r = ui.btn(b);
             ui.tooltip(&r, "Sell tool: click an object (or hover + Delete)");
             if r.clicked {
                 new_tool = Some(Tool::Sell);
@@ -943,11 +956,11 @@ fn buy_panel(ui: &mut Ui, g: &mut Game) {
         });
         ui.small("Click to place · R rotates · Esc cancels");
         ui.wrap(|ui| {
-            if ui.chip("All", cat.is_none()).clicked {
+            if chip(ui, "All", None, cat.is_none()).clicked {
                 *cat = None;
             }
             for c in CATEGORIES {
-                if data.objects.iter().any(|o| o.category == c) && ui.chip(format!("{c:?}"), *cat == Some(c)).clicked {
+                if data.objects.iter().any(|o| o.category == c) && chip(ui, &format!("{c:?}"), Some(Icon::category(c)), *cat == Some(c)).clicked {
                     *cat = Some(c);
                 }
             }
@@ -991,29 +1004,30 @@ fn build_panel(ui: &mut Ui, g: &mut Game) {
     let tool = g.tool.clone();
     let (mut wall_style, mut floor_style, mut pitch) = (g.wall_style, g.floor_style, g.roof_pitch);
     let mut tool_mut = g.tool.clone();
+    let icons = &g.hud.icons;
     side_panel(ui, "build", 0.0, |ui| {
         ui.heading("Build");
         ui.small("Drag to draw · R rotates stairs · PgUp/PgDn change level · Esc cancels");
         let h = rest_h(ui);
         ui.scroll("build", h, |ui| {
             let tools = [
-                (Tool::Room, "🏠", "Room", format!("{}/m", money(COST_WALL)), "Walls and floor in one drag"),
-                (Tool::Wall, "📏", "Wall", format!("{}/m", money(COST_WALL)), "Drag along the grid"),
-                (Tool::DeleteWall, "💥", "Knock down", "½ back".into(), "Delete walls for half their price back"),
-                (Tool::Door, "🚪", "Door", money(COST_DOOR), "Click a wall"),
-                (Tool::Window, "🔲", "Window", money(COST_WINDOW), "Click a wall"),
-                (Tool::Floor, "⬜", "Floor", money(COST_FLOOR), "Drag a rectangle (price per tile)"),
-                (Tool::DeleteFloor, "❌", "Rip floor", "free".into(), "Delete floor tiles"),
-                (Tool::Stairs { dir: sim::lot::Dir4::PosZ }, "📈", "Stairs", money(COST_STAIRS), "R rotates"),
-                (Tool::Basement, "🔻", "Dig", money(COST_DIG), "Dig a basement, per tile (basement levels only)"),
-                (Tool::Roof { kind: sim::lot::RoofKind::Gable }, "🔺", "Roof", money(COST_ROOF_TILE), "Per tile, on the level you're viewing"),
-                (Tool::DeleteRoof, "❎", "No roof", "free".into(), "Delete roofs"),
-                (Tool::Terrain { brush: sim::lot::TerrainBrush::Raise, radius: 2.0 }, "🌋", "Terrain", money(COST_TERRAIN), "Hold to sculpt (price per corner)"),
+                (Tool::Room, Icon::Room, "Room", format!("{}/m", money(COST_WALL)), "Walls and floor in one drag"),
+                (Tool::Wall, Icon::Wall, "Wall", format!("{}/m", money(COST_WALL)), "Drag along the grid"),
+                (Tool::DeleteWall, Icon::KnockDown, "Knock down", "½ back".into(), "Delete walls for half their price back"),
+                (Tool::Door, Icon::Door, "Door", money(COST_DOOR), "Click a wall"),
+                (Tool::Window, Icon::Window, "Window", money(COST_WINDOW), "Click a wall"),
+                (Tool::Floor, Icon::Floor, "Floor", money(COST_FLOOR), "Drag a rectangle (price per tile)"),
+                (Tool::DeleteFloor, Icon::RipFloor, "Rip floor", "free".into(), "Delete floor tiles"),
+                (Tool::Stairs { dir: sim::lot::Dir4::PosZ }, Icon::Stairs, "Stairs", money(COST_STAIRS), "R rotates"),
+                (Tool::Basement, Icon::Dig, "Dig", money(COST_DIG), "Dig a basement, per tile (basement levels only)"),
+                (Tool::Roof { kind: sim::lot::RoofKind::Gable }, Icon::Roof, "Roof", money(COST_ROOF_TILE), "Per tile, on the level you're viewing"),
+                (Tool::DeleteRoof, Icon::NoRoof, "No roof", "free".into(), "Delete roofs"),
+                (Tool::Terrain { brush: sim::lot::TerrainBrush::Raise, radius: 2.0 }, Icon::Terrain, "Terrain", money(COST_TERRAIN), "Hold to sculpt (price per corner)"),
             ];
             ui.wrap(|ui| {
                 for (t, icon, name, price, hint) in tools {
                     let sel = std::mem::discriminant(&tool) == std::mem::discriminant(&t);
-                    let r = tile(ui, name, &price, None, Some(icon), sel, true, vec2(98.0, 78.0));
+                    let r = tile(ui, name, &price, None, icons.get(icon, IconSize::Tile), sel, true, vec2(98.0, 78.0));
                     ui.tooltip(&r, hint);
                     if r.clicked {
                         new_tool = Some(t);

@@ -24,7 +24,7 @@ Current pipeline: object art is greybox primitives with flat PBR values in `asse
 `assets/models/*.glb` (embedded via `include_bytes!`); voices are synthesized in `game/src/audio.rs`;
 UI is our own `hearth_ui` crate (egui only for F1–F8 developer windows), with fonts bundled from
 `assets/fonts/`. Material textures (`assets/textures/<id>/`, see its README) are box-projected, so they
-need no UVs; no other image or audio files exist yet.
+need no UVs. UI icon art lives in `assets/ui/icons/` (see VectorCraft below); no audio files exist yet.
 
 - **Blender** (`blender` MCP, or `blender -b -P <script>`): meshes, rigs, animation clips. Prefer
   extending a checked-in generator script over hand-editing a .blend, so models stay reproducible.
@@ -43,10 +43,14 @@ need no UVs; no other image or audio files exist yet.
   rather than producing maps nothing loads).
 - **PhotoCraft**: raster images: reviewing or annotating `simctl render` / `screenshots/` output,
   contact sheets, reference boards, any future PNG asset (icons, thumbnails, splash).
-- **VectorCraft**: icon/UI art (bubble icons, catalog/category icons, logo). Icons are Noto Emoji
-  today; `hearth_ui` can show images (export PNGs into `assets/ui/`, `include_bytes!` them, register
-  with `ui.images.add_png(bytes, Some(max_px))` at about display size × 2 for HiDPI, then
-  `Button::icon` / `ui.image`). No SVG rasteriser, so export raster.
+- **VectorCraft**: icon/UI art (bubble icons, catalog/category icons, logo). Icons are hand-written
+  SVG in `assets/vectorcraft/make_icons.py` (64×64 viewBox, theme colours, 3.5 plum outline, white
+  gloss); running it writes `assets/vectorcraft/icons/*.svg` + `sheet.svg` (contact sheet) and
+  rasterises 128 px PNGs into `assets/ui/icons/` via `vectorcraft-cli run --in X.svg --export X.png
+  --scale 2` (headless, no MCP needed). To add one: add it to `ICONS`, rerun, add the variant to the
+  `icons!` list in `game/src/icons.rs`, which embeds them and registers each at its drawn pixel size
+  (`IconSize`) because the UI image atlas has no mipmaps. Build tools, Buy categories and Sell use
+  them; the remaining HUD/menu icons are still Noto Emoji.
 - **SoundCraft**: music and SFX when audio assets land (M9); speech stays synthesized.
 
 The craft MCP servers are user-scoped, and their read/write root is `~/CreativeWork` (outside the repo).
