@@ -1539,9 +1539,20 @@ fn neighborhood_window(ui: &mut Ui, g: &mut Game) {
 
 fn creator_screen(ui: &mut Ui, g: &mut Game) {
     let Some(c) = g.creator.as_mut() else { return };
-    match crate::creator::screen(ui, c) {
+    let action = crate::creator::screen(ui, c);
+    // frame the person being edited when the tab or the person changes (orbiting stays free)
+    let shot = c.camera_shot();
+    if c.shot != Some(shot) {
+        c.shot = Some(shot);
+        g.cam.target = c.anchor + shot.offset;
+        g.cam.dist = shot.dist;
+        g.cam.pitch = shot.pitch;
+        g.cam.lift = shot.lift;
+    }
+    match action {
         crate::creator::CreatorAction::MoveIn => {
             let c = g.creator.take().expect("creator open");
+            g.cam.lift = 0.0;
             match c.move_in_to(&mut g.sim) {
                 Ok(()) => {
                     g.check_lot_change();
@@ -1554,7 +1565,10 @@ fn creator_screen(ui: &mut Ui, g: &mut Game) {
                 }
             }
         }
-        crate::creator::CreatorAction::Cancel => g.creator = None,
+        crate::creator::CreatorAction::Cancel => {
+            g.creator = None;
+            g.cam.lift = 0.0;
+        }
         crate::creator::CreatorAction::None => {}
     }
 }

@@ -97,8 +97,12 @@ fn vs_shadow(v: VsIn) -> @builtin(position) vec4<f32> {
 
 // ---------------------------------------------------------------------------------------- skinned
 
-// Joint matrices (4 vec4 columns each) and per-draw palettes, indexed by the instance's `extra`.
+// Joint matrices (4 vec4 columns each), per-draw palettes and morph weights, indexed by the
+// instance's `extra`.
 @group(1) @binding(0) var<storage, read> skin: array<vec4<f32>>;
+// Sparse morph deltas of every uploaded skinned mesh: xyz = position delta, w = target index.
+// A vertex's entries are `morphs[morph.x .. morph.x + morph.y]`.
+@group(1) @binding(1) var<storage, read> morphs: array<vec4<f32>>;
 
 struct SkIn {
     @location(0) pos: vec3<f32>,
@@ -106,16 +110,15 @@ struct SkIn {
     @location(2) color: vec4<f32>,
     @location(3) joints: vec4<u32>,
     @location(4) weights: vec4<f32>,
-    @location(5) morph0: vec3<f32>,
-    @location(6) morph1: vec3<f32>,
-    @location(7) slot: u32,
+    @location(5) morph: vec2<u32>,
+    @location(7) slot: u32,  // palette slot in the low byte, skin region above
     @location(8) m0: vec4<f32>,
     @location(9) m1: vec4<f32>,
     @location(10) m2: vec4<f32>,
     @location(11) m3: vec4<f32>,
     @location(12) icolor: vec4<f32>,
     @location(13) params: vec4<f32>,
-    @location(14) extra: vec4<f32>,  // joint base, palette base, morph weights
+    @location(14) extra: vec4<f32>,  // joint base, palette base, morph weight base, hidden regions
 };
 
 fn joint_mat(i: u32) -> mat4x4<f32> {
@@ -134,7 +137,20 @@ fn skinned_model(v: SkIn) -> mat4x4<f32> {
 }
 
 fn morphed(v: SkIn) -> vec3<f32> {
-    return v.pos + v.morph0 * v.extra.z + v.morph1 * v.extra.w;
+    var p = v.pos;
+    let wbase = u32(v.extra.z + 0.5);
+    for (var i = v.morph.x; i < v.morph.x + v.morph.y; i++) {
+        let e = morphs[i];
+        let k = u32(e.w + 0.5);
+        p += e.xyz * skin[wbase + k / 4u][k % 4u];
+    }
+    return p;
+}
+
+// Skin regions covered by clothes are collapsed out of the way (outside the clip volume).
+fn hidden(v: SkIn) -> bool {
+    let region = v.slot >> 8u;
+    return region > 0u && ((u32(v.extra.w + 0.5) >> region) & 1u) == 1u;
 }
 
 @vertex
@@ -145,7 +161,10 @@ fn vs_skinned(v: SkIn) -> VsOut {
     o.clip = g.view_proj * world;
     o.world = world.xyz;
     o.normal = normalize((m * vec4<f32>(v.normal, 0.0)).xyz);
-    let tint = skin[u32(v.extra.y + 0.5) + v.slot];
+    if (hidden(v)) {
+        o.clip = vec4<f32>(0.0, 0.0, -2.0, 1.0);
+    }
+    let tint = skin[u32(v.extra.y + 0.5) + (v.slot & 255u)];
     let c = v.color * v.icolor * tint;
     o.color = vec4<f32>(pow(max(c.rgb, vec3<f32>(0.0)), vec3<f32>(2.2)), c.a);
     o.params = v.params;
@@ -156,6 +175,9 @@ fn vs_skinned(v: SkIn) -> VsOut {
 
 @vertex
 fn vs_shadow_skinned(v: SkIn) -> @builtin(position) vec4<f32> {
+    if (hidden(v)) {
+        return vec4<f32>(0.0, 0.0, -2.0, 1.0);
+    }
     return g.light_view_proj * skinned_model(v) * vec4<f32>(morphed(v), 1.0);
 }
 

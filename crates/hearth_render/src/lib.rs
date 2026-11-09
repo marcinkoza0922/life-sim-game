@@ -22,7 +22,8 @@ pub const SAMPLES: u32 = 4;
 pub const SHADOW_SIZE: u32 = 2048;
 pub const MAX_POINT_LIGHTS: usize = 16;
 /// Morph targets per skinned vertex.
-pub const MAX_MORPHS: usize = 2;
+/// Morph targets a skinned mesh can have (weights per draw).
+pub const MAX_MORPHS: usize = 32;
 /// Palette entries per skinned draw; vertex `slot` indexes it (slot 0 is conventionally white).
 pub const PALETTE_SLOTS: usize = 8;
 
@@ -73,8 +74,8 @@ impl MeshData {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct MeshId(pub u32);
 
-/// A vertex of a skinned mesh. Position deltas for up to [`MAX_MORPHS`] morph targets ride along;
-/// normals are not morphed.
+/// A vertex of a skinned mesh. Its morph-target position deltas live in the mesh's sparse
+/// [`SkinnedMeshData::morphs`] list (normals are not morphed).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 pub struct SkinnedVertex {
@@ -84,7 +85,9 @@ pub struct SkinnedVertex {
     pub color: [f32; 4],
     pub joints: [u16; 4],
     pub weights: [f32; 4],
-    pub morph: [[f32; 3]; MAX_MORPHS],
+    /// This vertex's entries in [`SkinnedMeshData::morphs`]: first index and count.
+    pub morph: [u32; 2],
+    /// Palette slot in the low byte; bits 8.. are the skin region (see [`SkinnedDraw::hide`]).
     pub slot: u32,
 }
 
@@ -92,6 +95,8 @@ pub struct SkinnedVertex {
 pub struct SkinnedMeshData {
     pub vertices: Vec<SkinnedVertex>,
     pub indices: Vec<u32>,
+    /// Sparse morph deltas: xyz = position delta, w = target index (< [`MAX_MORPHS`]).
+    pub morphs: Vec<[f32; 4]>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -110,6 +115,8 @@ pub struct SkinnedDraw {
     /// sRGB tints indexed by vertex slot.
     pub palette: [[f32; 4]; PALETTE_SLOTS],
     pub morph: [f32; MAX_MORPHS],
+    /// Skin regions not to draw (bit n hides vertices whose slot has region n; region 0 always draws).
+    pub hide: u32,
     /// Multiplies the whole mesh; alpha < 1 goes through the transparent pass.
     pub color: [f32; 4],
     pub roughness: f32,
@@ -120,7 +127,7 @@ pub struct SkinnedDraw {
 
 impl SkinnedDraw {
     pub fn new(mesh: SkinnedMeshId, pose: PoseId, model: Mat4, palette: [[f32; 4]; PALETTE_SLOTS]) -> Self {
-        SkinnedDraw { mesh, pose, model, palette, morph: [0.0; MAX_MORPHS], color: [1.0; 4], roughness: 0.7, metallic: 0.0, emissive: 0.0, flags: 0 }
+        SkinnedDraw { mesh, pose, model, palette, morph: [0.0; MAX_MORPHS], hide: 0, color: [1.0; 4], roughness: 0.7, metallic: 0.0, emissive: 0.0, flags: 0 }
     }
 }
 
@@ -390,7 +397,7 @@ struct SkInstanceRaw {
     model: [[f32; 4]; 4],
     color: [f32; 4],
     params: [f32; 4],
-    /// joint base, palette base (vec4 indices into the skin buffer), morph weights
+    /// joint base, palette base, morph weight base (vec4 indices into the skin buffer), hide mask
     extra: [f32; 4],
 }
 
@@ -468,6 +475,9 @@ pub struct Renderer {
     skin_buf: wgpu::Buffer,
     skin_cap: u64,
     skin_bg: wgpu::BindGroup,
+    /// Morph deltas of every skinned mesh uploaded so far (CPU copy, re-uploaded on growth).
+    morph_data: Vec<[f32; 4]>,
+    morph_buf: wgpu::Buffer,
     targets: Option<Targets>,
     pub stats: RenderStats,
 }
@@ -589,20 +599,18 @@ impl Renderer {
             immediate_size: 0,
         });
 
-        let skin_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("skin bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None },
-                count: None,
-            }],
-        });
+        let storage_entry = |binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::VERTEX,
+            ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None },
+            count: None,
+        };
+        let skin_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("skin bgl"), entries: &[storage_entry(0), storage_entry(1)] });
         let sk_layouts = [
             Some(wgpu::VertexBufferLayout {
                 array_stride: std::mem::size_of::<SkinnedVertex>() as u64,
                 step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x4, 3 => Uint16x4, 4 => Float32x4, 5 => Float32x3, 6 => Float32x3, 7 => Uint32],
+                attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x4, 3 => Uint16x4, 4 => Float32x4, 5 => Uint32x2, 7 => Uint32],
             }),
             Some(wgpu::VertexBufferLayout {
                 array_stride: std::mem::size_of::<SkInstanceRaw>() as u64,
@@ -682,7 +690,8 @@ impl Renderer {
         let sk_instances = vertex_buffer(device, "skinned instances", sk_instance_cap * std::mem::size_of::<SkInstanceRaw>() as u64);
         let skin_cap = 4096; // vec4s
         let skin_buf = storage_buffer(device, skin_cap * 16);
-        let skin_bg = skin_bind_group(device, &skin_bgl, &skin_buf);
+        let morph_buf = storage_buffer(device, 16);
+        let skin_bg = skin_bind_group(device, &skin_bgl, &skin_buf, &morph_buf);
 
         let mut r = Renderer {
             gpu: gpu.clone(),
@@ -711,6 +720,8 @@ impl Renderer {
             skin_bgl,
             skin_buf,
             skin_cap,
+            morph_data: Vec::new(),
+            morph_buf,
             skin_bg,
             targets: None,
             stats: RenderStats::default(),
@@ -776,11 +787,20 @@ impl Renderer {
 
     pub fn upload_skinned_mesh(&mut self, m: &SkinnedMeshData) -> SkinnedMeshId {
         let id = SkinnedMeshId(self.sk_meshes.len() as u32);
+        // morph entries join the shared buffer; the vertices' ranges shift by where they landed
+        let base = self.morph_data.len() as u32;
+        let vertices: Vec<SkinnedVertex> = m.vertices.iter().map(|v| SkinnedVertex { morph: [v.morph[0] + base, v.morph[1]], ..*v }).collect();
+        if !m.morphs.is_empty() && !m.indices.is_empty() {
+            self.morph_data.extend_from_slice(&m.morphs);
+            let device = &self.gpu.device;
+            self.morph_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("morphs"), contents: bytemuck::cast_slice(&self.morph_data), usage: wgpu::BufferUsages::STORAGE });
+            self.skin_bg = skin_bind_group(device, &self.skin_bgl, &self.skin_buf, &self.morph_buf);
+        }
         let mesh = (!m.indices.is_empty()).then(|| {
             let device = &self.gpu.device;
             let vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("skinned vb"),
-                contents: bytemuck::cast_slice(&m.vertices),
+                contents: bytemuck::cast_slice(&vertices),
                 usage: wgpu::BufferUsages::VERTEX,
             });
             let ib = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -898,7 +918,7 @@ impl Renderer {
                 }
             })
         });
-        let mut skin_data: Vec<[f32; 4]> = Vec::with_capacity(frame.joints.len() * 4 + sk_order.len() * PALETTE_SLOTS);
+        let mut skin_data: Vec<[f32; 4]> = Vec::with_capacity(frame.joints.len() * 4 + sk_order.len() * (PALETTE_SLOTS + MAX_MORPHS / 4));
         for m in &frame.joints {
             skin_data.extend(m.to_cols_array_2d());
         }
@@ -906,11 +926,14 @@ impl Renderer {
         for d in &sk_order {
             let palette_base = skin_data.len();
             skin_data.extend(d.palette);
+            let morph_base = skin_data.len();
+            skin_data.extend_from_slice(d.morph.as_chunks::<4>().0);
             sk_raw.push(SkInstanceRaw {
                 model: d.model.to_cols_array_2d(),
                 color: d.color,
                 params: [d.roughness, d.metallic, d.emissive, (d.flags & 3) as f32],
-                extra: [(d.pose.0 * 4) as f32, palette_base as f32, d.morph[0], d.morph[1]],
+                // the hide mask fits a float exactly (regions < 24)
+                extra: [(d.pose.0 * 4) as f32, palette_base as f32, morph_base as f32, (d.hide & 0xff_ffff) as f32],
             });
         }
         if skin_data.is_empty() {
@@ -919,7 +942,7 @@ impl Renderer {
         if skin_data.len() as u64 > self.skin_cap {
             self.skin_cap = (skin_data.len() as u64).next_power_of_two();
             self.skin_buf = storage_buffer(device, self.skin_cap * 16);
-            self.skin_bg = skin_bind_group(device, &self.skin_bgl, &self.skin_buf);
+            self.skin_bg = skin_bind_group(device, &self.skin_bgl, &self.skin_buf, &self.morph_buf);
         }
         queue.write_buffer(&self.skin_buf, 0, bytemuck::cast_slice(&skin_data));
         if sk_raw.len() as u64 > self.sk_instance_cap {
@@ -1219,8 +1242,12 @@ fn texture_array(device: &wgpu::Device, queue: &wgpu::Queue, label: &str, format
     tex.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() })
 }
 
-fn skin_bind_group(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, buf: &wgpu::Buffer) -> wgpu::BindGroup {
-    device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("skin bg"), layout, entries: &[wgpu::BindGroupEntry { binding: 0, resource: buf.as_entire_binding() }] })
+fn skin_bind_group(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, buf: &wgpu::Buffer, morphs: &wgpu::Buffer) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("skin bg"),
+        layout,
+        entries: &[wgpu::BindGroupEntry { binding: 0, resource: buf.as_entire_binding() }, wgpu::BindGroupEntry { binding: 1, resource: morphs.as_entire_binding() }],
+    })
 }
 
 #[cfg(test)]

@@ -356,7 +356,11 @@ impl Game {
         self.tool = Tool::None;
         // stage the line-up on the front lawn
         self.level = 0;
-        self.cam.target = Vec3::new(17.5, 0.0, 26.5);
+        let anchor = Vec3::new(17.5, 0.0, 26.5);
+        if let Some(c) = self.creator.as_mut() {
+            c.anchor = anchor;
+        }
+        self.cam.target = anchor;
         self.cam.dist = 9.0;
         self.cam.pitch = 0.32;
         self.cam.yaw = 0.25;

@@ -182,7 +182,9 @@ pub fn spawn_child_as(world: &mut World, a: Entity, b: Option<Entity>, member: b
         let mut rng = world.res_mut::<SimRng>();
         genetics::inherit(&mut rng, &ga, &gb)
     };
-    spec.appearance = genetics::express(&genes, LifeStage::Infant, spec.appearance.shirt, spec.appearance.pants, spec.appearance.hair_style);
+    let mut genes = genes;
+    genetics::sexed_shape(&mut world.res_mut::<SimRng>(), spec.sex, &mut genes.shape);
+    spec.appearance = genetics::express(&genes, LifeStage::Infant, &spec.appearance);
     spec.genes = Some(genes);
     if let Some(t) = genetics::inherit_trait(&mut world.res_mut::<SimRng>(), &data, &pa, &pb) {
         spec.traits = vec![t];

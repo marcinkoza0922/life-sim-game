@@ -10,21 +10,24 @@ pub struct OrbitCamera {
     pub yaw: f32,
     pub pitch: f32,
     pub dist: f32,
+    /// Raises the focus point above the floor focus (close-ups in the household creator).
+    pub lift: f32,
     /// Smoothed values actually used for rendering.
     pub smooth_target: Vec3,
     pub smooth_yaw: f32,
     pub smooth_pitch: f32,
     pub smooth_dist: f32,
+    pub smooth_lift: f32,
 }
 
 impl OrbitCamera {
     pub fn new(target: Vec3) -> Self {
         let (yaw, pitch, dist) = (0.6, 0.75, 26.0);
-        OrbitCamera { target, yaw, pitch, dist, smooth_target: target, smooth_yaw: yaw, smooth_pitch: pitch, smooth_dist: dist }
+        OrbitCamera { target, yaw, pitch, dist, lift: 0.0, smooth_target: target, smooth_yaw: yaw, smooth_pitch: pitch, smooth_dist: dist, smooth_lift: 0.0 }
     }
 
     pub fn focus(&self, level: i32) -> Vec3 {
-        Vec3::new(self.smooth_target.x, level as f32 * LEVEL_HEIGHT + 0.5, self.smooth_target.z)
+        Vec3::new(self.smooth_target.x, level as f32 * LEVEL_HEIGHT + 0.5 + self.smooth_lift, self.smooth_target.z)
     }
 
     pub fn camera(&self, level: i32, aspect: f32) -> Camera {
@@ -37,6 +40,7 @@ impl OrbitCamera {
         self.smooth_yaw += (self.yaw - self.smooth_yaw) * k;
         self.smooth_pitch += (self.pitch - self.smooth_pitch) * k;
         self.smooth_dist += (self.dist - self.smooth_dist) * k;
+        self.smooth_lift += (self.lift - self.smooth_lift) * k;
     }
 
     pub fn snap(&mut self) {
@@ -44,6 +48,7 @@ impl OrbitCamera {
         self.smooth_yaw = self.yaw;
         self.smooth_pitch = self.pitch;
         self.smooth_dist = self.dist;
+        self.smooth_lift = self.lift;
     }
 
     /// Pan in screen-aligned ground directions.

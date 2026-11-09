@@ -206,22 +206,67 @@ impl Transform {
     }
 }
 
-/// Genes that drive appearance (placeholder bodies now, morph targets later).
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// What gets rendered: the expressed genes (see [`crate::genetics::express`]) plus the clothes and
+/// grooming a peon picked. Fields added after the first saves default when missing.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Appearance {
     pub skin: [f32; 3],
     pub hair: [f32; 3],
+    /// Top colour.
     pub shirt: [f32; 3],
+    /// Bottom colour.
     pub pants: [f32; 3],
     /// Multiplier on stage height (0.9–1.1).
     pub height: f32,
     /// 0 = slim, 1 = heavy.
     pub build: f32,
-    /// Index of hair style.
+    /// Index into [`crate::genetics::HAIR_STYLES`].
     pub hair_style: u8,
     /// Iris colour (from [`Genes::eyes`]; saves from before eye colour default to brown).
     #[serde(default = "crate::genetics::default_eyes")]
     pub eyes: [f32; 3],
+    /// Face and body shape sliders (ids in [`crate::genetics::FACE_SLIDERS`] and
+    /// [`crate::genetics::BODY_SLIDERS`]), each -1..1; missing = 0 (average).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub shape: std::collections::BTreeMap<String, f32>,
+    /// Index into [`crate::genetics::FACIAL_HAIR`] (0 = clean-shaven).
+    #[serde(default)]
+    pub facial_hair: u8,
+    /// Index into [`crate::genetics::TOPS`].
+    #[serde(default)]
+    pub top: u8,
+    /// Index into [`crate::genetics::BOTTOMS`].
+    #[serde(default)]
+    pub bottom: u8,
+    #[serde(default = "crate::genetics::default_shoes")]
+    pub shoes: [f32; 3],
+}
+
+impl Default for Appearance {
+    fn default() -> Self {
+        Appearance {
+            skin: [0.87, 0.67, 0.5],
+            hair: [0.35, 0.22, 0.1],
+            shirt: [0.3, 0.55, 0.85],
+            pants: [0.25, 0.25, 0.32],
+            height: 1.0,
+            build: 0.5,
+            hair_style: 0,
+            eyes: crate::genetics::default_eyes(),
+            shape: Default::default(),
+            facial_hair: 0,
+            top: 0,
+            bottom: 0,
+            shoes: crate::genetics::default_shoes(),
+        }
+    }
+}
+
+impl Appearance {
+    /// A shape slider's value (0 when unset).
+    pub fn shape(&self, id: &str) -> f32 {
+        self.shape.get(id).copied().unwrap_or(0.0)
+    }
 }
 
 /// What the body is currently doing (for rendering/animation).
@@ -412,6 +457,9 @@ pub struct Genes {
     pub height: f32,
     /// 0 = slim, 1 = heavy.
     pub build: f32,
+    /// Face and body shape (see [`Appearance::shape`]).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub shape: std::collections::BTreeMap<String, f32>,
 }
 
 /// Enrolled in school (Child and Teen).

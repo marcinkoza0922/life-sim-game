@@ -8,7 +8,7 @@
 //! Ctrl+S quick save · Ctrl+O quick load · ☰ Game → Saves… · `--continue` resumes the newest save · T roofs · M mute.
 //!
 //! Test hooks: `--seed N --minutes M --screenshot-after FRAMES PATH --mode live|buy|build --level L
-//! --debug --size WxH --cam YAW,PITCH,DIST --menu-on OBJECT_ID --speed I --load SAVE --creator --walls up|cutaway|down --show saves|neighborhood`
+//! --debug --size WxH --cam YAW,PITCH,DIST --menu-on OBJECT_ID --speed I --load SAVE --creator [--creator-tab basics|face|body|hair|outfit|personality] --walls up|cutaway|down --show saves|neighborhood`
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -54,12 +54,14 @@ struct Args {
     /// Resume the newest save in `saves/`.
     resume: bool,
     creator: bool,
+    /// Creator tab to open on (implies `--creator`).
+    creator_tab: Option<String>,
     walls: Option<scene::WallMode>,
     show: Option<String>,
 }
 
 fn parse_args() -> Args {
-    let mut a = Args { seed: 7, minutes: 0, screenshot_after: None, mode: Mode::Live, level: 0, debug: false, size: (1600, 960), cam: None, menu_on: None, speed: 0, load: None, resume: false, creator: false, walls: None, show: None };
+    let mut a = Args { seed: 7, minutes: 0, screenshot_after: None, mode: Mode::Live, level: 0, debug: false, size: (1600, 960), cam: None, menu_on: None, speed: 0, load: None, resume: false, creator: false, creator_tab: None, walls: None, show: None };
     let mut it = std::env::args().skip(1);
     while let Some(x) = it.next() {
         match x.as_str() {
@@ -91,6 +93,10 @@ fn parse_args() -> Args {
             "--load" => a.load = it.next().map(PathBuf::from),
             "--continue" => a.resume = true,
             "--creator" => a.creator = true,
+            "--creator-tab" => {
+                a.creator = true;
+                a.creator_tab = it.next();
+            }
             "--show" => a.show = it.next(),
             "--walls" => {
                 a.walls = Some(match it.next().unwrap().as_str() {
@@ -255,6 +261,16 @@ impl App {
         let mut game = Game::new(sim);
         if args.creator {
             game.open_creator();
+            if let (Some(c), Some(t)) = (game.creator.as_mut(), args.creator_tab.as_deref()) {
+                c.tab = game::creator::Tab::ALL.into_iter().find(|tab| tab.label().eq_ignore_ascii_case(t)).unwrap_or_default();
+                // apply the tab's shot now so the screenshot doesn't catch the camera mid-move
+                let shot = c.camera_shot();
+                c.shot = Some(shot);
+                game.cam.target = c.anchor + shot.offset;
+                game.cam.dist = shot.dist;
+                game.cam.pitch = shot.pitch;
+                game.cam.lift = shot.lift;
+            }
             game.cam.snap();
         }
         match args.show.as_deref() {
@@ -546,11 +562,14 @@ impl App {
         }
         let (terrain_mesh, roof_meshes) = self.gfx.as_ref().map(|g| (g.meshes.terrain, g.meshes.roofs.clone())).unwrap_or_default();
         let preview = self.game.creator.as_ref().map(|c| c.preview()).unwrap_or_default();
+        let floor_focus = self.game.cam.focus(self.game.level) - Vec3::Y * self.game.cam.smooth_lift;
+        let preview_at = self.game.creator.as_ref().map_or(floor_focus, |c| Vec3::new(c.anchor.x, floor_focus.y, c.anchor.z));
         let opts = SceneOptions {
             terrain_mesh,
             roof_meshes,
             show_roofs: self.game.show_roofs,
             preview,
+            preview_at,
             active_level: self.game.level,
             wall_mode: self.game.wall_mode,
             alpha: self.game.alpha,

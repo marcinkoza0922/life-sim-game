@@ -1,0 +1,555 @@
+"""Body mesh, skin regions, body-shape keys and clothing for the peon generator (see make_peons.py).
+
+The body is a skin-modifier mesh grown from a stick figure that follows the rig. Its faces are cut
+along the hems clothes use (neckline, sleeves, belt, shorts, shoes) and every skin face gets the
+material `skin.rN` for the region N it lies in, so the game can hide skin a garment covers
+(no poke-through) by region. Garments are copies of the body's region faces pushed out along the
+normals, so they share its skinning and shape keys.
+"""
+
+import math
+
+import bmesh
+import bpy
+from mathutils import Vector
+from mathutils.kdtree import KDTree
+
+# skin regions (bit numbers of the game's hide mask); 0 = always drawn (head, neck, hands)
+R_CHEST, R_BELLY, R_SHOULDER, R_UPPER_ARM, R_FOREARM, R_PELVIS, R_THIGH, R_KNEE, R_SHIN, R_FOOT = range(1, 11)
+
+# body shape keys: id -> label (the order of the keys); slim/heavy are driven by `build`
+BODY_SLIDERS = [
+    ("frame", "Frame"),
+    ("muscle", "Muscle"),
+    ("shoulders", "Shoulders"),
+    ("bust", "Chest"),
+    ("waist", "Waist"),
+    ("hips", "Hips"),
+    ("belly", "Belly"),
+]
+
+# garments: name -> (palette material, regions it covers, thickness as a fraction of H)
+GARMENTS = {
+    "top_tee": ("shirt", {R_CHEST, R_BELLY, R_SHOULDER}, 0.0045),
+    "top_long": ("shirt", {R_CHEST, R_BELLY, R_SHOULDER, R_UPPER_ARM, R_FOREARM}, 0.0045),
+    "top_tank": ("shirt", {R_CHEST, R_BELLY}, 0.004),
+    "top_dress": ("shirt", {R_CHEST, R_BELLY, R_PELVIS}, 0.0045),
+    "bottom_trousers": ("pants", {R_PELVIS, R_THIGH, R_KNEE, R_SHIN}, 0.005),
+    "bottom_shorts": ("pants", {R_PELVIS, R_THIGH}, 0.005),
+    "bottom_skirt": ("pants", {R_PELVIS}, 0.005),
+    "shoes": ("shoes", {R_FOOT}, 0.007),
+}
+SKIRTS = {"top_dress": 0.78, "bottom_skirt": 0.55}  # hem as a fraction of the leg down to the knee... and past
+
+
+def link(obj):
+    bpy.context.scene.collection.objects.link(obj)
+    return obj
+
+
+def select_only(*objs):
+    bpy.ops.object.select_all(action="DESELECT")
+    for o in objs:
+        o.select_set(True)
+    bpy.context.view_layer.objects.active = objs[0]
+
+
+# ------------------------------------------------------------------------------------------------
+# landmarks
+
+
+def torso_z(d, f):
+    return d.legs + d.torso * f
+
+
+class Hems:
+    """Where garments end, shared by the region cuts and the skirt builder."""
+
+    def __init__(self, d, arm_points, leg_points):
+        self.torso_x = d.width * 0.4  # past this the armpit web belongs to the arm
+        self.neckline = d.neck_z - d.torso * 0.07
+        self.neck_normal = Vector((0, -0.45, 1)).normalized()  # lower in front: a scoop neck
+        self.chest = torso_z(d, 0.52)
+        self.belt = torso_z(d, 0.14)
+        self.shoe = d.ankle_z + d.H * 0.032
+        self.arms = {}
+        self.legs = {}
+        for side, sfx in ((1, "L"), (-1, "R")):
+            sh, el, wr, tip = arm_points(d, side)
+            ax = (el - sh).normalized()
+            self.arms[sfx] = dict(
+                # torso/arm boundary: a plane through the armpit leaning out
+                shoulder=(Vector((side * d.shoulder_x * 0.8, 0, d.shoulder_z)), Vector((side * 0.85, 0, 0.5)).normalized()),
+                sleeve=(sh.lerp(el, 0.42), ax),
+                elbow=(el, ax),
+                wrist=(wr + (wr - el).normalized() * d.H * 0.004, (wr - el).normalized()),
+            )
+            hip, knee, ankle, toe = leg_points(d, side)
+            lx = (knee - hip).normalized()
+            self.legs[sfx] = dict(shorts=(hip.lerp(knee, 0.42), lx), knee=(knee + lx * d.H * 0.02, lx))
+
+
+# ------------------------------------------------------------------------------------------------
+# body mesh
+
+
+MB_STIFF = 10.0
+MB_SCALE = 1 / 0.78  # a lone metaball element's surface sits at 0.78 x its radius (stiffness 10)
+
+
+class Meta:
+    """Builds a metaball from primitives given by their surface sizes."""
+
+    def __init__(self, name):
+        self.mb = bpy.data.metaballs.new(name)
+        self.mb.threshold = 0.6
+        self.obj = link(bpy.data.objects.new(name, self.mb))
+
+    def ell(self, c, rx, ry, rz, rot=None):
+        e = self.mb.elements.new()
+        e.type = "ELLIPSOID"
+        r = max(rx, ry, rz)
+        e.radius = r * MB_SCALE
+        e.size_x, e.size_y, e.size_z = rx / r, ry / r, rz / r
+        e.co = Vector(c)
+        if rot is not None:
+            e.rotation = rot
+        e.stiffness = MB_STIFF
+
+    def cap(self, a, b, r, trim=(0.0, 0.0)):
+        """Capsule from a to b; trim shortens either end by that many radii (so chained capsules
+        don't double up their fields into a bulge at the shared joint)."""
+        a, b = Vector(a), Vector(b)
+        dirv = (b - a).normalized()
+        a, b = a + dirv * r * trim[0], b - dirv * r * trim[1]
+        e = self.mb.elements.new()
+        e.type = "CAPSULE"
+        e.radius = r * MB_SCALE
+        e.co = (a + b) * 0.5
+        e.size_x = (b - a).length * 0.5  # absolute half-length
+        e.rotation = Vector((1, 0, 0)).rotation_difference((b - a).normalized())
+        e.stiffness = MB_STIFF
+
+
+def make_body(d, arm_points, leg_points):
+    """Metaball body (organic blends at the shoulders, hips and armpits), voxel-remeshed into an
+    even quad mesh."""
+    from mathutils import Matrix
+
+    w, dp, H = d.width, d.depth, d.H
+    T = d.torso
+    tz = lambda f: torso_z(d, f)
+    m = Meta("body_mb")
+    m.mb.resolution = H * 0.006
+    m.mb.render_resolution = H * 0.006
+    # torso masses
+    m.ell((0, 0.008 * H, tz(0.13)), w * 0.31, dp * 0.44, T * 0.15)  # pelvis
+    for sx in (1, -1):
+        m.ell((sx * w * 0.13, dp * 0.16, tz(0.05)), w * 0.15, dp * 0.28, T * 0.13)  # glutes
+    m.ell((0, 0.0, tz(0.38)), w * 0.29, dp * 0.41, T * 0.26)  # abdomen
+    m.ell((0, 0.0, tz(0.64)), w * 0.35, dp * 0.47, T * 0.25)  # ribcage
+    for sx in (1, -1):
+        m.ell((sx * w * 0.14, -dp * 0.15, tz(0.75)), w * 0.16, dp * 0.22, T * 0.1)  # pecs
+    m.cap((-d.shoulder_x * 0.7, 0.012 * H, d.shoulder_z - T * 0.02), (d.shoulder_x * 0.7, 0.012 * H, d.shoulder_z - T * 0.02), dp * 0.3)  # shoulder girdle
+    for sx in (1, -1):
+        m.cap((0, 0.02 * H, d.neck_z - T * 0.02), (sx * d.shoulder_x * 0.75, 0.015 * H, d.shoulder_z - T * 0.01), d.limb * 0.5)  # traps
+    m.cap((0, 0.008 * H, d.neck_z - T * 0.05), (0, 0.002 * H, d.neck_z + d.head_h * 0.32), d.limb * 0.7)  # neck
+    ar, tr = d.arm_r, d.thigh_r
+    for side in (1, -1):
+        sh, el, wr, tip = arm_points(d, side)
+        ax = (el - sh).normalized()
+        m.ell(sh + ax * ar * 0.5 + Vector((side * ar * 0.1, 0, 0)), ar * 1.25, ar * 1.25, ar * 1.5,
+              Vector((0, 0, 1)).rotation_difference(-ax))  # deltoid
+        m.cap(sh, el, ar * 0.98, (0, 0.5))
+        m.ell(sh.lerp(el, 0.55) + Vector((0, -ar * 0.25, 0)), ar * 0.7, ar * 0.75, ar * 1.6, Vector((0, 0, 1)).rotation_difference(-ax))  # biceps
+        fa = (wr - el).normalized()
+        m.cap(el, wr, ar * 0.68, (0.3, 0))
+        m.ell(el.lerp(wr, 0.3), ar * 0.92, ar * 0.85, (wr - el).length * 0.32, Vector((0, 0, 1)).rotation_difference(fa))  # forearm mass
+        hd = (tip - wr).normalized()
+        # palm faces the thigh: long along the hand, wide front-to-back, thin sideways
+        frame = Matrix((hd.cross(Vector((0, 1, 0))).normalized(), Vector((0, 1, 0)), hd)).transposed().to_quaternion()
+        palm_len = H * 0.05
+        m.ell(wr + hd * palm_len * 0.55, ar * 0.42, ar * 1.0, palm_len * 0.6, frame)
+        fing = tip - hd * H * 0.004
+        k0 = wr + hd * palm_len
+        m.ell(k0.lerp(fing, 0.45), ar * 0.34, ar * 0.92, (fing - k0).length * 0.6, frame)
+        m.cap(wr + hd * H * 0.018 + Vector((0, -ar * 0.55, 0)), wr + hd * H * 0.048 + Vector((-side * ar * 0.15, -ar * 0.95, 0)), ar * 0.28)  # thumb
+        hip, knee, ankle, toe = leg_points(d, side)
+        m.cap(hip, knee, tr * 0.78, (0, 0.4))
+        m.ell(hip.lerp(knee, 0.3) + Vector((side * tr * 0.08, -tr * 0.05, 0)), tr * 0.95, tr * 0.95, (knee - hip).length * 0.42)  # thigh mass
+        m.cap(knee, ankle, tr * 0.5, (0.4, 0))
+        m.ell(knee.lerp(ankle, 0.3) + Vector((side * tr * 0.03, tr * 0.14, 0)), tr * 0.64, tr * 0.64, (knee - ankle).length * 0.27)  # calf
+        # foot: heel to toe, flat underneath
+        heel = Vector((ankle.x, ankle.y + tr * 0.25, d.ankle_z * 0.55))
+        toe_p = Vector((toe.x, toe.y, d.ankle_z * 0.4))
+        m.ell(heel.lerp(toe_p, 0.5), tr * 0.48, (toe_p - heel).length * 0.5, d.ankle_z * 0.55,
+              Vector((0, 1, 0)).rotation_difference((toe_p - heel).normalized()))
+        m.cap(ankle, heel.lerp(toe_p, 0.35), tr * 0.45)
+
+    dg = bpy.context.evaluated_depsgraph_get()
+    me = bpy.data.meshes.new_from_object(m.obj.evaluated_get(dg))
+    me.name = "body"
+    bpy.data.objects.remove(m.obj)
+    obj = link(bpy.data.objects.new("body", me))
+    select_only(obj)
+    rm = obj.modifiers.new("remesh", "REMESH")
+    rm.mode = "VOXEL"
+    rm.voxel_size = H * 0.0105
+    bpy.ops.object.modifier_apply(modifier="remesh")
+    sm = obj.modifiers.new("smooth", "CORRECTIVE_SMOOTH")
+    sm.iterations = 4
+    sm.use_only_smooth = True
+    sm.smooth_type = "LENGTH_WEIGHTED"
+    bpy.ops.object.modifier_apply(modifier="smooth")
+    # flatten the soles onto the floor
+    for v in me.vertices:
+        if v.co.z < d.H * 0.004:
+            v.co.z = d.H * 0.004 * 0.5 + max(0.0, v.co.z) * 0.5
+    bpy.ops.object.shade_smooth()
+    return obj
+
+
+# ------------------------------------------------------------------------------------------------
+# regions
+
+
+def segment_dist(p, a, b):
+    ab = b - a
+    t = max(0.0, min(1.0, (p - a).dot(ab) / max(ab.length_squared, 1e-9)))
+    return (p - (a + ab * t)).length, t
+
+
+def bone_segments(rig):
+    return {b.name: (b.head_local.copy(), b.tail_local.copy()) for b in rig.data.bones}
+
+
+def nearest_bone(p, segs, names=None):
+    best, bt, bn = 1e9, 0.0, None
+    for n, (a, b) in segs.items():
+        if names and n not in names:
+            continue
+        dd, t = segment_dist(p, a, b)
+        if dd < best:
+            best, bt, bn = dd, t, n
+    return bn, bt
+
+
+def side_of(p):
+    return "L" if p.x > 0 else "R"
+
+
+def region_of(c, segs, hems):
+    """Skin region of a point on the body."""
+    sfx = side_of(c)
+    arm = hems.arms[sfx]
+    co, no = arm["shoulder"]
+    bn, _ = nearest_bone(c, segs)
+    is_arm = bn.startswith(("upper_arm", "forearm", "hand"))
+    # the arm starts at the shoulder plane (up top, where the cut was made) or at the armpit
+    web = abs(c.x) > hems.torso_x and c.z > hems.belt and not bn.startswith(("thigh", "shin", "foot"))
+    if web or ((c - co).dot(no) > 0 and (is_arm or c.z > hems.chest - 0.02)):
+        if (c - arm["wrist"][0]).dot(arm["wrist"][1]) > 0:
+            return 0
+        if (c - arm["elbow"][0]).dot(arm["elbow"][1]) > 0:
+            return R_FOREARM
+        if (c - arm["sleeve"][0]).dot(arm["sleeve"][1]) > 0:
+            return R_UPPER_ARM
+        return R_SHOULDER
+    if bn.startswith(("thigh", "shin", "foot")) and c.z < hems.belt:
+        leg = hems.legs[sfx]
+        if c.z < hems.shoe:
+            return R_FOOT
+        if (c - leg["knee"][0]).dot(leg["knee"][1]) > 0:
+            return R_SHIN
+        if (c - leg["shorts"][0]).dot(leg["shorts"][1]) > 0:
+            return R_KNEE
+        return R_THIGH
+    if (c - Vector((0, 0, hems.neckline))).dot(hems.neck_normal) > 0 or bn in ("neck", "head"):
+        return 0
+    if c.z < hems.belt:
+        return R_PELVIS
+    if c.z < hems.chest:
+        return R_BELLY
+    return R_CHEST
+
+
+def cut_regions(body, rig, hems):
+    """Cuts edge loops along every hem so region boundaries are straight, then assigns each face
+    the material `skin.rN`."""
+    me = body.data
+    segs = bone_segments(rig)
+    bm = bmesh.new()
+    bm.from_mesh(me)
+
+    def cut(pred, co, no):
+        faces = [f for f in bm.faces if pred(f.calc_center_median())]
+        geom = list({e for f in faces for e in f.edges}) + faces + list({v for f in faces for v in f.verts})
+        bmesh.ops.bisect_plane(bm, geom=geom, plane_co=co, plane_no=no)
+
+    is_arm = lambda c: nearest_bone(c, segs)[0].startswith(("upper_arm", "forearm", "hand"))
+    is_leg = lambda c: nearest_bone(c, segs)[0].startswith(("thigh", "shin", "foot"))
+    torso = lambda c: not is_arm(c) and nearest_bone(c, segs)[0] not in ("head",)
+    cut(torso, (0, 0, hems.neckline), hems.neck_normal)
+    cut(lambda c: torso(c) and not is_leg(c), (0, 0, hems.chest), (0, 0, 1))
+    cut(lambda c: not is_arm(c), (0, 0, hems.belt), (0, 0, 1))
+    cut(is_leg, (0, 0, hems.shoe), (0, 0, 1))
+    for sfx, arm in hems.arms.items():
+        mine = lambda c, sfx=sfx: side_of(c) == sfx
+        cut(lambda c, m=mine: m(c) and c.z > hems.chest - 0.02, *arm["shoulder"])
+        for k in ("sleeve", "elbow", "wrist"):
+            cut(lambda c, m=mine: m(c) and is_arm(c), *arm[k])
+        for k in ("shorts", "knee"):
+            cut(lambda c, m=mine: m(c) and is_leg(c), *hems.legs[sfx][k])
+
+    names = [f"skin.r{i}" for i in range(11)]
+    for n in names:
+        if n not in bpy.data.materials:
+            m = bpy.data.materials["skin"].copy()
+            m.name = n
+        me.materials.append(bpy.data.materials[n])
+    for f in bm.faces:
+        f.material_index = region_of(f.calc_center_median(), segs, hems)
+        f.smooth = True
+    bm.to_mesh(me)
+    bm.free()
+
+
+# ------------------------------------------------------------------------------------------------
+# skinning
+
+
+def weight_body(body, rig):
+    """Bone-heat automatic weights; any vertex left unweighted gets its nearest bone."""
+    select_only(rig)
+    body.select_set(True)
+    bpy.context.view_layer.objects.active = rig
+    bpy.ops.object.parent_set(type="ARMATURE_AUTO")
+    segs = bone_segments(rig)
+    groups = {g.index: g.name for g in body.vertex_groups}
+    for vtx in body.data.vertices:
+        if sum(g.weight for g in vtx.groups if g.group in groups) < 1e-4:
+            bn, _ = nearest_bone(vtx.co, segs)
+            body.vertex_groups[bn].add([vtx.index], 1.0, "REPLACE")
+
+
+def vertex_bone_weights(obj):
+    names = {g.index: g.name for g in obj.vertex_groups}
+    out = []
+    for vtx in obj.data.vertices:
+        ws = {names[g.group]: g.weight for g in vtx.groups if g.weight > 0}
+        tot = sum(ws.values()) or 1.0
+        out.append({k: w / tot for k, w in ws.items()})
+    return out
+
+
+# ------------------------------------------------------------------------------------------------
+# body shape keys
+
+# radial offsets in fractions of H per bone group: (slim, heavy)
+BUILD = {
+    "hips": (-0.010, 0.032),
+    "spine": (-0.014, 0.045),
+    "chest": (-0.010, 0.030),
+    "neck": (-0.004, 0.012),
+    "upper_arm": (-0.006, 0.016),
+    "forearm": (-0.004, 0.010),
+    "hand": (-0.001, 0.004),
+    "thigh": (-0.009, 0.026),
+    "shin": (-0.004, 0.012),
+    "foot": (0.0, 0.002),
+    "head": (0.0, 0.0),
+}
+
+
+def g1(x, s):
+    return math.exp(-((x / s) ** 2))
+
+
+def body_key_offset(key, d, co, n, ws, segs):
+    """Offset of a body vertex for one shape key at full weight (model units)."""
+    H = d.H
+    out = Vector()
+    front = max(0.0, -n.y)
+    side = abs(n.x)
+    w = lambda *names: sum(ws.get(f"{b}.L", 0) + ws.get(f"{b}.R", 0) + ws.get(b, 0) for b in names)
+    tz = (co.z - d.legs) / d.torso  # 0 at the crotch, 1 at the neck
+    if key in ("slim", "heavy"):
+        i = 0 if key == "slim" else 1
+        off = sum(wt * BUILD[bn.split(".")[0]][i] for bn, wt in ws.items())
+        out += n * off * H
+        if key == "heavy":
+            out += n * H * 0.022 * front * w("spine", "hips") * g1(tz - 0.32, 0.25)
+    elif key == "muscle":
+        out += n * H * 0.007 * w("upper_arm") * (0.6 + 0.4 * front)
+        out += n * H * 0.004 * w("forearm")
+        out += n * H * 0.006 * w("thigh")
+        out += n * H * 0.005 * w("shin") * (0.4 + max(0.0, n.y))
+        out += n * H * 0.006 * w("neck")
+        out += n * H * 0.010 * w("chest") * (front * g1(tz - 0.74, 0.12) + 0.6 * side * g1(tz - 0.65, 0.2))
+    elif key == "frame":
+        # masculine (+) / feminine (-): broader chest and shoulders against hips and waist
+        # the game moves the shoulder and hip joints by frame (the arms and legs follow their
+        # bones), so the key only reshapes the torso: broad rib cage and lats against a wide pelvis
+        out += Vector((math.copysign(1, co.x), 0, 0)) * H * 0.009 * w("chest") * g1(tz - 0.8, 0.2) * min(1.0, abs(co.x) / (d.width * 0.3))
+        out -= n * H * 0.014 * side * w("hips") * g1(tz - 0.08, 0.14)
+        out -= n * H * 0.006 * max(0.0, n.y) * w("hips", "thigh") * g1(tz - 0.02, 0.12)  # flatter seat
+        out += n * H * 0.006 * side * w("spine") * g1(tz - 0.38, 0.12)
+        out += n * H * 0.005 * w("neck")
+        out += n * H * 0.003 * w("upper_arm", "forearm")
+    elif key == "shoulders":
+        k = w("chest", "upper_arm") * g1(tz - 0.87, 0.12) * min(1.0, abs(co.x) / (d.width * 0.3))
+        out += Vector((math.copysign(1, co.x), 0, 0)) * H * 0.015 * k
+    elif key == "bust":
+        for sx in (1, -1):
+            bx, bz = sx * d.width * 0.2, torso_z(d, 0.69)
+            g = g1(co.x - bx, d.width * 0.14) * g1(co.z - bz, d.width * 0.14) * front * w("chest", "spine")
+            out += Vector((0, -1, -0.25)) * H * 0.04 * g
+    elif key == "waist":
+        out += n * H * 0.016 * (1 - front * 0.5) * w("spine", "hips", "chest") * g1(tz - 0.38, 0.12)
+    elif key == "hips":
+        out += n * H * 0.016 * max(side, max(0.0, n.y)) * w("hips", "thigh") * g1(tz - 0.06, 0.16)
+    elif key == "belly":
+        out += n * H * 0.035 * front * w("spine", "hips") * g1(tz - 0.3, 0.18) * g1(co.x, d.width * 0.3)
+    return out
+
+
+def add_body_keys(body, d, smooth=8):
+    """slim, heavy and the body sliders as shape keys; each key's offsets are smoothed over the
+    mesh so they don't step where the bone weights change."""
+    weights = vertex_bone_weights(body)
+    body.shape_key_add(name="Basis")
+    me = body.data
+    nbrs = [[] for _ in me.vertices]
+    for e in me.edges:
+        a, b = e.vertices
+        nbrs[a].append(b)
+        nbrs[b].append(a)
+    for key in ["slim", "heavy"] + [k for k, _ in BODY_SLIDERS]:
+        off = [body_key_offset(key, d, v.co, v.normal, ws, None) for v, ws in zip(me.vertices, weights)]
+        for _ in range(smooth):
+            off = [o * 0.5 + sum((off[j] for j in nb), Vector()) * (0.5 / len(nb)) if nb else o for o, nb in zip(off, nbrs)]
+        sk = body.shape_key_add(name=key, from_mix=False)
+        for v, o in zip(me.vertices, off):
+            sk.data[v.index].co = v.co + o
+
+
+# ------------------------------------------------------------------------------------------------
+# clothing
+
+
+def garment(body, name, mat, regions, thick, d):
+    """A copy of the body's faces in `regions`, pushed out along the normals (every shape key
+    along the basis normal), recoloured with the garment's palette material."""
+    select_only(body)
+    bpy.ops.object.duplicate()
+    g = bpy.context.view_layer.objects.active
+    g.name = name
+    g.data.name = name
+    me = g.data
+    keep = {i for i, m in enumerate(me.materials) if m.name.startswith("skin.r") and int(m.name[6:]) in regions}
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    bmesh.ops.delete(bm, geom=[f for f in bm.faces if f.material_index not in keep], context="FACES")
+    bm.to_mesh(me)
+    bm.free()
+    normals = [v.normal.copy() for v in me.vertices]
+    off = thick * d.H
+    for kb in me.shape_keys.key_blocks:
+        for i, n in enumerate(normals):
+            kb.data[i].co = kb.data[i].co + n * off
+    for i, n in enumerate(normals):
+        me.vertices[i].co = me.vertices[i].co + n * off
+    me.materials.clear()
+    me.materials.append(bpy.data.materials[mat])
+    return g
+
+
+def transfer_keys(obj, src, k=4):
+    """Gives obj shape keys named like src's, each vertex moving like its nearest src vertices."""
+    sm = src.data
+    tree = KDTree(len(sm.vertices))
+    for v in sm.vertices:
+        tree.insert(v.co, v.index)
+    tree.balance()
+    near = []
+    for v in obj.data.vertices:
+        hits = tree.find_n(v.co, k)
+        ws = [(i, 1.0 / max(dd, 1e-4)) for _, i, dd in hits]
+        tot = sum(w for _, w in ws)
+        near.append([(i, w / tot) for i, w in ws])
+    if obj.data.shape_keys is None:
+        obj.shape_key_add(name="Basis")
+    basis = sm.shape_keys.key_blocks[0]
+    for kb in sm.shape_keys.key_blocks[1:]:
+        sk = obj.shape_key_add(name=kb.name, from_mix=False)
+        for v, nb in zip(obj.data.vertices, near):
+            delta = sum(((kb.data[i].co - basis.data[i].co) * w for i, w in nb), Vector())
+            sk.data[v.index].co = v.co + delta
+
+
+def skirt(body, name, mat, hems, d, hem_frac, rig):
+    """A flared tube from the belt to the hem, skinned to the hips and (lower down) the thighs."""
+    segs, rings = 40, 10
+    H = d.H
+    top_z = hems.belt + d.torso * 0.02
+    bot_z = d.legs - (d.legs - d.knee_z) * hem_frac * 2.0
+    # sample the body's girth at the belt to fit the waistband
+    me = body.data
+    verts, faces = [], []
+    for r in range(rings + 1):
+        t = r / rings
+        z = top_z + (bot_z - top_z) * t
+        for k in range(segs):
+            a = 2 * math.pi * k / segs
+            rx = d.width * (0.37 + 0.09 * t + 0.03 * t * t) + 0.004 * H
+            ry = d.depth * (0.52 + 0.25 * t) + 0.004 * H
+            verts.append(Vector((math.cos(a) * rx, math.sin(a) * ry, z)))
+    for r in range(rings):
+        for k in range(segs):
+            i0 = r * segs + k
+            i1 = r * segs + (k + 1) % segs
+            faces.append((i0, i0 + segs, i1 + segs, i1))
+    m = bpy.data.meshes.new(name)
+    m.from_pydata([tuple(v) for v in verts], [], faces)
+    m.materials.append(bpy.data.materials[mat])
+    for p in m.polygons:
+        p.use_smooth = True
+    obj = link(bpy.data.objects.new(name, m))
+    select_only(obj)
+    sol = obj.modifiers.new("solid", "SOLIDIFY")
+    sol.thickness = 0.004 * H
+    sol.offset = -1
+    bpy.ops.object.modifier_apply(modifier="solid")
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)  # the game culls back faces
+    bm.to_mesh(obj.data)
+    bm.free()
+    # skinning: hips at the waistband, blending to the nearer thigh towards the hem
+    for n in ("hips", "thigh.L", "thigh.R"):
+        obj.vertex_groups.new(name=n)
+    for v in obj.data.vertices:
+        t = max(0.0, min(1.0, (top_z - v.co.z) / max(top_z - bot_z, 1e-6)))
+        lean = max(0.0, min(1.0, 0.5 + v.co.x / (d.width * 0.6)))
+        leg = 0.55 * t * t
+        obj.vertex_groups["hips"].add([v.index], 1 - leg, "REPLACE")
+        obj.vertex_groups["thigh.L"].add([v.index], leg * lean, "REPLACE")
+        obj.vertex_groups["thigh.R"].add([v.index], leg * (1 - lean), "REPLACE")
+    obj.parent = rig
+    mod = obj.modifiers.new("rig", "ARMATURE")
+    mod.object = rig
+    return obj
+
+
+def make_clothes(body, rig, d, hems):
+    out = []
+    for name, (mat, regions, thick) in GARMENTS.items():
+        g = garment(body, name, mat, regions, thick, d)
+        if name in SKIRTS:
+            s = skirt(body, name + "_skirt", mat, hems, d, SKIRTS[name], rig)
+            transfer_keys(s, body)
+            select_only(g, s)
+            bpy.context.view_layer.objects.active = g
+            bpy.ops.object.join()
+        out.append(g)
+    return out

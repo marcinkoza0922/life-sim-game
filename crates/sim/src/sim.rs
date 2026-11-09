@@ -171,8 +171,12 @@ pub fn random_spec(world: &World, stage: LifeStage, last: Option<&str>) -> PeonS
         eyes: *rng.pick(&crate::genetics::EYE_COLORS).unwrap(),
         height: rng.range_f32(0.92, 1.08),
         build: rng.range_f32(0.0, 1.0),
+        shape: Default::default(),
     };
-    let appearance = crate::genetics::express(&genes, stage, rcol(&mut rng), rcol(&mut rng), rng.below(4) as u8);
+    let mut worn = Appearance { shirt: rcol(&mut rng), pants: rcol(&mut rng), ..Default::default() };
+    worn.hair_style = rng.below(4) as u8;
+    let mut genes = genes;
+    let appearance = crate::genetics::express(&genes, stage, &worn);
     let career = if stage.is_adult() && stage != LifeStage::Elder && rng.chance(0.8) {
         let adult: Vec<_> = data.careers.iter().filter(|c| c.min_stage >= LifeStage::YoungAdult).collect();
         Some(rng.pick(&adult).unwrap().id.clone())
@@ -181,6 +185,11 @@ pub fn random_spec(world: &World, stage: LifeStage, last: Option<&str>) -> PeonS
     };
     // picked last so the rest of a spec doesn't depend on it
     let sex = if rng.chance(0.5) { Sex::Female } else { Sex::Male };
+    // face, body, hair and outfit by sex, from their own stream so they don't shift the rest
+    let mut look = rng.fork();
+    genes.shape = crate::genetics::random_shape(&mut look, sex);
+    let mut appearance = crate::genetics::express(&genes, stage, &appearance);
+    crate::genetics::random_style(&mut look, sex, stage, &mut appearance);
     PeonSpec {
         first,
         last,
