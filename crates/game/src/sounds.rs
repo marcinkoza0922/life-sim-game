@@ -56,6 +56,18 @@ pub fn for_log(kind: sim::log::LogKind) -> Option<&'static str> {
     }
 }
 
+/// Gain for a looping sound at `dist` metres from the camera. Fiddly little sounds (typing,
+/// scrubbing, stirring) are quiet and only carry when you're close; the rest use [`falloff`].
+pub fn loop_gain(id: &str, dist: f32) -> f32 {
+    let close = |level: f32, full: f32, gone: f32| level * (1.0 - (dist - full) / (gone - full)).clamp(0.0, 1.0);
+    match id {
+        "type" => close(0.45, 3.0, 12.0),
+        "scrub" | "stir" => close(0.6, 4.0, 20.0),
+        "snore" => close(0.5, 4.0, 24.0),
+        _ => falloff(dist),
+    }
+}
+
 /// Gain for a sound at `dist` metres from the camera: full within 8 m, silent past 48 m
 /// (the same falloff as voices).
 pub fn falloff(dist: f32) -> f32 {
@@ -85,6 +97,14 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn typing_is_only_loud_up_close() {
+        assert!(loop_gain("type", 2.0) > 0.4);
+        assert!(loop_gain("type", 10.0) < 0.15);
+        assert_eq!(loop_gain("type", 20.0), 0.0);
+        assert!(loop_gain("tv", 20.0) > 0.5, "the TV still carries");
     }
 
     #[test]

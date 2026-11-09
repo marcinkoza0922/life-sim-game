@@ -29,4 +29,4 @@ credit is given as thanks, not as a licence requirement. Sounds not listed here 
 - **General Household Sound Effects (cutting board)** by Bret Bernhoft, CC0, <https://opengameart.org/content/general-household-sound-effects>
   - `chop.ogg` ← `kitchencuttingboard01.wav`
 - **Keyboard Soundpack #1** by Unicae Games, CC0, <https://opengameart.org/content/keyboard-soundpack-1-typing-and-single-keystrokes>
-  - `type.ogg` ← `generated-004_medium.wav`
+  - `type.ogg` ← `human_vel-*.wav`

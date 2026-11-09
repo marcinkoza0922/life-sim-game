@@ -77,6 +77,7 @@ SOURCES = {
 
 # id: (source, member in the archive or None, options)
 #   loop: seconds of steadiest audio to keep as a seamless loop
+#   bursts: archive members to cut random bursts from, with pauses between (see burst_loop)
 #   hits: re-lay the recording's distinct hits every `hits` seconds instead of cutting a stretch
 #   busy: take the loudest stretch instead of the steadiest (rhythmic sources)
 #   peak: normalise to this dBFS (default -3 one-shots, -9 loops)
@@ -98,8 +99,8 @@ SFX = {
     "shower": ("sfx100v2", "sfx100v2_loop_water_01.ogg", {"loop": 4.0}),
     "faucet": ("sink", None, {"loop": 4.0}),
     "chop": ("board", None, {"loop": 2.4, "hits": 0.3}),
-    "type": ("keyboard", "Generated Typing/generated-004_medium.wav",
-             {"loop": 4.0}),
+    "type": ("keyboard", "Human Typing/human_vel-*.wav",
+             {"loop": 20.0, "bursts": [f"Human Typing/human_vel-{i:03}.wav" for i in range(1, 11)]}),
 }
 
 
@@ -193,6 +194,28 @@ def hit_loop(x, seconds, every, length=0.18):
     return out
 
 
+def burst_loop(takes, seconds, burst=(1.0, 3.5), pause=(0.5, 2.5), seed=1):
+    """A `seconds` loop of short bursts cut at random from `takes`, separated by silent pauses
+    and varied in level: someone typing, stopping to think, typing again."""
+    rng = np.random.default_rng(seed)
+    n, edge = int(seconds * SR), int(0.03 * SR)
+    out = np.zeros(n, dtype=np.float32)
+    at = int(rng.uniform(*pause) * SR / 2)
+    while True:
+        take = takes[rng.integers(len(takes))]
+        m = min(int(rng.uniform(*burst) * SR), len(take))
+        if at + m > n - int(pause[0] * SR / 2):
+            break
+        a = rng.integers(0, len(take) - m + 1)
+        b = take[a:a + m] * rng.uniform(0.6, 1.0)
+        ramp = np.linspace(0, 1, edge)
+        b[:edge] *= ramp
+        b[-edge:] *= ramp[::-1]
+        out[at:at + m] += b
+        at += m + int(rng.uniform(*pause) * SR)
+    return out
+
+
 def trim_one_shot(x):
     """Drops leading/trailing near-silence, keeping a few ms of lead-in."""
     loud = np.nonzero(np.abs(x) > 0.01 * np.max(np.abs(x)))[0]
@@ -219,6 +242,13 @@ def encode(x, sid, peak):
 def build(sid):
     src, member, opts = SFX[sid]
     path = fetch(src)
+    if "bursts" in opts:
+        with zipfile.ZipFile(path) as z:
+            takes = [decode(z.read(m), Path(m).suffix) for m in opts["bursts"]]
+        x = burst_loop(takes, opts["loop"])
+        encode(x, sid, opts.get("peak", -9))
+        print(f"{sid:12} {len(x) / SR:5.2f}s  from {SOURCES[src][3]}")
+        return
     if member:
         with zipfile.ZipFile(path) as z:
             data = z.read(member)

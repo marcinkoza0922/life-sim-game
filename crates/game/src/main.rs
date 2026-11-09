@@ -164,16 +164,19 @@ impl App {
             if tf.level() > self.game.level {
                 continue;
             }
-            let gain = sounds::falloff((tf.pos - eye).length());
-            if gain <= 0.0 {
-                continue;
-            }
+            let dist = (tf.pos - eye).length();
             if posture.walking {
-                steps.push((e, gain));
+                let gain = sounds::falloff(dist);
+                if gain > 0.0 {
+                    steps.push((e, gain));
+                }
             } else if let Some(id) = sounds::loop_for(posture.sfx.as_deref(), posture.anim.as_deref()) {
+                let gain = sounds::loop_gain(id, dist);
+                if gain <= 0.0 {
+                    continue;
+                }
                 // one voice per sound, at the loudest source (three people watching one TV)
                 let key = id.bytes().fold(0u64, |h, b| h.wrapping_mul(31).wrapping_add(b as u64));
-                let gain = if id == "snore" { gain * 0.5 } else { gain };
                 match loops.iter_mut().find(|l| l.0 == key) {
                     Some(l) => l.2 = l.2.max(gain),
                     None => loops.extend(sounds::clip(id).map(|c| (key, c, gain))),
