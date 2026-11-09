@@ -63,6 +63,69 @@ fn vs_shadow(v: VsIn) -> @builtin(position) vec4<f32> {
     return g.light_view_proj * m * vec4<f32>(v.pos, 1.0);
 }
 
+// ---------------------------------------------------------------------------------------- skinned
+
+// Joint matrices (4 vec4 columns each) and per-draw palettes, indexed by the instance's `extra`.
+@group(1) @binding(0) var<storage, read> skin: array<vec4<f32>>;
+
+struct SkIn {
+    @location(0) pos: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) color: vec4<f32>,
+    @location(3) joints: vec4<u32>,
+    @location(4) weights: vec4<f32>,
+    @location(5) morph0: vec3<f32>,
+    @location(6) morph1: vec3<f32>,
+    @location(7) slot: u32,
+    @location(8) m0: vec4<f32>,
+    @location(9) m1: vec4<f32>,
+    @location(10) m2: vec4<f32>,
+    @location(11) m3: vec4<f32>,
+    @location(12) icolor: vec4<f32>,
+    @location(13) params: vec4<f32>,
+    @location(14) extra: vec4<f32>,  // joint base, palette base, morph weights
+};
+
+fn joint_mat(i: u32) -> mat4x4<f32> {
+    return mat4x4<f32>(skin[i], skin[i + 1u], skin[i + 2u], skin[i + 3u]);
+}
+
+// model × skinning matrix
+fn skinned_model(v: SkIn) -> mat4x4<f32> {
+    let base = u32(v.extra.x + 0.5);
+    let w = v.weights / max(v.weights.x + v.weights.y + v.weights.z + v.weights.w, 1e-6);
+    let sk = joint_mat(base + v.joints.x * 4u) * w.x
+        + joint_mat(base + v.joints.y * 4u) * w.y
+        + joint_mat(base + v.joints.z * 4u) * w.z
+        + joint_mat(base + v.joints.w * 4u) * w.w;
+    return mat4x4<f32>(v.m0, v.m1, v.m2, v.m3) * sk;
+}
+
+fn morphed(v: SkIn) -> vec3<f32> {
+    return v.pos + v.morph0 * v.extra.z + v.morph1 * v.extra.w;
+}
+
+@vertex
+fn vs_skinned(v: SkIn) -> VsOut {
+    let m = skinned_model(v);
+    let world = m * vec4<f32>(morphed(v), 1.0);
+    var o: VsOut;
+    o.clip = g.view_proj * world;
+    o.world = world.xyz;
+    o.normal = normalize((m * vec4<f32>(v.normal, 0.0)).xyz);
+    let tint = skin[u32(v.extra.y + 0.5) + v.slot];
+    let c = v.color * v.icolor * tint;
+    o.color = vec4<f32>(pow(max(c.rgb, vec3<f32>(0.0)), vec3<f32>(2.2)), c.a);
+    o.params = v.params;
+    o.light_clip = g.light_view_proj * world;
+    return o;
+}
+
+@vertex
+fn vs_shadow_skinned(v: SkIn) -> @builtin(position) vec4<f32> {
+    return g.light_view_proj * skinned_model(v) * vec4<f32>(morphed(v), 1.0);
+}
+
 const PI: f32 = 3.14159265;
 
 fn shadow_factor(lc: vec4<f32>, ndotl: f32) -> f32 {

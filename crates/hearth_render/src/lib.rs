@@ -2,8 +2,10 @@
 //! MSAA, ACES tone mapping, a transparent pass, and offscreen capture to RGBA images.
 //!
 //! The renderer knows nothing about the game. Each frame the game builds a [`Frame`]: a camera,
-//! lighting, and a flat list of [`Draw`]s (mesh + transform + material).
+//! lighting, and a flat list of [`Draw`]s (mesh + transform + material), plus [`SkinnedDraw`]s for
+//! characters (GPU skinning with morph targets and a per-draw colour palette; see [`model`]).
 
+pub mod model;
 pub mod shapes;
 
 use std::sync::Arc;
@@ -18,6 +20,10 @@ pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 pub const SAMPLES: u32 = 4;
 pub const SHADOW_SIZE: u32 = 2048;
 pub const MAX_POINT_LIGHTS: usize = 16;
+/// Morph targets per skinned vertex.
+pub const MAX_MORPHS: usize = 2;
+/// Palette entries per skinned draw; vertex `slot` indexes it (slot 0 is conventionally white).
+pub const PALETTE_SLOTS: usize = 8;
 
 // ------------------------------------------------------------------------------------------------
 // CPU-side data
@@ -65,6 +71,57 @@ impl MeshData {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct MeshId(pub u32);
+
+/// A vertex of a skinned mesh. Position deltas for up to [`MAX_MORPHS`] morph targets ride along;
+/// normals are not morphed.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
+pub struct SkinnedVertex {
+    pub pos: [f32; 3],
+    pub normal: [f32; 3],
+    /// sRGB, multiplied by the draw's palette entry for `slot`.
+    pub color: [f32; 4],
+    pub joints: [u16; 4],
+    pub weights: [f32; 4],
+    pub morph: [[f32; 3]; MAX_MORPHS],
+    pub slot: u32,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct SkinnedMeshData {
+    pub vertices: Vec<SkinnedVertex>,
+    pub indices: Vec<u32>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SkinnedMeshId(pub u32);
+
+/// A set of skinning matrices added to a [`Frame`] with [`Frame::add_pose`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PoseId(u32);
+
+/// A skinned mesh instance: joints come from a pose shared by every mesh of the same character.
+#[derive(Clone, Copy, Debug)]
+pub struct SkinnedDraw {
+    pub mesh: SkinnedMeshId,
+    pub pose: PoseId,
+    pub model: Mat4,
+    /// sRGB tints indexed by vertex slot.
+    pub palette: [[f32; 4]; PALETTE_SLOTS],
+    pub morph: [f32; MAX_MORPHS],
+    /// Multiplies the whole mesh; alpha < 1 goes through the transparent pass.
+    pub color: [f32; 4],
+    pub roughness: f32,
+    pub metallic: f32,
+    pub emissive: f32,
+    pub flags: u32,
+}
+
+impl SkinnedDraw {
+    pub fn new(mesh: SkinnedMeshId, pose: PoseId, model: Mat4, palette: [[f32; 4]; PALETTE_SLOTS]) -> Self {
+        SkinnedDraw { mesh, pose, model, palette, morph: [0.0; MAX_MORPHS], color: [1.0; 4], roughness: 0.7, metallic: 0.0, emissive: 0.0, flags: 0 }
+    }
+}
 
 /// Built-in primitive meshes, always present.
 #[derive(Clone, Copy, Debug)]
@@ -188,6 +245,9 @@ pub struct Frame {
     pub shadow_radius: f32,
     pub lights: Vec<PointLight>,
     pub draws: Vec<Draw>,
+    pub skinned: Vec<SkinnedDraw>,
+    /// Skinning matrices of every pose, back to back.
+    pub joints: Vec<Mat4>,
 }
 
 impl Frame {
@@ -207,8 +267,22 @@ impl Frame {
             shadow_radius: 30.0,
             lights: Vec::new(),
             draws: Vec::new(),
+            skinned: Vec::new(),
+            joints: Vec::new(),
         }
     }
+
+    /// Adds skinning matrices (joint global × inverse bind) for [`SkinnedDraw`]s to reference.
+    pub fn add_pose(&mut self, matrices: &[Mat4]) -> PoseId {
+        push_pose(&mut self.joints, matrices)
+    }
+}
+
+/// [`Frame::add_pose`] on the `joints` field alone, for callers holding other fields borrowed.
+pub fn push_pose(joints: &mut Vec<Mat4>, matrices: &[Mat4]) -> PoseId {
+    let id = PoseId(joints.len() as u32);
+    joints.extend_from_slice(matrices);
+    id
 }
 
 /// Converts an sRGB-authored colour to linear.
@@ -247,6 +321,16 @@ struct InstanceRaw {
     model: [[f32; 4]; 4],
     color: [f32; 4],
     params: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct SkInstanceRaw {
+    model: [[f32; 4]; 4],
+    color: [f32; 4],
+    params: [f32; 4],
+    /// joint base, palette base (vec4 indices into the skin buffer), morph weights
+    extra: [f32; 4],
 }
 
 struct GpuMesh {
@@ -299,6 +383,7 @@ pub struct Renderer {
     pub format: wgpu::TextureFormat,
     pub builtins: Builtins,
     meshes: Vec<Option<GpuMesh>>,
+    sk_meshes: Vec<Option<GpuMesh>>,
     globals_buf: wgpu::Buffer,
     main_bg: wgpu::BindGroup,
     shadow_bg: wgpu::BindGroup,
@@ -308,6 +393,15 @@ pub struct Renderer {
     shadow: wgpu::RenderPipeline,
     instances: wgpu::Buffer,
     instance_cap: u64,
+    sk_opaque: wgpu::RenderPipeline,
+    sk_transparent: wgpu::RenderPipeline,
+    sk_shadow: wgpu::RenderPipeline,
+    sk_instances: wgpu::Buffer,
+    sk_instance_cap: u64,
+    skin_bgl: wgpu::BindGroupLayout,
+    skin_buf: wgpu::Buffer,
+    skin_cap: u64,
+    skin_bg: wgpu::BindGroup,
     targets: Option<Targets>,
     pub stats: RenderStats,
 }
@@ -317,6 +411,7 @@ pub struct RenderStats {
     pub draws: usize,
     pub batches: usize,
     pub meshes: usize,
+    pub skinned: usize,
 }
 
 impl Renderer {
@@ -417,15 +512,47 @@ impl Renderer {
             immediate_size: 0,
         });
 
-        let make = |label: &str, blend: Option<wgpu::BlendState>, depth_write: bool| {
+        let skin_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("skin bgl"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None },
+                count: None,
+            }],
+        });
+        let sk_layouts = [
+            Some(wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<SkinnedVertex>() as u64,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x4, 3 => Uint16x4, 4 => Float32x4, 5 => Float32x3, 6 => Float32x3, 7 => Uint32],
+            }),
+            Some(wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<SkInstanceRaw>() as u64,
+                step_mode: wgpu::VertexStepMode::Instance,
+                attributes: &wgpu::vertex_attr_array![8 => Float32x4, 9 => Float32x4, 10 => Float32x4, 11 => Float32x4, 12 => Float32x4, 13 => Float32x4, 14 => Float32x4],
+            }),
+        ];
+        let sk_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("skinned layout"),
+            bind_group_layouts: &[Some(&main_bgl), Some(&skin_bgl)],
+            immediate_size: 0,
+        });
+        let sk_shadow_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("skinned shadow layout"),
+            bind_group_layouts: &[Some(&shadow_bgl), Some(&skin_bgl)],
+            immediate_size: 0,
+        });
+
+        let make_with = |label: &str, layout: &wgpu::PipelineLayout, vs: &str, buffers: &[Option<wgpu::VertexBufferLayout>], blend: Option<wgpu::BlendState>, depth_write: bool| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
-                layout: Some(&main_layout),
+                layout: Some(layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
-                    entry_point: Some("vs_main"),
+                    entry_point: Some(vs),
                     compilation_options: Default::default(),
-                    buffers: &vertex_layouts,
+                    buffers,
                 },
                 primitive: wgpu::PrimitiveState { cull_mode: Some(wgpu::Face::Back), ..Default::default() },
                 depth_stencil: Some(wgpu::DepthStencilState {
@@ -446,39 +573,46 @@ impl Renderer {
                 cache: None,
             })
         };
-        let opaque = make("opaque", None, true);
-        let transparent = make("transparent", Some(wgpu::BlendState::ALPHA_BLENDING), false);
-        let shadow = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("shadow"),
-            layout: Some(&shadow_layout),
-            vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs_shadow"), compilation_options: Default::default(), buffers: &vertex_layouts },
-            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::Less),
-                stencil: Default::default(),
-                bias: wgpu::DepthBiasState { constant: 2, slope_scale: 2.0, clamp: 0.0 },
-            }),
-            multisample: Default::default(),
-            fragment: None,
-            multiview_mask: None,
-            cache: None,
-        });
+        let opaque = make_with("opaque", &main_layout, "vs_main", &vertex_layouts, None, true);
+        let transparent = make_with("transparent", &main_layout, "vs_main", &vertex_layouts, Some(wgpu::BlendState::ALPHA_BLENDING), false);
+        let sk_opaque = make_with("skinned opaque", &sk_layout, "vs_skinned", &sk_layouts, None, true);
+        let sk_transparent = make_with("skinned transparent", &sk_layout, "vs_skinned", &sk_layouts, Some(wgpu::BlendState::ALPHA_BLENDING), false);
+        let make_shadow = |label: &str, layout: &wgpu::PipelineLayout, vs: &str, buffers: &[Option<wgpu::VertexBufferLayout>]| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(layout),
+                vertex: wgpu::VertexState { module: &shader, entry_point: Some(vs), compilation_options: Default::default(), buffers },
+                primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
+                    stencil: Default::default(),
+                    bias: wgpu::DepthBiasState { constant: 2, slope_scale: 2.0, clamp: 0.0 },
+                }),
+                multisample: Default::default(),
+                fragment: None,
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let shadow = make_shadow("shadow", &shadow_layout, "vs_shadow", &vertex_layouts);
+        let sk_shadow = make_shadow("skinned shadow", &sk_shadow_layout, "vs_shadow_skinned", &sk_layouts);
 
         let instance_cap = 4096;
-        let instances = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("instances"),
-            size: instance_cap * std::mem::size_of::<InstanceRaw>() as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let instances = vertex_buffer(device, "instances", instance_cap * std::mem::size_of::<InstanceRaw>() as u64);
+        let sk_instance_cap = 64;
+        let sk_instances = vertex_buffer(device, "skinned instances", sk_instance_cap * std::mem::size_of::<SkInstanceRaw>() as u64);
+        let skin_cap = 4096; // vec4s
+        let skin_buf = storage_buffer(device, skin_cap * 16);
+        let skin_bg = skin_bind_group(device, &skin_bgl, &skin_buf);
 
         let mut r = Renderer {
             gpu: gpu.clone(),
             format,
             builtins: Builtins { cube: MeshId(0), cylinder: MeshId(0), sphere: MeshId(0), disc: MeshId(0), wedge: MeshId(0) },
             meshes: Vec::new(),
+            sk_meshes: Vec::new(),
             globals_buf,
             main_bg,
             shadow_bg,
@@ -488,6 +622,15 @@ impl Renderer {
             shadow,
             instances,
             instance_cap,
+            sk_opaque,
+            sk_transparent,
+            sk_shadow,
+            sk_instances,
+            sk_instance_cap,
+            skin_bgl,
+            skin_buf,
+            skin_cap,
+            skin_bg,
             targets: None,
             stats: RenderStats::default(),
         };
@@ -526,6 +669,26 @@ impl Renderer {
             usage: wgpu::BufferUsages::INDEX,
         });
         self.meshes[id.0 as usize] = Some(GpuMesh { vb, ib, count: m.indices.len() as u32 });
+    }
+
+    pub fn upload_skinned_mesh(&mut self, m: &SkinnedMeshData) -> SkinnedMeshId {
+        let id = SkinnedMeshId(self.sk_meshes.len() as u32);
+        let mesh = (!m.indices.is_empty()).then(|| {
+            let device = &self.gpu.device;
+            let vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("skinned vb"),
+                contents: bytemuck::cast_slice(&m.vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+            let ib = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("skinned ib"),
+                contents: bytemuck::cast_slice(&m.indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+            GpuMesh { vb, ib, count: m.indices.len() as u32 }
+        });
+        self.sk_meshes.push(mesh);
+        id
     }
 
     fn ensure_targets(&mut self, w: u32, h: u32) {
@@ -607,15 +770,67 @@ impl Renderer {
         let need = raw.len() as u64;
         if need > self.instance_cap {
             self.instance_cap = need.next_power_of_two();
-            self.instances = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("instances"),
-                size: self.instance_cap * std::mem::size_of::<InstanceRaw>() as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
+            self.instances = vertex_buffer(device, "instances", self.instance_cap * std::mem::size_of::<InstanceRaw>() as u64);
         }
         if !raw.is_empty() {
             queue.write_buffer(&self.instances, 0, bytemuck::cast_slice(&raw));
+        }
+
+        // skinned: opaque grouped by mesh, then transparent back-to-front; joints + palettes go
+        // into one storage buffer of vec4s
+        let mut sk_order: Vec<&SkinnedDraw> = frame.skinned.iter().filter(|d| self.sk_meshes.get(d.mesh.0 as usize).is_some_and(|m| m.is_some())).collect();
+        sk_order.sort_by(|a, b| {
+            let (ta, tb) = (a.color[3] < 0.999, b.color[3] < 0.999);
+            ta.cmp(&tb).then_with(|| {
+                if ta {
+                    let da = (a.model.w_axis.truncate() - eye).length_squared();
+                    let db = (b.model.w_axis.truncate() - eye).length_squared();
+                    db.total_cmp(&da)
+                } else {
+                    a.mesh.cmp(&b.mesh)
+                }
+            })
+        });
+        let mut skin_data: Vec<[f32; 4]> = Vec::with_capacity(frame.joints.len() * 4 + sk_order.len() * PALETTE_SLOTS);
+        for m in &frame.joints {
+            skin_data.extend(m.to_cols_array_2d());
+        }
+        let mut sk_raw = Vec::with_capacity(sk_order.len());
+        for d in &sk_order {
+            let palette_base = skin_data.len();
+            skin_data.extend(d.palette);
+            sk_raw.push(SkInstanceRaw {
+                model: d.model.to_cols_array_2d(),
+                color: d.color,
+                params: [d.roughness, d.metallic, d.emissive, (d.flags & 3) as f32],
+                extra: [(d.pose.0 * 4) as f32, palette_base as f32, d.morph[0], d.morph[1]],
+            });
+        }
+        if skin_data.is_empty() {
+            skin_data.push([0.0; 4]);
+        }
+        if skin_data.len() as u64 > self.skin_cap {
+            self.skin_cap = (skin_data.len() as u64).next_power_of_two();
+            self.skin_buf = storage_buffer(device, self.skin_cap * 16);
+            self.skin_bg = skin_bind_group(device, &self.skin_bgl, &self.skin_buf);
+        }
+        queue.write_buffer(&self.skin_buf, 0, bytemuck::cast_slice(&skin_data));
+        if sk_raw.len() as u64 > self.sk_instance_cap {
+            self.sk_instance_cap = (sk_raw.len() as u64).next_power_of_two();
+            self.sk_instances = vertex_buffer(device, "skinned instances", self.sk_instance_cap * std::mem::size_of::<SkInstanceRaw>() as u64);
+        }
+        if !sk_raw.is_empty() {
+            queue.write_buffer(&self.sk_instances, 0, bytemuck::cast_slice(&sk_raw));
+        }
+        // mesh, start, end, transparent, casts
+        let mut sk_batches: Vec<(SkinnedMeshId, u32, u32, bool, bool)> = Vec::new();
+        for (i, d) in sk_order.iter().enumerate() {
+            let tr = d.color[3] < 0.999;
+            let casts = d.flags & flags::NO_SHADOW_CAST == 0 && d.flags & flags::UNLIT == 0 && !tr;
+            match sk_batches.last_mut() {
+                Some(b) if b.0 == d.mesh && b.3 == tr && b.4 == casts && !tr => b.2 = i as u32 + 1,
+                _ => sk_batches.push((d.mesh, i as u32, i as u32 + 1, tr, casts)),
+            }
         }
 
         // batches of consecutive identical meshes
@@ -628,7 +843,7 @@ impl Renderer {
                 _ => batches.push((d.mesh, i as u32, i as u32 + 1, tr, casts)),
             }
         }
-        self.stats = RenderStats { draws: raw.len(), batches: batches.len(), meshes: self.meshes.len() };
+        self.stats = RenderStats { draws: raw.len() + sk_raw.len(), batches: batches.len() + sk_batches.len(), meshes: self.meshes.len() + self.sk_meshes.len(), skinned: sk_raw.len() };
 
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
         {
@@ -657,6 +872,18 @@ impl Renderer {
                     pass.draw_indexed(0..m.count, 0, *s..*e);
                 }
             }
+            if sk_batches.iter().any(|b| b.4) {
+                pass.set_pipeline(&self.sk_shadow);
+                pass.set_bind_group(1, &self.skin_bg, &[]);
+                pass.set_vertex_buffer(1, self.sk_instances.slice(..));
+                for (mesh, s, e, _, casts) in &sk_batches {
+                    if let (true, Some(m)) = (*casts, &self.sk_meshes[mesh.0 as usize]) {
+                        pass.set_vertex_buffer(0, m.vb.slice(..));
+                        pass.set_index_buffer(m.ib.slice(..), wgpu::IndexFormat::Uint32);
+                        pass.draw_indexed(0..m.count, 0, *s..*e);
+                    }
+                }
+            }
         }
         {
             let t = self.targets.as_ref().unwrap();
@@ -682,17 +909,35 @@ impl Renderer {
                 multiview_mask: None,
             });
             pass.set_bind_group(0, &self.main_bg, &[]);
-            pass.set_vertex_buffer(1, self.instances.slice(..));
-            let mut cur_tr = None;
-            for (mesh, s, e, tr, _) in &batches {
-                if cur_tr != Some(*tr) {
-                    pass.set_pipeline(if *tr { &self.transparent } else { &self.opaque });
-                    cur_tr = Some(*tr);
+            pass.set_bind_group(1, &self.skin_bg, &[]);
+            // static opaque, skinned opaque, static transparent, skinned transparent
+            for transparent_pass in [false, true] {
+                pass.set_pipeline(if transparent_pass { &self.transparent } else { &self.opaque });
+                pass.set_vertex_buffer(1, self.instances.slice(..));
+                for (mesh, s, e, tr, _) in &batches {
+                    if *tr != transparent_pass {
+                        continue;
+                    }
+                    if let Some(m) = &self.meshes[mesh.0 as usize] {
+                        pass.set_vertex_buffer(0, m.vb.slice(..));
+                        pass.set_index_buffer(m.ib.slice(..), wgpu::IndexFormat::Uint32);
+                        pass.draw_indexed(0..m.count, 0, *s..*e);
+                    }
                 }
-                if let Some(m) = &self.meshes[mesh.0 as usize] {
-                    pass.set_vertex_buffer(0, m.vb.slice(..));
-                    pass.set_index_buffer(m.ib.slice(..), wgpu::IndexFormat::Uint32);
-                    pass.draw_indexed(0..m.count, 0, *s..*e);
+                if !sk_batches.iter().any(|b| b.3 == transparent_pass) {
+                    continue;
+                }
+                pass.set_pipeline(if transparent_pass { &self.sk_transparent } else { &self.sk_opaque });
+                pass.set_vertex_buffer(1, self.sk_instances.slice(..));
+                for (mesh, s, e, tr, _) in &sk_batches {
+                    if *tr != transparent_pass {
+                        continue;
+                    }
+                    if let Some(m) = &self.sk_meshes[mesh.0 as usize] {
+                        pass.set_vertex_buffer(0, m.vb.slice(..));
+                        pass.set_index_buffer(m.ib.slice(..), wgpu::IndexFormat::Uint32);
+                        pass.draw_indexed(0..m.count, 0, *s..*e);
+                    }
                 }
             }
         }
@@ -769,4 +1014,16 @@ impl Renderer {
         img.save(path)?;
         Ok(())
     }
+}
+
+fn vertex_buffer(device: &wgpu::Device, label: &str, size: u64) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor { label: Some(label), size, usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false })
+}
+
+fn storage_buffer(device: &wgpu::Device, size: u64) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor { label: Some("skin"), size, usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false })
+}
+
+fn skin_bind_group(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, buf: &wgpu::Buffer) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("skin bg"), layout, entries: &[wgpu::BindGroupEntry { binding: 0, resource: buf.as_entire_binding() }] })
 }

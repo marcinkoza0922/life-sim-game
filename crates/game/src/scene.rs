@@ -1,5 +1,6 @@
 //! Builds a renderer [`Frame`] from the simulation state: lighting from the clock, lot geometry
-//! with wall cutaway and level hiding, greybox furniture, procedural peon bodies, and overlays.
+//! with wall cutaway and level hiding, greybox furniture, rigged peon bodies ([`crate::peons`]; a
+//! procedural greybox body when no art is loaded), and overlays.
 
 use glam::{IVec2, Mat4, Quat, Vec3};
 use hearth_render::{Builtins, Camera, Draw, Frame, MeshId, PointLight, flags};
@@ -10,6 +11,8 @@ use sim::lot::{Axis, Edge, LEVEL_HEIGHT, Lot, Opening, STAIR_LEN};
 use sim::objects::ObjectInstance;
 use sim::time::Clock;
 use sim::Sim;
+
+use crate::peons::{Look, PeonArt};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WallMode {
@@ -162,7 +165,7 @@ fn bx(r: &Builtins, center: Vec3, size: Vec3, color: [f32; 3]) -> Draw {
     Draw::new(r.cube, Mat4::from_scale_rotation_translation(size, Quat::IDENTITY, center), color)
 }
 
-pub fn build(sim: &Sim, r: &Builtins, camera: Camera, opts: &SceneOptions) -> SceneOut {
+pub fn build(sim: &Sim, r: &Builtins, peons: Option<&PeonArt>, camera: Camera, opts: &SceneOptions) -> SceneOut {
     let data = sim.data();
     let world = &sim.world;
     let clock = *world.res::<Clock>();
@@ -373,8 +376,10 @@ pub fn build(sim: &Sim, r: &Builtins, camera: Camera, opts: &SceneOptions) -> Sc
             continue;
         }
         let yaw = lerp_angle(tf.prev_yaw, tf.yaw, opts.alpha);
-        let phase = opts.time * 7.0 + e.index() as f32 * 1.7;
-        let h = body_draws(d, r, pos, yaw, age.stage, app, posture, phase);
+        let h = match peons {
+            Some(art) => art.draw((&mut frame.skinned, &mut frame.joints), pos, yaw, age.stage, app, posture, opts.time + e.index() as f32 * 0.37, Look::Normal),
+            None => body_draws(d, r, pos, yaw, age.stage, app, posture, opts.time * 7.0 + e.index() as f32 * 1.7),
+        };
         if opts.selected == Some(e) {
             let mood = world.get::<Mood>(e).map(|m| m.value).unwrap_or(0.0);
             let floor_y = lvl as f32 * LEVEL_HEIGHT + 0.03;
@@ -417,7 +422,10 @@ pub fn build(sim: &Sim, r: &Builtins, camera: Camera, opts: &SceneOptions) -> Sc
             let yaw = to_cam.x.atan2(to_cam.z);
             d.push(Draw::new(r.cylinder, Mat4::from_scale_rotation_translation(Vec3::new(0.9, 0.25, 0.9), Quat::IDENTITY, p - Vec3::Y * 0.125), if *editing { [0.95, 0.85, 0.4] } else { [0.7, 0.7, 0.72] }).rough(0.4));
             let posture = Posture::default();
-            body_draws(d, r, p, yaw, *stage, app, &posture, opts.time * 2.0);
+            match peons {
+                Some(art) => _ = art.draw((&mut frame.skinned, &mut frame.joints), p, yaw, *stage, app, &posture, opts.time + i as f32 * 0.5, Look::Normal),
+                None => _ = body_draws(d, r, p, yaw, *stage, app, &posture, opts.time * 2.0),
+            }
         }
     }
 
@@ -431,14 +439,20 @@ pub fn build(sim: &Sim, r: &Builtins, camera: Camera, opts: &SceneOptions) -> Sc
         }
         let yaw = lerp_angle(tf.prev_yaw, tf.yaw, opts.alpha);
         let bob = (opts.time * 2.0 + e.index() as f32).sin() * 0.08;
-        let first = d.len();
-        let h = body_draws(d, r, pos + Vec3::Y * bob, yaw, age.stage, &app, &Posture::default(), opts.time * 2.0);
-        for dr in &mut d[first..] {
-            let c = dr.color;
-            dr.color = [c[0] * 0.3 + 0.55, c[1] * 0.3 + 0.7, c[2] * 0.3 + 0.75, 0.38];
-            dr.emissive = 0.6;
-            dr.flags |= flags::NO_SHADOW_CAST;
-        }
+        let h = match peons {
+            Some(art) => art.draw((&mut frame.skinned, &mut frame.joints), pos + Vec3::Y * bob, yaw, age.stage, &app, &Posture::default(), opts.time, Look::Ghost),
+            None => {
+                let first = d.len();
+                let h = body_draws(d, r, pos + Vec3::Y * bob, yaw, age.stage, &app, &Posture::default(), opts.time * 2.0);
+                for dr in &mut d[first..] {
+                    let c = dr.color;
+                    dr.color = [c[0] * 0.3 + 0.55, c[1] * 0.3 + 0.7, c[2] * 0.3 + 0.75, 0.38];
+                    dr.emissive = 0.6;
+                    dr.flags |= flags::NO_SHADOW_CAST;
+                }
+                h
+            }
+        };
         if let Some(b) = world.get::<Bubble>(e)
             && let Some(s) = &b.speech {
                 labels.push(Label { world: pos + Vec3::Y * (h + 0.5), text: s.clone(), kind: LabelKind::Speech });
@@ -620,7 +634,8 @@ pub fn object_draws(d: &mut Vec<Draw>, r: &Builtins, data: &GameData, def_id: us
     }
 }
 
-/// Draws a placeholder peon. Returns the body height (for label placement).
+/// Draws a greybox peon from primitives (fallback when no rigged art is loaded). Returns the body
+/// height (for label placement).
 #[allow(clippy::too_many_arguments)]
 pub fn body_draws(d: &mut Vec<Draw>, r: &Builtins, pos: Vec3, yaw: f32, stage: LifeStage, app: &Appearance, posture: &Posture, phase: f32) -> f32 {
     let h = stage.height() * app.height;

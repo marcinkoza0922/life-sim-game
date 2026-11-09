@@ -101,6 +101,8 @@ struct Gfx {
     egui_renderer: egui_wgpu::Renderer,
     window: Arc<Window>,
     meshes: game::lotmesh::LotMeshes,
+    /// Rigged peon bodies; None falls back to greybox bodies.
+    peons: Option<game::peons::PeonArt>,
 }
 
 struct App {
@@ -408,7 +410,7 @@ impl App {
             focus: self.game.cam.focus(self.game.level),
         };
         let Some(gfx) = self.gfx.as_mut() else { return };
-        let out = scene::build(&self.game.sim, &gfx.renderer.builtins, cam, &opts);
+        let out = scene::build(&self.game.sim, &gfx.renderer.builtins, gfx.peons.as_ref(), cam, &opts);
 
         // UI
         let raw = gfx.egui_state.take_egui_input(&gfx.window);
@@ -540,7 +542,8 @@ impl ApplicationHandler for App {
         config.view_formats = vec![srgb];
         config.present_mode = wgpu::PresentMode::AutoVsync;
         surface.configure(&gpu.device, &config);
-        let renderer = Renderer::new(gpu.clone(), srgb);
+        let mut renderer = Renderer::new(gpu.clone(), srgb);
+        let peons = game::peons::PeonArt::load(&mut renderer).inspect_err(|e| log::error!("peon models: {e:#}; using greybox bodies")).ok();
         let format = base;
         let egui_ctx = egui::Context::default();
         egui_ctx.set_visuals(egui::Visuals::dark());
@@ -550,7 +553,7 @@ impl ApplicationHandler for App {
             // automated captures shouldn't catch windows mid-fade
             egui_ctx.all_styles_mut(|s| s.animation_time = 0.0);
         }
-        self.gfx = Some(Gfx { surface, config, renderer, egui_ctx, egui_state, egui_renderer, window, meshes: Default::default() });
+        self.gfx = Some(Gfx { surface, config, renderer, egui_ctx, egui_state, egui_renderer, window, meshes: Default::default(), peons });
         self.last = Instant::now();
     }
 
