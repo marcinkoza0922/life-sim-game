@@ -38,7 +38,9 @@ UI is egui. There are no image, texture or audio files in the game yet.
   export PNG at the needed sizes (or SVG) — egui needs an image loader for either.
 - **SoundCraft**: music and SFX when audio assets land (M9); speech stays synthesized.
 
-Work in each tool's `<tool>-work/` folder (the MCP read/write root, gitignored). Shipped outputs go
+The craft MCP servers are user-scoped, and their read/write root is `~/CreativeWork` (outside the repo).
+Do scratch work there, e.g. `~/CreativeWork/life-sim-game/<tool>/`, and copy results into the repo; the tools
+can't write into it directly. Shipped outputs go
 under `assets/` next to the code that loads them (e.g. `assets/textures/`, `assets/ui/`, `assets/audio/`),
 and sources worth keeping (`.sbs`, `.tcraft`, `.pcraft`, vector docs, sessions) go in
 `assets/<tool>/` like `assets/blender/`. When a feature adds a new kind of asset, also add the loading
