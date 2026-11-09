@@ -383,17 +383,22 @@ def bookshelf():
             seed = (seed * 1103515245 + 12345) % 2**31
             w = 0.03 + (seed % 5) * 0.008
             h = 0.22 + (seed // 7 % 6) * 0.025
-            if x + w > 0.93 or (row == 2 and 0.55 < x < 0.75):
-                if x + w > 0.93:
+            # a leaning book pivots on its bottom-right corner, so its top overhangs to the right
+            lean = math.radians(12) if seed % 11 == 0 else 0.0
+            span = w + h * math.sin(lean)
+            if x + span > 0.93 or (row == 2 and 0.55 < x + span and x < 0.75):
+                if x + span > 0.93:
                     break
                 x += 0.03
                 continue
             c = colours[seed // 3 % len(colours)]
-            lean = 12 if seed % 11 == 0 else 0
-            b = box((w, h, 0.22), (x + w / 2, y + 0.0125 + h / 2, 0.22), mat(f"book{seed // 3 % len(colours)}", c, 0.8), bevel=0.004)
+            # centre relative to the pivot, rotated (positive Blender y-rotation tips the top to +x)
+            cx = x + w - w / 2 * math.cos(lean) + h / 2 * math.sin(lean)
+            cy = y + 0.0125 + w / 2 * math.sin(lean) + h / 2 * math.cos(lean)
+            b = box((w, h, 0.22), (cx, cy, 0.22), mat(f"book{seed // 3 % len(colours)}", c, 0.8), bevel=0.004)
             if lean:
-                b.rotation_euler = (0, math.radians(lean), 0)
-            x += w + 0.004
+                b.rotation_euler = (0, lean, 0)
+            x += span + 0.004
     # a little vase on the gap
     cyl(0.04, 0.16, (0.65, 0.92 + 0.0125 + 0.08, 0.22), mat("vase", (0.25, 0.55, 0.6), 0.2))
 
@@ -513,11 +518,132 @@ def floor_lamp():
     sphere(0.05, (0.5, 1.5, 0.5), mat("bulb", (1.0, 0.95, 0.8), 0.3, emit=3.0))
 
 
+# ------------------------------------------------------------------------------------------------
+# third batch
+
+
+def plant_potted():
+    pot = mat("pot", (0.7, 0.4, 0.28), 0.8)
+    soil = mat("soil", (0.22, 0.15, 0.1), 1.0)
+    leaf = mat("leaf", (0.25, 0.55, 0.25), 0.7)
+    leaf2 = mat("leaf.dark", (0.18, 0.42, 0.2), 0.7)
+    # tapered terracotta pot with a rim, soil
+    bpy.ops.mesh.primitive_cone_add(vertices=32, radius1=0.13, radius2=0.18, depth=0.32, location=g2b(0.5, 0.16, 0.5))
+    o = bpy.context.active_object
+    _place(o, pot, 0.01, 2)
+    cyl(0.195, 0.05, (0.5, 0.315, 0.5), pot, verts=32)
+    cyl(0.17, 0.01, (0.5, 0.336, 0.5), soil, bevel=0.0, verts=32)
+    # fronds: flattened leaves fanning out and arching from the centre
+    n = 11
+    for i in range(n):
+        a = 2 * math.pi * i / n + (0.3 if i % 2 else 0)
+        tilt = 35 + (i % 3) * 12
+        length = 0.38 + (i % 4) * 0.05
+        bpy.ops.mesh.primitive_uv_sphere_add(segments=12, ring_count=6, radius=1.0)
+        f = bpy.context.active_object
+        f.scale = (0.05, length / 2, 0.012)
+        f.rotation_euler = (math.radians(tilt), 0, a)
+        r = math.sin(math.radians(tilt)) * length / 2
+        x, z = 0.5 + r * math.sin(a), 0.5 + r * math.cos(a)
+        f.location = g2b(x, 0.34 + math.cos(math.radians(tilt)) * length / 2, z)
+        f.rotation_euler = (math.radians(-tilt), 0, a)
+        for p in f.data.polygons:
+            p.use_smooth = True
+        f.data.materials.append(leaf if i % 2 else leaf2)
+    sphere(0.12, (0.5, 0.42, 0.5), leaf2, scale=(1, 0.8, 1))
+
+
+def painting():
+    wood = mat("wood", (0.36, 0.31, 0.26), 0.6)
+    canvas = mat("canvas", (0.92, 0.9, 0.84), 0.9)
+    # easel: two front legs, a back leg, a ledge
+    for x in (0.25, 0.75):
+        box((0.04, 1.75, 0.04), (x, 0.885, 0.46), wood, bevel=0.008, rot_x=6)
+    box((0.04, 1.6, 0.04), (0.5, 0.78, 0.25), wood, bevel=0.008, rot_x=-18)
+    box((0.7, 0.04, 0.16), (0.5, 0.93, 0.5), wood, bevel=0.008)
+    # framed canvas with abstract blobs of a feeling
+    box((0.9, 0.7, 0.05), (0.5, 1.3, 0.53), wood, bevel=0.012)
+    box((0.8, 0.6, 0.02), (0.5, 1.3, 0.56), canvas, bevel=0.0)
+    for (x, y, rx, ry, c) in ((0.35, 1.4, 0.13, 0.1, (0.85, 0.5, 0.2)), (0.62, 1.22, 0.16, 0.12, (0.25, 0.4, 0.7)),
+                             (0.45, 1.18, 0.08, 0.08, (0.8, 0.2, 0.3)), (0.68, 1.44, 0.07, 0.09, (0.95, 0.8, 0.25))):
+        cyl(1.0, 0.006, (x, y, 0.571), mat(f"paint{c}", c, 0.5), axis="z", bevel=0.0).scale = (rx, 1, ry)
+
+
+def trash_can():
+    steel = mat("metal", (0.45, 0.47, 0.5), 0.4, 0.8)
+    dark = mat("pedal", (0.2, 0.2, 0.22), 0.5, 0.5)
+    cyl(0.2, 0.6, (0.5, 0.3, 0.5), steel, bevel=0.01, verts=32)
+    for y in (0.08, 0.52):
+        cyl(0.205, 0.02, (0.5, y, 0.5), steel, bevel=0.004, verts=32)  # ribs
+    cyl(0.215, 0.04, (0.5, 0.62, 0.5), steel, bevel=0.012, verts=32)  # lid
+    sphere(0.17, (0.5, 0.64, 0.5), steel, scale=(1, 0.18, 1))  # domed top
+    box((0.08, 0.02, 0.025), (0.5, 0.67, 0.5), dark, bevel=0.006)  # lid handle
+    box((0.12, 0.025, 0.08), (0.5, 0.03, 0.73), dark, bevel=0.006)  # pedal
+    box((0.03, 0.03, 0.05), (0.32, 0.6, 0.29), dark, bevel=0.006)  # hinge
+
+
+def mirror():
+    wood = mat("wood", (0.42, 0.31, 0.23), 0.6)
+    glass = mat("mirror", (0.85, 0.9, 0.95), 0.02, 1.0)
+    # free-standing cheval mirror: two posts on feet, framed glass between them
+    for x in (0.17, 0.83):
+        box((0.05, 1.7, 0.05), (x, 0.85, 0.1), wood, bevel=0.01)
+        box((0.07, 0.05, 0.4), (x, 0.025, 0.2), wood, bevel=0.012)
+        sphere(0.035, (x, 1.72, 0.1), wood)
+        cyl(0.02, 0.03, (x + (0.035 if x < 0.5 else -0.035), 1.05, 0.13), m_("metal.chrome", CHROME), axis="x")
+    box((0.6, 1.5, 0.05), (0.5, 0.97, 0.13), wood, bevel=0.015, segments=3)
+    box((0.52, 1.42, 0.01), (0.5, 0.97, 0.16), glass, bevel=0.0)
+
+
+def toy_box():
+    red = mat("toy_box", (0.9, 0.35, 0.3), 0.6)
+    trim = mat("toy_box.trim", (0.98, 0.85, 0.3), 0.5)
+    box((0.8, 0.45, 0.5), (0.5, 0.25, 0.3), red, bevel=0.03, segments=3)
+    for y in (0.06, 0.44):
+        box((0.82, 0.04, 0.52), (0.5, y, 0.3), trim, bevel=0.012)
+    # open lid leaning back, letter blocks on the front, toys spilling out
+    box((0.8, 0.04, 0.5), (0.5, 0.7, 0.03), red, bevel=0.012, rot_x=80)
+    for (x, c) in ((0.3, (0.3, 0.5, 0.9)), (0.5, (0.4, 0.75, 0.35)), (0.7, (0.95, 0.85, 0.2))):
+        box((0.12, 0.12, 0.012), (x, 0.25, 0.556), mat(f"block{x}", c, 0.5), bevel=0.01)
+    sphere(0.1, (0.35, 0.53, 0.3), mat("ball", (0.3, 0.5, 0.9), 0.4))
+    box((0.16, 0.16, 0.16), (0.62, 0.54, 0.32), mat("cube", (0.95, 0.85, 0.2), 0.5), bevel=0.02)
+    sphere(0.07, (0.8, 0.07, 0.7), mat("ball.red", (0.9, 0.2, 0.25), 0.4))
+    box((0.1, 0.1, 0.1), (0.2, 0.05, 0.72), mat("block.green", (0.4, 0.75, 0.35), 0.5), bevel=0.012)
+
+
+def exercise_bike():
+    frame = mat("frame", (0.2, 0.2, 0.22), 0.4, 0.6)
+    black = mat("rubber", (0.1, 0.1, 0.1), 0.8)
+    wheel = mat("flywheel", (0.8, 0.2, 0.2), 0.3, 0.5)
+    screen = mat("screen", (0.3, 0.8, 0.5), 0.2, emit=0.7)
+    # base: two stabiliser feet joined by a rail
+    for z in (0.15, 0.85):
+        box((0.45, 0.06, 0.08), (0.5, 0.03, z), black, bevel=0.015)
+    box((0.08, 0.06, 0.75), (0.5, 0.06, 0.5), frame, bevel=0.01)
+    # seat post (rider at the back), saddle; front column with console and bars
+    box((0.06, 0.8, 0.06), (0.5, 0.45, 0.3), frame, bevel=0.01, rot_x=10)
+    box((0.25, 0.06, 0.3), (0.5, 0.88, 0.25), black, bevel=0.025, segments=3)
+    box((0.07, 0.95, 0.07), (0.5, 0.5, 0.78), frame, bevel=0.01, rot_x=-12)
+    box((0.2, 0.12, 0.05), (0.5, 1.0, 0.84), frame, bevel=0.012)
+    box((0.15, 0.08, 0.006), (0.5, 1.0, 0.818), screen, bevel=0.0)
+    cyl(0.015, 0.5, (0.5, 0.97, 0.76), frame, axis="x")
+    for x in (0.27, 0.73):
+        cyl(0.02, 0.12, (x, 0.97, 0.76), black, axis="x")
+    # flywheel with a hub cover, crank and pedals
+    cyl(0.22, 0.05, (0.5, 0.35, 0.58), wheel, axis="x", bevel=0.01, verts=32)
+    cyl(0.07, 0.07, (0.5, 0.35, 0.58), frame, axis="x")
+    cyl(0.04, 0.2, (0.5, 0.33, 0.4), frame, axis="x")
+    for (x, dy) in ((0.38, 0.09), (0.62, -0.09)):
+        box((0.02, 0.2, 0.03), (x, 0.33 + dy / 2, 0.4), frame, bevel=0.005)
+        box((0.1, 0.025, 0.06), (x + (-0.05 if x < 0.5 else 0.05), 0.33 + dy, 0.4), black, bevel=0.006)
+
+
 BUILDERS = {
     f.__name__: f
     for f in (
         fridge_basic, stove_basic, counter_basic, kitchen_sink, toilet_basic, bed_single, bed_double, sofa_basic, dining_chair, dining_table,
         armchair, tv_basic, bookshelf, computer_desk, shower_basic, bathtub_basic, crib, floor_lamp,
+        plant_potted, painting, trash_can, mirror, toy_box, exercise_bike,
     )
 }
 
