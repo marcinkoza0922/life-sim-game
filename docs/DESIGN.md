@@ -381,7 +381,7 @@ Built in from day one:
 
 ## 9. Status (2026-11-09)
 
-**M0 done, M1 done, parts of M2–M4 in.** Everything below is playable in `lifesim`:
+**M0–M5 and M8 done; M6 (creator, no clothing yet), M7 (rigged peons, materials; objects still greybox) and M9 (roofs, terrain, saves; audio is voices only) partly in.** Everything below is playable in `lifesim`:
 
 - Hearth ECS with tests and a clean Miri run; schedule with per-system timings.
 - Renderer: instanced PBR-lite, shadowed sun with day/night cycle, lamp & room lights, MSAA, ACES,
