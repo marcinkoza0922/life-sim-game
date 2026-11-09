@@ -177,6 +177,131 @@ pub fn build_bungalow(world: &mut World) {
     place(w, "plant_potted", 0, 21, 21, 0);
 }
 
+/// A studio for one or two: a bed in the corner, a galley kitchen, a sofa, and a bathroom
+/// boxed into the back.
+pub fn build_studio(world: &mut World) {
+    use crate::lot::TerrainBrush::*;
+    {
+        let mut lot = world.res_mut::<Lot>();
+        *lot = Lot::new(32, 32);
+        lot.floor_rect(0, v(11, 13), v(16, 20), FLOOR_WOOD);
+        lot.floor_rect(0, v(16, 16), v(19, 20), FLOOR_WOOD);
+        lot.floor_rect(0, v(16, 13), v(19, 16), FLOOR_TILE);
+        lot.wall_rect(0, v(11, 13), v(19, 20), WALL_EXTERIOR);
+        lot.wall_line(0, v(16, 13), v(16, 16), WALL_BATH);
+        lot.wall_line(0, v(16, 16), v(19, 16), WALL_BATH);
+        lot.set_opening(Edge::new(0, 15, 20, Axis::X), Opening::Door); // front door
+        lot.set_opening(Edge::new(0, 16, 14, Axis::Z), Opening::Door); // bathroom
+        for (x, z, a) in [(12, 20, Axis::X), (17, 20, Axis::X), (11, 16, Axis::Z), (19, 18, Axis::Z), (13, 13, Axis::X)] {
+            lot.set_opening(Edge::new(0, x, z, a), Opening::Window);
+        }
+        lot.auto_roof(crate::lot::RoofKind::Gable, 0.45);
+        hills(&mut lot, &[(v(5, 6), 3.0, 0.45, Raise), (v(27, 24), 2.5, 0.3, Raise)]);
+    }
+    let w = world;
+    // sleeping corner
+    place(w, "bed_double", 0, 11, 13, 0);
+    place(w, "end_table", 0, 13, 13, 0);
+    place(w, "bookshelf", 0, 14, 13, 0);
+    place(w, "plant_potted", 0, 15, 13, 0);
+    // bathroom
+    place(w, "toilet_basic", 0, 16, 13, 0);
+    place(w, "mirror", 0, 17, 13, 0);
+    place(w, "shower_basic", 0, 18, 13, 0);
+    // galley kitchen
+    place(w, "fridge_basic", 0, 18, 16, 3);
+    place(w, "stove_basic", 0, 18, 17, 3);
+    place(w, "kitchen_sink", 0, 18, 18, 3);
+    place(w, "counter_basic", 0, 18, 19, 3);
+    place(w, "dining_table", 0, 15, 17, 0);
+    place(w, "dining_chair", 0, 15, 16, 0);
+    place(w, "dining_chair", 0, 16, 18, 2);
+    place(w, "trash_can", 0, 11, 17, 1);
+    // lounge
+    place(w, "tv_basic", 0, 11, 16, 0);
+    place(w, "sofa_basic", 0, 11, 19, 2);
+    place(w, "armchair", 0, 13, 19, 2);
+    place(w, "floor_lamp", 0, 14, 19, 0);
+    // yard
+    place(w, "plant_potted", 0, 10, 21, 0);
+    place(w, "plant_potted", 0, 20, 21, 0);
+}
+
+/// A family cottage: living room and an open kitchen in front; a main bedroom (with a crib),
+/// a bathroom with a tub, and a kids' room with two beds at the back.
+pub fn build_cottage(world: &mut World) {
+    use crate::lot::TerrainBrush::*;
+    {
+        let mut lot = world.res_mut::<Lot>();
+        *lot = Lot::new(32, 32);
+        lot.floor_rect(0, v(8, 14), v(15, 20), FLOOR_WOOD);
+        lot.floor_rect(0, v(15, 14), v(23, 20), FLOOR_TILE);
+        lot.floor_rect(0, v(8, 9), v(13, 14), FLOOR_CARPET);
+        lot.floor_rect(0, v(13, 9), v(17, 14), FLOOR_TILE);
+        lot.floor_rect(0, v(17, 9), v(23, 14), FLOOR_CARPET);
+        lot.wall_rect(0, v(8, 9), v(23, 20), WALL_EXTERIOR);
+        lot.wall_line(0, v(8, 14), v(23, 14), WALL_INTERIOR);
+        lot.wall_line(0, v(13, 9), v(13, 14), WALL_BATH);
+        lot.wall_line(0, v(17, 9), v(17, 14), WALL_BATH);
+        lot.set_opening(Edge::new(0, 12, 20, Axis::X), Opening::Door); // front door
+        lot.set_opening(Edge::new(0, 11, 14, Axis::X), Opening::Door); // main bedroom
+        lot.set_opening(Edge::new(0, 15, 14, Axis::X), Opening::Door); // bathroom
+        lot.set_opening(Edge::new(0, 19, 14, Axis::X), Opening::Door); // kids' room
+        for (x, z, a) in [
+            (10, 20, Axis::X),
+            (14, 20, Axis::X),
+            (18, 20, Axis::X),
+            (21, 20, Axis::X),
+            (8, 17, Axis::Z),
+            (23, 17, Axis::Z),
+            (10, 9, Axis::X),
+            (20, 9, Axis::X),
+            (8, 11, Axis::Z),
+            (23, 11, Axis::Z),
+        ] {
+            lot.set_opening(Edge::new(0, x, z, a), Opening::Window);
+        }
+        lot.auto_roof(crate::lot::RoofKind::Gable, 0.5);
+        hills(&mut lot, &[(v(27, 5), 3.0, 0.5, Raise), (v(4, 27), 2.5, 0.4, Raise)]);
+    }
+    let w = world;
+    // main bedroom
+    place(w, "bed_double", 0, 8, 9, 0);
+    place(w, "end_table", 0, 10, 9, 0);
+    place(w, "crib", 0, 12, 9, 0);
+    place(w, "plant_potted", 0, 8, 13, 0);
+    // bathroom
+    place(w, "toilet_basic", 0, 13, 9, 0);
+    place(w, "mirror", 0, 14, 9, 0);
+    place(w, "shower_basic", 0, 16, 9, 0);
+    place(w, "bathtub_basic", 0, 13, 11, 0);
+    // kids' room
+    place(w, "bed_single", 0, 17, 9, 0);
+    place(w, "toy_box", 0, 19, 9, 0);
+    place(w, "bed_single", 0, 21, 9, 0);
+    place(w, "kids_desk", 0, 22, 12, 3);
+    // living room
+    place(w, "tv_basic", 0, 9, 14, 0);
+    place(w, "rug", 0, 9, 15, 0);
+    place(w, "sofa_basic", 0, 9, 18, 2);
+    place(w, "armchair", 0, 12, 17, 3);
+    place(w, "bookshelf", 0, 13, 14, 0);
+    place(w, "floor_lamp", 0, 8, 19, 0);
+    place(w, "painting", 0, 11, 19, 2);
+    place(w, "computer_desk", 0, 14, 19, 2);
+    // kitchen / dining
+    place(w, "fridge_basic", 0, 22, 14, 3);
+    place(w, "stove_basic", 0, 22, 15, 3);
+    place(w, "counter_basic", 0, 22, 16, 3);
+    place(w, "kitchen_sink", 0, 22, 17, 3);
+    place(w, "counter_basic", 0, 22, 18, 3);
+    table_for_four(w, 17, 17);
+    place(w, "trash_can", 0, 15, 18, 1);
+    // yard
+    place(w, "plant_potted", 0, 7, 21, 0);
+    place(w, "plant_potted", 0, 23, 21, 0);
+}
+
 /// An empty plot, ready to build on.
 pub fn build_empty(world: &mut World, bumpy: bool) {
     use crate::lot::TerrainBrush::*;
@@ -232,6 +357,144 @@ pub fn build_park(world: &mut World) {
     place(w, "bookshelf", 0, 17, 21, 2);
     place(w, "trash_can", 0, 15, 24, 0);
     for (x, z) in [(3, 15), (10, 4), (20, 4), (26, 14), (9, 24), (20, 26), (11, 27), (21, 22)] {
+        place(w, "plant_potted", 0, x, z, 0);
+    }
+}
+
+/// A dining table at (x, z) with two chairs on each long side.
+fn table_for_four(world: &mut World, x: i32, z: i32) {
+    place(world, "dining_table", 0, x, z, 0);
+    for dx in 0..2 {
+        place(world, "dining_chair", 0, x + dx, z - 1, 0);
+        place(world, "dining_chair", 0, x + dx, z + 1, 2);
+    }
+}
+
+/// "The Grumpy Bean": a café with an espresso bar and kitchen along the back wall, tables, a
+/// lounge corner with chess and a TV, two restrooms, and a patio out front.
+pub fn build_cafe(world: &mut World) {
+    use crate::lot::TerrainBrush::*;
+    {
+        let mut lot = world.res_mut::<Lot>();
+        *lot = Lot::new(32, 32);
+        hills(&mut lot, &[(v(3, 4), 3.0, 0.5, Raise), (v(28, 5), 2.5, 0.4, Raise)]);
+        lot.floor_rect(0, v(7, 8), v(25, 12), FLOOR_TILE);
+        lot.floor_rect(0, v(7, 12), v(25, 20), FLOOR_WOOD);
+        lot.wall_rect(0, v(7, 8), v(25, 20), WALL_EXTERIOR);
+        lot.wall_line(0, v(7, 12), v(14, 12), WALL_BATH);
+        lot.wall_line(0, v(11, 8), v(11, 12), WALL_BATH);
+        lot.wall_line(0, v(14, 8), v(14, 12), WALL_BATH);
+        lot.set_opening(Edge::new(0, 16, 20, Axis::X), Opening::Door); // front door
+        lot.set_opening(Edge::new(0, 9, 12, Axis::X), Opening::Door);
+        lot.set_opening(Edge::new(0, 12, 12, Axis::X), Opening::Door);
+        for x in [8, 10, 12, 14, 18, 20, 22, 24] {
+            lot.set_opening(Edge::new(0, x, 20, Axis::X), Opening::Window);
+        }
+        for (x, z) in [(7, 15), (25, 15), (25, 10)] {
+            lot.set_opening(Edge::new(0, x, z, Axis::Z), Opening::Window);
+        }
+        lot.auto_roof(crate::lot::RoofKind::Flat, 0.0);
+    }
+    let w = world;
+    // restrooms
+    place(w, "toilet_basic", 0, 7, 8, 0);
+    place(w, "kitchen_sink", 0, 8, 8, 0);
+    place(w, "mirror", 0, 10, 8, 0);
+    place(w, "toilet_basic", 0, 11, 8, 0);
+    place(w, "mirror", 0, 13, 8, 0);
+    // the bar
+    place(w, "espresso_bar", 0, 16, 8, 0);
+    place(w, "espresso_bar", 0, 17, 8, 0);
+    place(w, "counter_basic", 0, 18, 8, 0);
+    place(w, "fridge_basic", 0, 19, 8, 0);
+    place(w, "stove_basic", 0, 20, 8, 0);
+    place(w, "counter_basic", 0, 21, 8, 0);
+    place(w, "kitchen_sink", 0, 22, 8, 0);
+    place(w, "trash_can", 0, 24, 8, 0);
+    // tables
+    for (x, z) in [(8, 14), (12, 14), (8, 18), (12, 18)] {
+        table_for_four(w, x, z);
+    }
+    // lounge: chess, a sofa facing the TV, books
+    place(w, "chess_table", 0, 17, 14, 0);
+    place(w, "chess_table", 0, 17, 17, 0);
+    place(w, "tv_basic", 0, 21, 13, 0);
+    place(w, "sofa_basic", 0, 20, 18, 2);
+    place(w, "armchair", 0, 22, 18, 2);
+    place(w, "bookshelf", 0, 24, 13, 3);
+    place(w, "painting", 0, 24, 16, 3);
+    place(w, "floor_lamp", 0, 7, 13, 0);
+    place(w, "floor_lamp", 0, 24, 19, 0);
+    for x in [15, 17] {
+        place(w, "plant_potted", 0, x, 19, 0);
+    }
+    // patio
+    for x in [9, 20] {
+        table_for_four(w, x, 24);
+    }
+    for (x, z) in [(14, 22), (18, 22), (5, 21), (27, 21)] {
+        place(w, "plant_potted", 0, x, z, 0);
+    }
+}
+
+/// "Sweat Equity Gym": treadmills, bikes and weight benches, two locker rooms with showers,
+/// a smoothie corner and a TV lounge for watching other people exercise.
+pub fn build_gym(world: &mut World) {
+    use crate::lot::TerrainBrush::*;
+    {
+        let mut lot = world.res_mut::<Lot>();
+        *lot = Lot::new(32, 32);
+        hills(&mut lot, &[(v(27, 27), 3.0, 0.5, Raise), (v(4, 4), 2.5, 0.35, Raise)]);
+        lot.floor_rect(0, v(8, 8), v(14, 13), FLOOR_TILE);
+        lot.floor_rect(0, v(14, 8), v(24, 13), FLOOR_CARPET);
+        lot.floor_rect(0, v(8, 13), v(24, 20), FLOOR_CARPET);
+        lot.wall_rect(0, v(8, 8), v(24, 20), WALL_EXTERIOR);
+        lot.wall_line(0, v(8, 13), v(14, 13), WALL_BATH);
+        lot.wall_line(0, v(11, 8), v(11, 13), WALL_BATH);
+        lot.wall_line(0, v(14, 8), v(14, 13), WALL_BATH);
+        lot.set_opening(Edge::new(0, 16, 20, Axis::X), Opening::Door); // front door
+        lot.set_opening(Edge::new(0, 9, 13, Axis::X), Opening::Door);
+        lot.set_opening(Edge::new(0, 12, 13, Axis::X), Opening::Door);
+        for x in [10, 12, 14, 18, 20, 22] {
+            lot.set_opening(Edge::new(0, x, 20, Axis::X), Opening::Window);
+        }
+        for (x, z) in [(24, 11), (24, 16), (8, 16)] {
+            lot.set_opening(Edge::new(0, x, z, Axis::Z), Opening::Window);
+        }
+        lot.set_opening(Edge::new(0, 19, 8, Axis::X), Opening::Window);
+        lot.auto_roof(crate::lot::RoofKind::Flat, 0.0);
+    }
+    let w = world;
+    // locker rooms
+    place(w, "toilet_basic", 0, 8, 8, 0);
+    place(w, "mirror", 0, 9, 8, 0);
+    place(w, "shower_basic", 0, 10, 8, 0);
+    place(w, "toilet_basic", 0, 11, 8, 0);
+    place(w, "mirror", 0, 12, 8, 0);
+    place(w, "shower_basic", 0, 13, 8, 0);
+    // cardio along the back wall
+    for x in [15, 16, 17] {
+        place(w, "treadmill", 0, x, 8, 0);
+    }
+    place(w, "exercise_bike", 0, 19, 8, 0);
+    place(w, "exercise_bike", 0, 21, 8, 0);
+    // weights
+    for x in [17, 19, 21] {
+        place(w, "weight_bench", 0, x, 15, 0);
+    }
+    // smoothie corner
+    place(w, "fridge_basic", 0, 23, 12, 3);
+    place(w, "espresso_bar", 0, 23, 13, 3);
+    place(w, "trash_can", 0, 23, 14, 3);
+    // lounge
+    place(w, "tv_basic", 0, 10, 15, 0);
+    place(w, "sofa_basic", 0, 10, 18, 2);
+    place(w, "floor_lamp", 0, 13, 19, 0);
+    place(w, "plant_potted", 0, 8, 19, 0);
+    for x in [15, 17] {
+        place(w, "plant_potted", 0, x, 19, 0);
+    }
+    for (x, z) in [(6, 21), (26, 21), (14, 22), (18, 22)] {
         place(w, "plant_potted", 0, x, z, 0);
     }
 }

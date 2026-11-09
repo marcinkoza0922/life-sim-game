@@ -491,16 +491,28 @@ fn hood_tour(seed: u64, days: u64) {
                 until(&mut sim, 9);
                 sim.play_household(0).unwrap();
             }
-            _ => {}
+            _ => {
+                // drop in on whoever lives there now
+                let lot = sim.world.res::<nh::Neighborhood>().households.first().and_then(|h| h.home);
+                if let Some(lot) = lot.filter(|_| nh::at_home(&sim.world)) {
+                    match sim.visit(lot) {
+                        Ok(()) => {
+                            until(&mut sim, 15);
+                            sim.go_home().unwrap();
+                        }
+                        Err(e) => println!("day {day}: no visit ({e})"),
+                    }
+                }
+            }
         }
         until(&mut sim, 0);
     }
     print_street(&sim);
     let log = sim.world.res::<sim::log::SimLog>();
     let count = |s: &str| log.entries.iter().filter(|e| e.text.contains(s)).count();
-    println!("\nvisits: {} at home, {} at the park; neighbor promotions: {}; births: {}",
+    println!("\nvisits: {} at home, {} out and about, {} to the neighbors; newcomers: {}; neighbor promotions: {}; births: {}",
         count("dropped by") + count("rang the doorbell") + count("cup of sugar") + count("casserole") + count("wandered over"),
-        count("too."), count("Word on the street"), count("had a baby"));
+        count("too."), count("dropped in on"), count("moving van"), count("Word on the street"), count("had a baby"));
     println!("simulated {days} days in {:.1}s", t0.elapsed().as_secs_f32());
     for e in log.entries.iter().filter(|e| e.kind == LogKind::Death || e.text.contains("up for sale")) {
         println!("  [{}] {}", sim::time::Clock { tick: e.tick }.label(), e.text);

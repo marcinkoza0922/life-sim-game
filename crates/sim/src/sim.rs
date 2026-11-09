@@ -352,6 +352,7 @@ impl Sim {
             .add_system("post", crate::ghosts::haunt)
             .add_system("post", crate::neighborhood::visits)
             .add_system("post", crate::neighborhood::offlot_daily)
+            .add_system("post", crate::neighborhood::newcomers)
             .add_system("post", life::aging)
             .add_system("post", economy::bills)
             .add_system("post", daily_upkeep);
@@ -485,6 +486,13 @@ impl Sim {
     /// Takes the household to a community lot.
     pub fn go_out(&mut self, lot: usize) -> Result<(), String> {
         let r = crate::neighborhood::go_out(&mut self.world, lot);
+        self.world.flush();
+        r
+    }
+
+    /// Takes the household over to a neighbor's home.
+    pub fn visit(&mut self, lot: usize) -> Result<(), String> {
+        let r = crate::neighborhood::visit(&mut self.world, lot);
         self.world.flush();
         r
     }

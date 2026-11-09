@@ -773,12 +773,8 @@ fn arrive(world: &World, e: Entity, data: &GameData, cur: &mut CurrentAction, sl
                 (Some(_), Some(sd)) => (Pose::Sit, sd.anim.clone()),
                 _ => (inter.pose, inter.anim.clone()),
             };
-            if inter.cost > 0 {
-                let mut hh = world.res_mut::<Household>();
-                if hh.funds < inter.cost {
-                    return Err("can't afford it".into());
-                }
-                hh.funds -= inter.cost;
+            if inter.cost > 0 && !crate::economy::debit(world, e, inter.cost) {
+                return Err("can't afford it".into());
             }
             {
                 let mut tf = world.get_mut::<Transform>(e).unwrap();

@@ -45,11 +45,11 @@ fn members(sim: &Sim) -> Vec<Entity> {
 fn the_street_is_populated() {
     let sim = street(3);
     let h = sim.world.res::<Neighborhood>().clone();
-    assert_eq!(h.lots.len(), 9, "home, 4 neighbors, a house for sale, 2 plots, a park");
+    assert_eq!(h.lots.len(), 11, "home, 4 neighbors, a house for sale, 2 plots, a park, a café, a gym");
     assert_eq!(h.households.len(), 4);
     assert_eq!(h.active, 0);
     assert!(h.lots[0].parked.is_none() && h.lots[1..].iter().all(|l| l.parked.is_some()));
-    assert_eq!(lot_of_kind(&sim, LotKind::Community, true).len(), 1);
+    assert_eq!(lot_of_kind(&sim, LotKind::Community, true).len(), 3);
     assert_eq!(hood::vacant_lots(&sim.world).len(), 3);
     for n in hood::neighbors(&sim.world) {
         assert!(sim.world.has::<Offlot>(n) && !sim.world.has::<Member>(n));
@@ -234,7 +234,7 @@ fn saves_keep_the_whole_street_and_stay_deterministic() {
     a.run_minutes(3 * 60 + 7);
     let text = a.save_to_string().unwrap();
     let mut b = Sim::load_from_str(&text, GameData::embedded()).unwrap();
-    assert_eq!(b.world.res::<Neighborhood>().lots.len(), 9);
+    assert_eq!(b.world.res::<Neighborhood>().lots.len(), 11);
     assert_eq!(a.summary(), b.summary());
     a.run_days(2);
     b.run_days(2);
@@ -264,4 +264,202 @@ fn old_saves_get_a_street() {
     assert!(b.world.has::<Offlot>(t) && !b.world.has::<AtWork>(t));
     assert_eq!(b.world.res::<Household>().home, Some(0));
     assert!(h.lots.len() >= 6);
+}
+
+fn find_object(sim: &Sim, id: &str) -> Entity {
+    let data = sim.data();
+    sim.objects()
+        .into_iter()
+        .find(|e| sim.world.get::<sim::objects::ObjectInstance>(*e).is_some_and(|o| data.object(o.def).id == id))
+        .unwrap_or_else(|| panic!("no {id}"))
+}
+
+fn community(sim: &Sim, name: &str) -> usize {
+    sim.world.res::<Neighborhood>().lots.iter().position(|l| l.name.as_deref() == Some(name)).unwrap_or_else(|| panic!("no {name}"))
+}
+
+/// Beds per person a parked lot sleeps (double beds count twice, cribs once).
+fn sleeps(sim: &Sim, lot: usize) -> usize {
+    let hood = sim.world.res::<Neighborhood>();
+    hood.lots[lot].parked.as_ref().unwrap().objects.iter().map(|o| match o.def.as_str() {
+        "bed_double" => 2,
+        "bed_single" | "crib" => 1,
+        _ => 0,
+    }).sum::<usize>()
+}
+
+#[test]
+fn houses_fit_their_households() {
+    let sim = street(45);
+    let households = sim.world.res::<Neighborhood>().households.clone();
+    let mut plans = std::collections::BTreeSet::new();
+    for h in households {
+        let lot = h.home.unwrap();
+        assert!(sleeps(&sim, lot) >= h.members.len(), "{} have a bed each", h.name);
+        plans.insert(shape_of(&sim, lot));
+    }
+    assert!(plans.len() >= 3, "studio, bungalow and cottage all appear on the street");
+}
+
+fn shape_of(sim: &Sim, lot: usize) -> (usize, usize) {
+    let hood = sim.world.res::<Neighborhood>();
+    let p = hood.lots[lot].parked.as_ref().unwrap();
+    (p.lot.walls.len(), p.objects.len())
+}
+
+#[test]
+fn visiting_the_neighbors() {
+    let mut sim = street(49);
+    run_until_hour(&mut sim, 10);
+    let home_shape = shape(&sim);
+    let (lot, hosts) = {
+        let h = sim.world.res::<Neighborhood>().households.iter().find(|h| h.members.len() >= 2).cloned().unwrap();
+        (h.home.unwrap(), h.members)
+    };
+    let going = hood::travelers(&sim.world);
+    sim.visit(lot).unwrap();
+    assert_eq!(hood::active_lot(&sim.world), lot);
+    assert!(hood::visiting(&sim.world) && !hood::at_home(&sim.world));
+    let present = sim::sim::present_peons(&sim.world);
+    for e in going.iter().chain(&hosts) {
+        assert!(present.contains(e), "guests and hosts are both there");
+    }
+    for &e in &hosts {
+        assert!(!sim.world.has::<Visitor>(e), "hosts aren't visitors in their own home");
+        let pos = sim.world.get::<Transform>(e).unwrap().pos;
+        assert!(sim.world.res::<Lot>().has_floor(0, glam::IVec2::new(pos.x as i32, pos.z as i32)), "hosts start indoors");
+    }
+    assert!(sim.world.res::<SimLog>().contains("dropped in on"));
+    assert!(sim.visit(lot).is_err(), "already there");
+    sim.run_minutes(3 * 60);
+    sim.go_home().unwrap();
+    assert_eq!(shape(&sim), home_shape);
+    for &e in &hosts {
+        assert!(sim.world.has::<Offlot>(e), "hosts stay home when the guests leave");
+    }
+    // nobody drops in at midnight
+    run_until_hour(&mut sim, 23);
+    assert!(sim.visit(lot).is_err());
+    assert!(hood::at_home(&sim.world));
+}
+
+#[test]
+fn hosts_at_work_come_home_to_their_own_lot() {
+    let mut sim = street(53);
+    run_until_hour(&mut sim, 10);
+    let (lot, host) = {
+        let h = &sim.world.res::<Neighborhood>().households[1];
+        (h.home.unwrap(), h.members[0])
+    };
+    sim.visit(lot).unwrap();
+    let until = sim.clock().tick + 30;
+    sim.world.insert_one(host, AtWork { until, event_at: u64::MAX, event_done: true, school: false });
+    sim.go_home().unwrap();
+    assert!(sim.world.has::<Offlot>(host), "they'll come home to their place, not ours");
+    sim.run_minutes(90);
+    assert!(!sim::sim::present_peons(&sim.world).contains(&host) || sim.world.has::<Visitor>(host));
+}
+
+#[test]
+fn newcomers_move_in_when_the_street_empties() {
+    let mut sim = street(57);
+    for _ in 0..2 {
+        let members = sim.world.res::<Neighborhood>().households[0].members.clone();
+        for e in members {
+            sim::life::die(&mut sim.world, e, "old age");
+        }
+        sim.world.flush();
+    }
+    assert_eq!(hood::household_count(&sim.world), 3);
+    sim.run_days(12);
+    assert!(hood::household_count(&sim.world) >= 4, "someone moved in");
+    assert!(sim.world.res::<SimLog>().contains("moving van"));
+    assert!(!hood::vacant_lots(&sim.world).is_empty(), "a lot is always left for sale");
+    for h in sim.world.res::<Neighborhood>().households.iter() {
+        for &e in &h.members {
+            assert!(sim.world.has::<Offlot>(e) || sim.world.has::<Visitor>(e) || sim.world.has::<Dead>(e));
+        }
+    }
+}
+
+#[test]
+fn newcomers_build_on_an_empty_plot() {
+    let mut sim = street(61);
+    let plot = *hood::vacant_lots(&sim.world).iter().find(|&&l| hood::build_value(&sim.world, l) == 0).unwrap();
+    use LifeStage::*;
+    hood::move_in_newcomers(&mut sim.world, plot, &[Adult, Adult, Child, Toddler], true);
+    let r = hood::residents(&sim.world, plot).expect("they live there now");
+    assert_eq!(r.members.len(), 4);
+    assert!(hood::build_value(&sim.world, plot) > 0, "and built a house");
+    assert!(sleeps(&sim, plot) >= 4, "a cottage, with room for the kids");
+    sim.run_days(1);
+}
+
+#[test]
+fn lattes_at_the_cafe_and_reps_at_the_gym() {
+    let mut sim = street(65);
+    run_until_hour(&mut sim, 10);
+    sim.world.res_mut::<sim::time::Settings>().free_will = sim::time::FreeWill::Off;
+    let adult = members(&sim).into_iter().find(|e| sim.world.get::<Age>(*e).unwrap().stage.is_adult()).unwrap();
+    for (place, obj, inter) in [("The Grumpy Bean", "espresso_bar", "latte"), ("Sweat Equity Gym", "treadmill", "run"), ("Sweat Equity Gym", "weight_bench", "lift")] {
+        let lot = community(&sim, place);
+        if hood::active_lot(&sim.world) != lot {
+            if !hood::at_home(&sim.world) {
+                sim.go_home().unwrap();
+            }
+            sim.go_out(lot).unwrap();
+        }
+        let o = find_object(&sim, obj);
+        let i = {
+            let data = sim.data();
+            let inst = sim.world.get::<sim::objects::ObjectInstance>(o).unwrap();
+            data.object(inst.def).interactions.iter().position(|x| x.id == inter).unwrap()
+        };
+        {
+            let mut n = sim.world.get_mut::<Needs>(adult).unwrap();
+            for k in sim::data::Need::ALL {
+                n.set(k, 80.0);
+            }
+            n.set(sim::data::Need::Energy, 40.0);
+        }
+        let funds = sim.world.res::<Household>().funds;
+        sim.order(adult, ActionKind::Object { obj: o, interaction: i }).unwrap();
+        let mut did = false;
+        for _ in 0..90 {
+            sim.tick();
+            let q = sim.world.get::<ActionQueue>(adult).unwrap();
+            if q.current.as_ref().is_some_and(|c| matches!(c.action.kind, ActionKind::Object { obj, interaction } if obj == o && interaction == i) && matches!(c.phase, Phase::Performing { .. })) {
+                did = true;
+                break;
+            }
+        }
+        assert!(did, "{obj}: {inter} gets done");
+        if obj == "espresso_bar" {
+            assert_eq!(sim.world.res::<Household>().funds, funds - 6, "a latte costs $6");
+        }
+    }
+}
+
+#[test]
+fn neighbors_pay_for_their_own_coffee() {
+    let sim = street(69);
+    let n = hood::neighbors(&sim.world)[0];
+    let ours = sim.world.res::<Household>().funds;
+    let theirs = |sim: &Sim| sim.world.res::<Neighborhood>().households.iter().find(|h| h.members.contains(&n)).unwrap().funds;
+    let before = theirs(&sim);
+    assert!(sim::economy::debit(&sim.world, n, 6));
+    assert_eq!(theirs(&sim), before - 6);
+    assert_eq!(sim.world.res::<Household>().funds, ours);
+    assert!(!sim::economy::debit(&sim.world, n, i64::MAX), "can't afford it");
+}
+
+#[test]
+fn old_streets_get_the_new_community_lots() {
+    let sim = street(73);
+    let mut save = sim::save::capture(&sim.world);
+    let hood_save = save.hood.as_mut().unwrap();
+    hood_save.lots.retain(|l| l.name.as_deref() != Some("The Grumpy Bean") && l.name.as_deref() != Some("Sweat Equity Gym"));
+    let b = sim::save::restore(save, GameData::embedded()).unwrap();
+    let names: Vec<String> = b.world.res::<Neighborhood>().lots.iter().filter_map(|l| l.name.clone()).collect();
+    assert_eq!(names, ["Gulch Green", "The Grumpy Bean", "Sweat Equity Gym"]);
 }

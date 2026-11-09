@@ -64,6 +64,29 @@ pub fn credit(world: &World, e: Entity, amount: i64) {
     }
 }
 
+/// Charges the household `e` belongs to; false (and nothing charged) if they can't afford it.
+/// People in no household (the odd stray) get it on the house.
+pub fn debit(world: &World, e: Entity, amount: i64) -> bool {
+    let mut hh = world.res_mut::<Household>();
+    if hh.members.contains(&e) {
+        if hh.funds < amount {
+            return false;
+        }
+        hh.funds -= amount;
+        return true;
+    }
+    drop(hh);
+    let mut hood = world.res_mut::<crate::neighborhood::Neighborhood>();
+    match hood.households.iter_mut().find(|h| h.members.contains(&e)) {
+        Some(h) if h.funds < amount => false,
+        Some(h) => {
+            h.funds -= amount;
+            true
+        }
+        None => true,
+    }
+}
+
 /// Bills arrive every three days at 9:00.
 pub fn bills(world: &mut World) {
     let clock = *world.res::<Clock>();

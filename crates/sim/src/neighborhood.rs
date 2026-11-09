@@ -4,7 +4,9 @@
 //! parked here as plain data ([`ParkedLot`]). Every person stays in the world wherever they are, so
 //! relationships and family links span lots. People who aren't on the active lot carry [`Offlot`]
 //! and are simulated roughly once a day ([`offlot_daily`]: pay, promotions, grades, bills,
-//! births); aging runs for everyone on the shared clock. Neighbors drop by as [`Visitor`]s.
+//! births); aging runs for everyone on the shared clock. Neighbors drop by as [`Visitor`]s, and the
+//! played household can go and visit them ([`visit`]): the hosts are at home on their own lot.
+//! When the street thins out, [`newcomers`] move into vacant lots.
 
 use std::sync::Arc;
 
@@ -308,9 +310,26 @@ fn next_visit(world: &World, e: Entity, earliest_days: f32, latest_days: f32) ->
     }
 }
 
-/// Spawns a household of neighbors (off-lot) and moves them into a new bungalow down the street.
+/// The house a household of `size` gets when it builds: a studio for one, the bungalow for
+/// two, a family cottage for more.
+pub fn plan_for(size: usize) -> fn(&mut World) {
+    match size {
+        0 | 1 => crate::starter::build_studio,
+        2 => crate::starter::build_bungalow,
+        _ => crate::starter::build_cottage,
+    }
+}
+
+/// Spawns a household of neighbors (off-lot) and moves them into a new house down the street.
 pub fn add_neighbor_household(world: &mut World, stages: &[LifeStage], couple: bool) -> LotId {
     let address = next_address(world);
+    let lot = add_lot(world, address, None, LotKind::Residential, 2500, plan_for(stages.len()));
+    settle_household(world, lot, stages, couple);
+    lot
+}
+
+/// Spawns a household of neighbors (off-lot) living on `lot`; returns its name.
+fn settle_household(world: &mut World, lot: LotId, stages: &[LifeStage], couple: bool) -> String {
     let mut members = Vec::new();
     let mut last: Option<String> = None;
     for &stage in stages {
@@ -332,11 +351,68 @@ pub fn add_neighbor_household(world: &mut World, stages: &[LifeStage], couple: b
             crate::family::set_parent(world, p, k);
         }
     }
-    let lot = add_lot(world, address, None, LotKind::Residential, 2500, crate::starter::build_bungalow);
     let funds = 3000 + world.res_mut::<SimRng>().below(12_000) as i64;
     let name = format!("The {} Household", last.unwrap_or_default());
-    push_household(world, Household { name, funds, members, unpaid: 0, unpaid_since: None, home: Some(lot) });
-    lot
+    push_household(world, Household { name: name.clone(), funds, members, unpaid: 0, unpaid_since: None, home: Some(lot) });
+    name
+}
+
+/// How many households the street likes to have (counting the played one); below this,
+/// newcomers move into vacant lots.
+pub const STREET_HOUSEHOLDS: usize = 5;
+
+/// Who moves in: (stages, couple).
+const NEWCOMERS: [(&[LifeStage], bool); 7] = {
+    use LifeStage::*;
+    [
+        (&[YoungAdult], false),
+        (&[YoungAdult, YoungAdult], true),
+        (&[Adult, Adult, Child], true),
+        (&[Adult, Adult, Toddler, Child], true),
+        (&[Adult, Teen], false),
+        (&[Elder, Elder], true),
+        (&[Adult], false),
+    ]
+};
+
+/// Households on the street, the played one included.
+pub fn household_count(world: &World) -> usize {
+    world.res::<Neighborhood>().households.len() + usize::from(world.res::<Household>().home.is_some())
+}
+
+/// Every morning at 10:00, if the street is short of households, a new one may move into a vacant
+/// lot (a furnished house first; on an empty plot they build). One lot is always left for sale.
+pub fn newcomers(world: &mut World) {
+    if world.res::<Clock>().minute_of_day() != 10 * 60 || household_count(world) >= STREET_HOUSEHOLDS {
+        return;
+    }
+    let active = active_lot(world);
+    let open: Vec<LotId> = vacant_lots(world).into_iter().filter(|&l| l != active).collect();
+    if open.len() < 2 || world.res_mut::<SimRng>().below(100) >= 40 {
+        return;
+    }
+    let furnished: Vec<LotId> = open.iter().copied().filter(|&l| build_value(world, l) > 0).collect();
+    let pool = if furnished.is_empty() { &open } else { &furnished };
+    let lot = pool[world.res_mut::<SimRng>().below(pool.len())];
+    let (stages, couple) = NEWCOMERS[world.res_mut::<SimRng>().below(NEWCOMERS.len())];
+    move_in_newcomers(world, lot, stages, couple);
+}
+
+/// A new household of townies moves into vacant `lot` (not the live one), building a house first
+/// if it's an empty plot.
+pub fn move_in_newcomers(world: &mut World, lot: LotId, stages: &[LifeStage], couple: bool) -> String {
+    assert!(lot != active_lot(world), "newcomers move into a parked lot");
+    if build_value(world, lot) == 0 {
+        let parked = build_parked(world, plan_for(stages.len()));
+        let mut hood = world.res_mut::<Neighborhood>();
+        hood.lots[lot].value = parked.build_value();
+        hood.lots[lot].parked = Some(parked);
+    }
+    let name = settle_household(world, lot, stages, couple);
+    let address = world.res::<Neighborhood>().lots[lot].address.clone();
+    log(world, LogKind::Info, None, format!("A moving van pulled up: {name} moved into {address}."));
+    world.flush();
+    name
 }
 
 fn push_household(world: &World, h: Household) {
@@ -366,7 +442,26 @@ fn add_rest_of_street(world: &mut World) {
     add_lot(world, a, None, LotKind::Residential, 2000, |w| crate::starter::build_empty(w, true));
     let a = next_address(world);
     add_lot(world, a, None, LotKind::Residential, 2500, |w| crate::starter::build_empty(w, false));
-    add_lot(world, "1 Town Square".into(), Some("Gulch Green".into()), LotKind::Community, 0, crate::starter::build_park);
+    add_community_lots(world);
+}
+
+/// The community lots: (address, name, builder).
+type CommunityLot = (&'static str, &'static str, fn(&mut World));
+
+const COMMUNITY: [CommunityLot; 3] = [
+    ("1 Town Square", "Gulch Green", crate::starter::build_park),
+    ("2 Town Square", "The Grumpy Bean", crate::starter::build_cafe),
+    ("3 Town Square", "Sweat Equity Gym", crate::starter::build_gym),
+];
+
+/// Adds whichever community lots the street doesn't have yet (older saves predate some).
+pub fn add_community_lots(world: &mut World) {
+    for (address, name, build) in COMMUNITY {
+        let has = world.res::<Neighborhood>().lots.iter().any(|l| l.name.as_deref() == Some(name));
+        if !has {
+            add_lot(world, address.into(), Some(name.into()), LotKind::Community, 0, build);
+        }
+    }
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -438,6 +533,14 @@ pub fn switch_lot(world: &mut World, target: LotId, travelers: &[Entity]) -> Res
             let visit_at = next_visit(world, e, 1.0, 3.0);
             world.insert_one(e, Offlot { visit_at });
         }
+    }
+    // hosts and guests at work or school go home afterwards, not here
+    let mut out: Vec<Entity> = world.query_filtered::<Entity, (With<AtWork>, Without<Offlot>, Without<Member>)>().iter().collect();
+    out.sort();
+    for e in out {
+        world.remove::<Visitor>(e);
+        let visit_at = next_visit(world, e, 1.0, 3.0);
+        world.insert_one(e, Offlot { visit_at });
     }
     // the ghosts stay with their graves
     let ghosts: Vec<Entity> = world.query_filtered::<Entity, (With<Ghost>, Without<Offlot>)>().iter().collect();
@@ -538,6 +641,57 @@ pub fn go_out(world: &mut World, lot: LotId) -> Result<(), String> {
     Ok(())
 }
 
+/// Takes the household over to a neighbor's: the hosts are at home (unless they're at work or
+/// school), and go about their evening while the guests are there.
+pub fn visit(world: &mut World, lot: LotId) -> Result<(), String> {
+    let r = residents(world, lot).ok_or("nobody lives there")?;
+    if r.played {
+        return Err("that's your own place".into());
+    }
+    if !(8..22).contains(&world.res::<Clock>().hour()) {
+        return Err(format!("it's too late to drop in on {}", r.name));
+    }
+    let travelers = travelers(world);
+    if travelers.is_empty() {
+        return Err("nobody's home to go".into());
+    }
+    switch_lot(world, lot, &travelers)?;
+    let mut hosts: Vec<Entity> =
+        r.members.iter().copied().filter(|&e| world.contains(e) && !world.has::<Dead>(e) && !world.has::<AtWork>(e) && world.has::<Offlot>(e)).collect();
+    hosts.sort();
+    for (i, &e) in hosts.iter().enumerate() {
+        world.remove::<Offlot>(e);
+        reset(world, e);
+        freshen(world, e);
+        let pos = indoor_spot(world, i);
+        place_at(world, e, pos);
+    }
+    world.flush();
+    let (hh, addr) = (world.res::<Household>().name.clone(), world.res::<Neighborhood>().lots[lot].address.clone());
+    let line = if hosts.is_empty() { format!("{hh} went over to {addr}, but {} aren't home.", r.name) } else { format!("{hh} dropped in on {} at {addr}.", r.name) };
+    log(world, LogKind::Social, None, line);
+    Ok(())
+}
+
+/// Is the household a guest at someone else's home?
+pub fn visiting(world: &World) -> bool {
+    let active = active_lot(world);
+    active_kind(world) == LotKind::Residential && world.res::<Household>().home != Some(active) && residents(world, active).is_some()
+}
+
+/// A walkable indoor (floored) ground-floor spot for the `i`th resident at home.
+fn indoor_spot(world: &World, i: usize) -> Vec3 {
+    let tiles: Vec<IVec2> = {
+        let lot = world.res::<Lot>();
+        lot.floors.keys().filter(|(l, _, _)| *l == 0).map(|&(_, x, z)| IVec2::new(x, z)).filter(|t| lot.walkable(0, *t)).collect()
+    };
+    if tiles.is_empty() {
+        return arrival_spot(world, i);
+    }
+    let t = tiles[(tiles.len() / 3 + i * 7) % tiles.len()];
+    world.res::<Lot>().ground_center(0, t)
+}
+
 /// Brings the household back from an outing.
 pub fn go_home(world: &mut World) -> Result<(), String> {
     let home = world.res::<Household>().home.ok_or("they have no home")?;
@@ -630,6 +784,13 @@ pub fn visits(world: &mut World) {
             world.get_mut::<Offlot>(e).unwrap().visit_at = u64::MAX;
         } else if (8..21).contains(&hour) {
             arrive(world, e, tick, community);
+        }
+    }
+    if world.res::<Clock>().minute_of_day() == 23 * 60 && visiting(world) {
+        let hosts = residents(world, active_lot(world)).map(|r| r.members).unwrap_or_default();
+        if let Some(&h) = hosts.iter().find(|&&h| world.contains(h) && !world.has::<Dead>(h) && !crate::components::is_away(world, h)) {
+            set_bubble(world, h, Some("Zzz".into()), None, 30);
+            log(world, LogKind::Funny, Some(h), format!("{} yawned pointedly and started turning off lights. It might be time to go home.", name_of(world, h)));
         }
     }
     let mut guests: Vec<(Entity, Visitor)> = world.query_filtered::<(Entity, &Visitor), Without<Dead>>().iter().map(|(e, v)| (e, v.clone())).collect();
