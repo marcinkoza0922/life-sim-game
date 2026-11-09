@@ -28,7 +28,7 @@ pub fn schedule_school(world: &mut World) {
     let mod_ = clock.minute_of_day();
     let start = SCHOOL_START_HOUR * 60;
     let students: Vec<(Entity, Student)> = world
-        .query_filtered::<(Entity, &Student), (Without<Dead>, Without<AtWork>)>()
+        .query_filtered::<(Entity, &Student), (Without<Dead>, Without<AtWork>, Without<Offlot>, Without<Visitor>)>()
         .iter()
         .map(|(e, s)| (e, s.clone()))
         .collect();
@@ -92,10 +92,12 @@ pub fn run_school(world: &mut World) {
 
 fn end_school_day(world: &mut World, e: Entity) {
     world.remove::<AtWork>(e);
-    let home = { let lot = world.res::<Lot>(); lot.ground_center(0, actions::exit_tile(&lot)) };
-    if let Some(mut tf) = world.get_mut::<Transform>(e) {
-        tf.pos = home;
-        tf.prev_pos = tf.pos;
+    if !world.has::<Offlot>(e) {
+        let home = { let lot = world.res::<Lot>(); lot.ground_center(0, actions::exit_tile(&lot)) };
+        if let Some(mut tf) = world.get_mut::<Transform>(e) {
+            tf.pos = home;
+            tf.prev_pos = tf.pos;
+        }
     }
     {
         let mut n = world.get_mut::<Needs>(e).unwrap();

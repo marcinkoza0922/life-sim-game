@@ -130,7 +130,7 @@ impl App {
             }),
             None => {
                 let mut s = sim::starter::starter_sim(args.seed);
-                sim::townies::populate(&mut s.world, 5);
+                s.populate_neighborhood();
                 s
             }
         };
@@ -206,6 +206,7 @@ impl App {
             KeyCode::F8 => g.debug.settings = !g.debug.settings,
             KeyCode::KeyL => g.debug.log = !g.debug.log,
             KeyCode::F5 => (g.mode, g.tool) = (Mode::Live, Tool::None),
+            KeyCode::F6 | KeyCode::F7 if !g.can_build() => g.say("You can only build and buy on your own lot."),
             KeyCode::F6 => (g.mode, g.tool) = (Mode::Buy, Tool::None),
             KeyCode::F7 => (g.mode, g.tool) = (Mode::Build, Tool::None),
             KeyCode::PageUp => g.set_level(g.level + 1),
@@ -373,7 +374,7 @@ impl App {
             let w = &self.game.sim.world;
             let eye = cam.eye;
             let mut speakers = Vec::new();
-            for (e, tf, age, b) in w.query_filtered::<(sim::Entity, &sim::components::Transform, &sim::components::Age, &sim::components::Bubble), hearth_ecs::Without<sim::components::AtWork>>().iter() {
+            for (e, tf, age, b) in w.query_filtered::<(sim::Entity, &sim::components::Transform, &sim::components::Age, &sim::components::Bubble), (hearth_ecs::Without<sim::components::AtWork>, hearth_ecs::Without<sim::components::Offlot>)>().iter() {
                 let Some(line) = &b.speech else { continue };
                 if tf.level() > self.game.level {
                     continue;

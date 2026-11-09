@@ -247,6 +247,7 @@ impl_filter_tuple!(A 0);
 impl_filter_tuple!(A 0, B 1);
 impl_filter_tuple!(A 0, B 1, C 2);
 impl_filter_tuple!(A 0, B 1, C 2, D 3);
+impl_filter_tuple!(A 0, B 1, C 2, D 3, E 4);
 
 /// An active query. Holds runtime borrows on the accessed component types until dropped.
 pub struct QueryBorrow<'w, Q: QueryData, F: QueryFilter = ()> {

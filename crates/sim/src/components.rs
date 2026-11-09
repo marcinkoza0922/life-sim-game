@@ -324,6 +324,28 @@ pub struct AtWork {
     pub school: bool,
 }
 
+/// Not on the active lot: lives on another lot of the neighborhood, or their household is out.
+/// Simulated roughly (see `neighborhood::offlot_daily`). Drops by around `visit_at`
+/// (`u64::MAX` = no plans to).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Offlot {
+    pub visit_at: u64,
+}
+
+/// On the active lot as a guest; lives elsewhere in the neighborhood.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Visitor {
+    /// When the visit ends.
+    pub leave_at: u64,
+    /// Walking back to the street.
+    pub leaving: bool,
+}
+
+/// Off the lot for any reason (work, school, or living elsewhere).
+pub fn is_away(world: &hearth_ecs::World, e: hearth_ecs::Entity) -> bool {
+    world.has::<AtWork>(e) || world.has::<Offlot>(e)
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Family {
     pub parents: Vec<Entity>,

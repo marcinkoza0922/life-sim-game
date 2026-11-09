@@ -5,7 +5,6 @@ use hearth_ecs::{Entity, With, Without, World};
 use crate::actions::{self, exit_tile};
 use crate::components::*;
 use crate::data::{CareerEffect, GameData, Need, Skill};
-use crate::economy::Household;
 use crate::log::LogKind;
 use crate::lot::Lot;
 use crate::rng::SimRng;
@@ -34,7 +33,7 @@ pub fn schedule_work(world: &mut World) {
     let clock = *world.res::<Clock>();
     let mod_ = clock.minute_of_day();
     let jobs: Vec<(Entity, Job)> = world
-        .query_filtered::<(Entity, &Job), (Without<Dead>, Without<AtWork>)>()
+        .query_filtered::<(Entity, &Job), (Without<Dead>, Without<AtWork>, Without<Offlot>, Without<Visitor>)>()
         .iter()
         .map(|(e, j)| (e, j.clone()))
         .collect();
@@ -193,7 +192,7 @@ fn apply_choice(world: &World, e: Entity, data: &GameData, career: &str, ev: usi
                     j.performance = (j.performance + p).clamp(-100.0, 150.0);
                 }
             }
-            CareerEffect::Money(m) => world.res_mut::<Household>().funds += m,
+            CareerEffect::Money(m) => crate::economy::credit(world, e, *m),
             CareerEffect::Moodlet(id) => add_moodlet(world, e, id),
             CareerEffect::Skill(s, v) => {
                 world.get_mut::<Skills>(e).unwrap().add(*s, *v);
@@ -240,11 +239,13 @@ fn end_shift(world: &mut World, e: Entity, data: &GameData) {
     }
     world.flush();
     world.remove::<AtWork>(e);
-    // come home
-    let home = { let lot = world.res::<Lot>(); lot.ground_center(0, exit_tile(&lot)) };
-    if let Some(mut tf) = world.get_mut::<Transform>(e) {
-        tf.pos = home;
-        tf.prev_pos = tf.pos;
+    // come home (to wherever the household is; nowhere visible if they've been parked off-lot)
+    if !world.has::<Offlot>(e) {
+        let home = { let lot = world.res::<Lot>(); lot.ground_center(0, exit_tile(&lot)) };
+        if let Some(mut tf) = world.get_mut::<Transform>(e) {
+            tf.pos = home;
+            tf.prev_pos = tf.pos;
+        }
     }
     {
         // a shift is draining, but the commute home never takes anyone below 5
@@ -262,7 +263,7 @@ fn end_shift(world: &mut World, e: Entity, data: &GameData) {
     let c = data.career(&job.career).unwrap();
     let lvl = &c.levels[job.level];
     let pay = lvl.pay * lvl.hours as i64;
-    world.res_mut::<Household>().funds += pay;
+    crate::economy::credit(world, e, pay);
     let mood = world.get::<Mood>(e).unwrap().value;
     let gain = 6.0 + mood / 8.0;
     let skills = world.get::<Skills>(e).unwrap().clone();

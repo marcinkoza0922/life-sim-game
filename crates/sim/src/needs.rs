@@ -88,7 +88,7 @@ pub fn update_rooms(world: &mut World) {
 pub fn decay_needs(world: &mut World) {
     let data = data(world);
     let lot = world.res::<Lot>();
-    let mut q = world.query_filtered::<(Entity, &mut Needs, &Age, &Personality, &Posture, &Transform, &ActionQueue), (Without<Dead>, Without<AtWork>)>();
+    let mut q = world.query_filtered::<(Entity, &mut Needs, &Age, &Personality, &Posture, &Transform, &ActionQueue), (Without<Dead>, Without<AtWork>, Without<Offlot>)>();
     for (_e, needs, age, pers, posture, tf, aq) in q.iter() {
         let boosted = actions::active_rates(world, &data, aq);
         let sleeping = posture.pose == Pose::Lie && boosted[Need::Energy.idx()] > 0.0;
@@ -175,7 +175,7 @@ fn nanny(world: &mut World) {
     }
     let mut babies = Vec::new();
     let mut grownups = 0;
-    for (e, age) in world.query_filtered::<(Entity, &Age), (Without<Dead>, Without<AtWork>)>().iter() {
+    for (e, age) in world.query_filtered::<(Entity, &Age), (Without<Dead>, Without<AtWork>, Without<Offlot>)>().iter() {
         if age.stage <= LifeStage::Toddler {
             babies.push(e);
         } else if age.stage >= LifeStage::Teen {
@@ -212,7 +212,7 @@ fn nanny(world: &mut World) {
 pub fn consequences(world: &mut World) {
     nanny(world);
     let tick = now(world);
-    let mut peons: Vec<Entity> = world.query_filtered::<Entity, (With<Needs>, Without<Dead>, Without<AtWork>)>().iter().collect();
+    let mut peons: Vec<Entity> = world.query_filtered::<Entity, (With<Needs>, Without<Dead>, Without<AtWork>, Without<Offlot>)>().iter().collect();
     peons.sort();
     for e in peons {
         let (bladder, energy, hunger, stage) = {
@@ -314,7 +314,7 @@ fn dirty_room_of(world: &World, e: Entity, amount: f32) {
 fn wake_caretakers(world: &mut World, baby: Entity) {
     let data = data(world);
     let mut sleepers: Vec<Entity> = Vec::new();
-    for (e, age, q) in world.query_filtered::<(Entity, &Age, &ActionQueue), (Without<Dead>, Without<AtWork>)>().iter() {
+    for (e, age, q) in world.query_filtered::<(Entity, &Age, &ActionQueue), (Without<Dead>, Without<AtWork>, Without<Offlot>)>().iter() {
         if e != baby && age.stage >= LifeStage::Teen
             && let Some(c) = &q.current
                 && crate::autonomy::is_sleeping(world, &data, c) {

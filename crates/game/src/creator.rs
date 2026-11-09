@@ -53,6 +53,9 @@ pub struct Creator {
     /// Marry the first two adults on move-in.
     pub couple: bool,
     pub error: Option<String>,
+    /// Vacant lots to move into (lot id, label), and the one picked.
+    pub lots: Vec<(usize, String)>,
+    pub lot: Option<usize>,
     scratch: Sim,
     data: Arc<GameData>,
 }
@@ -62,7 +65,7 @@ impl Creator {
         let mut scratch = Sim::new(seed, (*data).clone());
         let first = scratch.random_spec(LifeStage::YoungAdult, None);
         let family_name = first.last.clone();
-        let mut c = Creator { family_name, members: Vec::new(), editing: 0, couple: true, error: None, scratch, data };
+        let mut c = Creator { family_name, members: Vec::new(), editing: 0, couple: true, error: None, lots: Vec::new(), lot: None, scratch, data };
         c.push(first);
         c
     }
@@ -128,6 +131,16 @@ impl Creator {
         Ok(move_in(seed, (*self.data).clone(), &self.family_name, &self.members, self.couple))
     }
 
+    /// Moves this household into the picked vacant lot of a running neighborhood (the household
+    /// being played becomes a neighbor).
+    pub fn move_in_to(&self, sim: &mut Sim) -> Result<(), String> {
+        self.validate()?;
+        let lot = self.lot.ok_or("Pick a lot to move into.")?;
+        sim.found_household(lot, format!("The {} Family", self.family_name.trim()), START_FUNDS)?;
+        spawn_household(sim, &self.family_name, &self.members, self.couple, |sim, i| sim::neighborhood::move_in_spot(&sim.world, i));
+        Ok(())
+    }
+
     /// Bodies for the preview line-up (stage, appearance).
     pub fn preview(&self) -> Vec<(LifeStage, Appearance, bool)> {
         self.members.iter().enumerate().map(|(i, m)| (m.stage, m.appearance.clone(), i == self.editing)).collect()
@@ -186,15 +199,30 @@ pub fn validate(data: &GameData, family: &str, members: &[PeonSpec]) -> Result<(
 /// A starter-house sim with the given household moved in.
 pub fn move_in(seed: u64, data: GameData, family: &str, members: &[PeonSpec], couple: bool) -> Sim {
     let mut sim = Sim::new(seed, data);
-    sim::starter::build_house(&mut sim);
+    sim::starter::build_house(&mut sim.world);
     let spots = [(11, 16), (13, 16), (12, 15), (14, 15), (10, 15), (15, 16), (11, 17), (13, 17)];
+    spawn_household(&mut sim, family, members, couple, |_, i| {
+        let (x, z) = spots[i % spots.len()];
+        Lot::tile_center(0, glam::IVec2::new(x, z))
+    });
+    {
+        let mut hh = sim.world.res_mut::<sim::economy::Household>();
+        hh.name = format!("The {} Family", family.trim());
+        hh.funds = START_FUNDS;
+    }
+    sim.populate_neighborhood();
+    sim
+}
+
+/// Spawns the household's members into the played household, with family ties.
+fn spawn_household(sim: &mut Sim, family: &str, members: &[PeonSpec], couple: bool, spot: impl Fn(&Sim, usize) -> Vec3) {
     let mut spawned: Vec<(Entity, LifeStage)> = Vec::new();
     for (i, m) in members.iter().enumerate() {
         let mut spec = m.clone();
         spec.first = spec.first.trim().to_string();
         spec.last = family.trim().to_string();
-        let (x, z) = spots[i % spots.len()];
-        let e = sim.spawn_peon(spec, Lot::tile_center(0, glam::IVec2::new(x, z)));
+        let pos = spot(sim, i);
+        let e = sim.spawn_peon(spec, pos);
         spawned.push((e, m.stage));
     }
     let adults: Vec<Entity> = spawned.iter().filter(|(_, s)| s.is_adult()).map(|(e, _)| *e).collect();
@@ -213,12 +241,6 @@ pub fn move_in(seed: u64, data: GameData, family: &str, members: &[PeonSpec], co
             sim.world.res_mut::<sim::social::Relationships>().add(a, b, 30.0, 0.0);
         }
     }
-    {
-        let mut hh = sim.world.res_mut::<sim::economy::Household>();
-        hh.name = format!("The {} Family", family.trim());
-        hh.funds = START_FUNDS;
-    }
-    sim
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -416,7 +438,16 @@ pub fn window(ui: &mut Ui, c: &mut Creator) -> CreatorAction {
             ui.label(RichText::new(e).color(Color32::from_rgb(255, 150, 120)));
         }
         ui.horizontal(|ui| {
-            if ui.add_enabled(c.validate().is_ok(), egui::Button::new(RichText::new("Move In").strong())).clicked() {
+            ui.label("Move into:");
+            let current = c.lots.iter().find(|(l, _)| Some(*l) == c.lot).map(|(_, s)| s.clone()).unwrap_or_else(|| "(no vacant lots)".into());
+            egui::ComboBox::from_id_salt("creator_lot").selected_text(current).show_ui(ui, |ui| {
+                for (l, label) in &c.lots {
+                    ui.selectable_value(&mut c.lot, Some(*l), label);
+                }
+            });
+        });
+        ui.horizontal(|ui| {
+            if ui.add_enabled(c.validate().is_ok() && c.lot.is_some(), egui::Button::new(RichText::new("Move In").strong())).clicked() {
                 action = CreatorAction::MoveIn;
             }
             if ui.button("Cancel").clicked() {
@@ -440,12 +471,29 @@ mod tests {
         c.add_member(LifeStage::Infant);
         c.validate().unwrap();
         let sim = c.move_in(3).unwrap();
-        let peons = sim.living_peons();
+        let peons: Vec<Entity> = sim.living_peons().into_iter().filter(|e| sim.world.has::<sim::components::Member>(*e)).collect();
         assert_eq!(peons.len(), 4);
         let kid = peons.iter().find(|e| sim.world.get::<sim::components::Age>(**e).unwrap().stage == LifeStage::Child).unwrap();
         assert_eq!(sim.world.get::<sim::components::Family>(*kid).unwrap().parents.len(), 2);
         assert!(sim.world.has::<sim::components::Student>(*kid));
         assert!(sim.world.res::<sim::economy::Household>().name.contains(&c.family_name));
+    }
+
+    #[test]
+    fn moving_into_a_running_neighborhood() {
+        let mut sim = sim::starter::starter_sim(8);
+        sim.populate_neighborhood();
+        let old = sim.world.res::<sim::economy::Household>().members.clone();
+        let mut c = Creator::new(Arc::new(GameData::embedded()), 5);
+        c.add_member(LifeStage::Adult);
+        c.lot = sim::neighborhood::vacant_lots(&sim.world).first().copied();
+        c.move_in_to(&mut sim).unwrap();
+        assert_eq!(sim::neighborhood::active_lot(&sim.world), c.lot.unwrap());
+        let hh = sim.world.res::<sim::economy::Household>().clone();
+        assert_eq!(hh.members.len(), 2);
+        assert_eq!(hh.funds, START_FUNDS);
+        assert!(old.iter().all(|e| sim.world.has::<sim::components::Offlot>(*e)), "the old family are neighbors now");
+        sim.run_minutes(120);
     }
 
     #[test]

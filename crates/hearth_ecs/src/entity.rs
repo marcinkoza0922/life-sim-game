@@ -103,6 +103,34 @@ impl Entities {
         }
     }
 
+    /// Free slots in reuse order, as the handles they'd be handed out as.
+    pub fn free_list(&self) -> Vec<Entity> {
+        self.free.iter().map(|&index| Entity { index, generation: self.meta[index as usize].generation }).collect()
+    }
+
+    /// Restores the free list (and those slots' generations) captured by [`Self::free_list`], so
+    /// a restored world allocates exactly the handles the original would have. Live slots are
+    /// skipped.
+    pub fn set_free_list(&mut self, list: &[Entity]) {
+        self.free.clear();
+        for e in list {
+            let i = e.index as usize;
+            while self.meta.len() <= i {
+                self.meta.push(Meta { generation: 0, location: None });
+            }
+            if self.meta[i].location.is_none() {
+                self.meta[i].generation = e.generation;
+                self.free.push(e.index);
+            }
+        }
+        // any other dead slot stays reusable (after the listed ones)
+        for (i, m) in self.meta.iter().enumerate() {
+            if m.location.is_none() && !self.free.contains(&(i as u32)) {
+                self.free.insert(0, i as u32);
+            }
+        }
+    }
+
     pub fn location(&self, e: Entity) -> Option<Location> {
         self.meta
             .get(e.index as usize)

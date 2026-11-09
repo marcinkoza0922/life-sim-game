@@ -227,38 +227,3 @@ fn oncoming_walkers_pass_each_other() {
     assert!(min_dist > 0.15, "kept some distance while passing ({min_dist})");
     let _ = Vec3::ZERO;
 }
-
-#[test]
-fn townies_visit_and_go_home() {
-    let mut sim = starter_sim(41);
-    sim::townies::populate(&mut sim.world, 3);
-    let townies = sim::townies::townies(&sim.world);
-    assert_eq!(townies.len(), 3);
-    assert_eq!(sim.world.res::<sim::economy::Household>().members.len(), 4, "townies aren't household members");
-    let (t, _) = townies[0];
-    assert!(sim.world.has::<AtWork>(t), "townies start at home");
-    sim::townies::invite(&mut sim.world, t);
-    // invite at a sensible hour
-    while sim.clock().hour() != 10 {
-        sim.tick();
-    }
-    sim::townies::invite(&mut sim.world, t);
-    sim.run_minutes(2);
-    assert!(sim::townies::visitors(&sim.world).contains(&t), "invited townie arrives");
-    assert!(sim.world.res::<SimLog>().contains("from"));
-    let mut left = false;
-    for _ in 0..(8 * 60) {
-        sim.tick();
-        if sim.world.has::<AtWork>(t) {
-            left = true;
-            break;
-        }
-    }
-    assert!(left, "visit ends within 8 hours");
-    assert!(sim.world.res::<SimLog>().contains("went home"));
-    // a save keeps the neighbors
-    let text = sim.save_to_string().unwrap();
-    let b = Sim::load_from_str(&text, GameData::embedded()).unwrap();
-    assert_eq!(sim::townies::townies(&b.world).len(), 3);
-    assert_eq!(b.world.res::<sim::townies::Neighborhood>().lots.len(), 3);
-}

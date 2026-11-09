@@ -111,7 +111,7 @@ pub fn pregnancies(world: &mut World) {
             set_bubble(world, e, Some(CRAVINGS[i].into()), None, 20);
         }
         // babies wait until their carrier is home
-        if tick >= p.due && !world.has::<AtWork>(e) {
+        if tick >= p.due && !is_away(world, e) {
             give_birth(world, e, p.other);
         }
     }
@@ -150,6 +150,11 @@ fn give_birth(world: &mut World, carrier: Entity, other: Entity) {
 
 /// Spawns a newborn of `a` (and `b`, if still around) next to `a`.
 pub fn spawn_child(world: &mut World, a: Entity, b: Option<Entity>) -> Entity {
+    spawn_child_as(world, a, b, true)
+}
+
+/// Like [`spawn_child`]; `member` = joins the played household (else the caller files them).
+pub fn spawn_child_as(world: &mut World, a: Entity, b: Option<Entity>, member: bool) -> Entity {
     let data = data(world);
     let b = b.filter(|b| world.contains(*b));
     let ga = world.get::<Genes>(a).map(|g| g.clone()).unwrap_or_else(|| genetics::genes_from_appearance(&world.get::<Appearance>(a).unwrap()));
@@ -169,7 +174,7 @@ pub fn spawn_child(world: &mut World, a: Entity, b: Option<Entity>) -> Entity {
     }
     spec.career = None;
     let pos = world.get::<Transform>(a).map(|t| near(world, t.pos)).unwrap_or(Vec3::ZERO);
-    let baby = spawn_peon(world, spec, pos);
+    let baby = crate::sim::spawn_peon_as(world, spec, pos, member);
     set_parent(world, a, baby);
     if let Some(b) = b {
         set_parent(world, b, baby);

@@ -285,7 +285,7 @@ pub fn candidates(world: &World, e: Entity, data: &GameData) -> Vec<Candidate> {
 
     // other peons
     for (te, _tage, ttf, tneeds, taq, tpeon) in world
-        .query_filtered::<(Entity, &Age, &Transform, &Needs, &ActionQueue, &Peon), (hearth_ecs::Without<Dead>, hearth_ecs::Without<AtWork>)>()
+        .query_filtered::<(Entity, &Age, &Transform, &Needs, &ActionQueue, &Peon), (hearth_ecs::Without<Dead>, hearth_ecs::Without<AtWork>, hearth_ecs::Without<Offlot>)>()
         .iter()
     {
         if te == e {

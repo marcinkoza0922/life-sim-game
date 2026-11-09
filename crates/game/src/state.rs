@@ -118,11 +118,14 @@ pub struct Game {
     pub sculpting: Option<f32>,
     pub show_neighborhood: bool,
     pub mute: bool,
+    /// The lot that was live last frame (see [`Game::check_lot_change`]).
+    pub shown_lot: usize,
 }
 
 impl Game {
     pub fn new(sim: Sim) -> Game {
-        let selected = sim.living_peons().first().copied();
+        let selected = sim.living_peons().into_iter().find(|e| sim.world.has::<Member>(*e));
+        let shown_lot = sim::neighborhood::active_lot(&sim.world);
         let mut cam = OrbitCamera::new(Vec3::new(15.0, 0.0, 14.0));
         cam.snap();
         Game {
@@ -158,6 +161,7 @@ impl Game {
             sculpting: None,
             show_neighborhood: false,
             mute: false,
+            shown_lot,
         }
     }
 
@@ -191,10 +195,11 @@ impl Game {
         } else {
             self.alpha = 1.0;
         }
+        self.check_lot_change();
         // selected peon may have died / left
         if let Some(s) = self.selected
-            && (!self.sim.world.contains(s) || self.sim.world.has::<Dead>(s)) {
-                self.selected = self.sim.living_peons().first().copied();
+            && (!self.sim.world.contains(s) || self.sim.world.has::<Dead>(s) || self.sim.world.has::<Offlot>(s)) {
+                self.selected = self.first_member();
             }
         self.pull_notifications();
     }
@@ -228,7 +233,8 @@ impl Game {
     /// Replaces the running simulation (load, new household), keeping camera and settings.
     pub fn replace_sim(&mut self, sim: Sim) {
         self.sim = sim;
-        self.selected = self.sim.living_peons().into_iter().find(|e| self.sim.world.has::<Member>(*e));
+        self.shown_lot = sim::neighborhood::active_lot(&self.sim.world);
+        self.selected = self.first_member();
         self.menu = None;
         self.tool = Tool::None;
         self.mode = Mode::Live;
@@ -254,9 +260,56 @@ impl Game {
         }
     }
 
+    /// A household member on the lot, else anyone in the household.
+    pub fn first_member(&self) -> Option<Entity> {
+        let w = &self.sim.world;
+        let members: Vec<Entity> = self.sim.living_peons().into_iter().filter(|e| w.has::<Member>(*e)).collect();
+        members.iter().copied().find(|e| !is_away(w, *e)).or(members.first().copied())
+    }
+
+    /// After the live lot changes (switching households, outings, moving): drop anything that
+    /// pointed into the old lot and look at the new one from the street.
+    pub fn check_lot_change(&mut self) {
+        let active = sim::neighborhood::active_lot(&self.sim.world);
+        if active == self.shown_lot {
+            return;
+        }
+        self.shown_lot = active;
+        self.selected = self.first_member();
+        self.hovered = None;
+        self.hover_pick = None;
+        self.menu = None;
+        self.tool = Tool::None;
+        self.drag_start = None;
+        self.inspect_entity = None;
+        if !sim::neighborhood::at_home(&self.sim.world) && self.mode != Mode::Live {
+            self.mode = Mode::Live;
+        }
+        self.level = 0;
+        self.cam.target = Vec3::new(15.0, 0.0, 20.0);
+        self.cam.dist = 22.0;
+    }
+
+    /// Build and Buy are only for your own lot.
+    pub fn can_build(&self) -> bool {
+        sim::neighborhood::at_home(&self.sim.world)
+    }
+
     pub fn open_creator(&mut self) {
         let seed = self.sim.clock().tick ^ 0x5eed;
-        self.creator = Some(crate::creator::Creator::new(self.sim.data(), seed));
+        let mut c = crate::creator::Creator::new(self.sim.data(), seed);
+        let w = &self.sim.world;
+        let hood = w.res::<sim::neighborhood::Neighborhood>().clone();
+        for l in sim::neighborhood::vacant_lots(w) {
+            let value = sim::neighborhood::build_value(w, l);
+            let what = if value > 0 { "furnished house" } else { "empty plot" };
+            c.lots.push((l, format!("{} — {what}", hood.lots[l].address)));
+        }
+        c.lot = c.lots.iter().find(|(l, _)| sim::neighborhood::build_value(w, *l) > 0).or(c.lots.first()).map(|(l, _)| *l);
+        if c.lots.is_empty() {
+            c.error = Some("There are no vacant lots. Move a household into a smaller place first.".into());
+        }
+        self.creator = Some(c);
         self.menu = None;
         self.mode = Mode::Live;
         self.tool = Tool::None;
@@ -309,7 +362,7 @@ impl Game {
         let world = &self.sim.world;
         let top = self.level;
         let visible = |lvl: i32| lvl <= top && (top < 0 || lvl >= 0);
-        for (e, tf, age, posture) in world.query_filtered::<(Entity, &Transform, &Age, &Posture), (hearth_ecs::Without<AtWork>, hearth_ecs::Without<Dead>)>().iter() {
+        for (e, tf, age, posture) in world.query_filtered::<(Entity, &Transform, &Age, &Posture), (hearth_ecs::Without<AtWork>, hearth_ecs::Without<Offlot>, hearth_ecs::Without<Dead>)>().iter() {
             if !visible(tf.level()) {
                 continue;
             }

@@ -368,7 +368,7 @@ pub fn build(sim: &Sim, r: &Builtins, peons: Option<&PeonArt>, anims: &mut Anima
 
     // ---------------------------------------------------------------- peons
     for (e, peon, tf, age, app, posture, bubble) in world
-        .query_filtered::<(Entity, &Peon, &Transform, &Age, &Appearance, &Posture, &Bubble), (hearth_ecs::Without<AtWork>, hearth_ecs::Without<Dead>)>()
+        .query_filtered::<(Entity, &Peon, &Transform, &Age, &Appearance, &Posture, &Bubble), (hearth_ecs::Without<AtWork>, hearth_ecs::Without<Offlot>, hearth_ecs::Without<Dead>)>()
         .iter()
     {
         let pos = tf.prev_pos.lerp(tf.pos, opts.alpha);
