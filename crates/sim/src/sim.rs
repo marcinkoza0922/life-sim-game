@@ -120,6 +120,8 @@ pub struct PeonSpec {
     /// Inheritable genotype; derived from `appearance` when absent.
     #[serde(default)]
     pub genes: Option<Genes>,
+    #[serde(default)]
+    pub sex: Sex,
 }
 
 pub fn random_spec(world: &World, stage: LifeStage, last: Option<&str>) -> PeonSpec {
@@ -177,6 +179,8 @@ pub fn random_spec(world: &World, stage: LifeStage, last: Option<&str>) -> PeonS
     } else {
         None
     };
+    // picked last so the rest of a spec doesn't depend on it
+    let sex = if rng.chance(0.5) { Sex::Female } else { Sex::Male };
     PeonSpec {
         first,
         last,
@@ -188,6 +192,7 @@ pub fn random_spec(world: &World, stage: LifeStage, last: Option<&str>) -> PeonS
         skills: Vec::new(),
         career,
         genes: Some(genes),
+        sex,
     }
 }
 
@@ -228,7 +233,7 @@ pub fn spawn_peon_as(world: &mut World, spec: PeonSpec, pos: Vec3, member: bool)
         Brain::default(),
     ));
     let genes = spec.genes.clone().unwrap_or_else(|| crate::genetics::genes_from_appearance(&spec.appearance));
-    world.insert(e, (Family::default(), genes));
+    world.insert(e, (Family::default(), genes, spec.sex));
     if member {
         world.insert_one(e, Member);
     }
@@ -313,6 +318,20 @@ pub fn place_object(world: &mut World, def_id: &str, level: i32, tile: IVec2, ro
     Ok(e)
 }
 
+/// Takes an object off the lot (whoever was using it stops).
+pub fn remove_object(world: &mut World, e: Entity) -> Option<ObjectInstance> {
+    let inst = world.remove::<ObjectInstance>(e)?;
+    for u in inst.slot_users.iter().flatten() {
+        actions::abort_current(world, *u);
+    }
+    world.despawn(e);
+    let mut lot = world.res_mut::<Lot>();
+    lot.occupancy.retain(|_, v| *v != e);
+    lot.rooms_dirty = true;
+    lot.version += 1;
+    Some(inst)
+}
+
 pub struct Sim {
     pub world: World,
     schedule: Schedule,
@@ -353,6 +372,8 @@ impl Sim {
             .add_system("post", crate::neighborhood::trips)
             .add_system("post", crate::neighborhood::visits)
             .add_system("post", crate::neighborhood::offlot_daily)
+            .add_system("post", crate::romance::weddings)
+            .add_system("post", crate::romance::daily)
             .add_system("post", crate::neighborhood::newcomers)
             .add_system("post", life::aging)
             .add_system("post", economy::bills)
@@ -554,18 +575,9 @@ impl Sim {
 
     /// Sells an object for its depreciated value.
     pub fn sell_object(&mut self, e: Entity) -> Option<i64> {
-        let inst = self.world.remove::<ObjectInstance>(e)?;
-        // stop anyone using it
-        for u in inst.slot_users.iter().flatten() {
-            actions::abort_current(&self.world, *u);
-        }
-        self.world.despawn(e);
+        let inst = remove_object(&mut self.world, e)?;
         let value = (inst.price_paid as f32 * if inst.uses == 0 { 1.0 } else { 0.8 } * if inst.broken { 0.5 } else { 1.0 }) as i64;
         self.world.res_mut::<Household>().funds += value;
-        let mut lot = self.world.res_mut::<Lot>();
-        lot.occupancy.retain(|_, v| *v != e);
-        lot.rooms_dirty = true;
-        lot.version += 1;
         Some(value)
     }
 

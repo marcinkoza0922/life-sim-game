@@ -452,6 +452,9 @@ pub struct ObjectDef {
     /// Comfort multiplier hint for UI.
     #[serde(default = "one")]
     pub quality: f32,
+    /// Used up after this many completed uses (a cake), then removed.
+    #[serde(default)]
+    pub servings: Option<u32>,
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -539,6 +542,30 @@ pub struct SocialDef {
     /// Prop the initiator holds.
     #[serde(default)]
     pub prop: Option<String>,
+    /// Only between a woman and a man (engagements and weddings, for now).
+    #[serde(default)]
+    pub opposite_sex: bool,
+    /// Where the pair must stand with each other (see [`RelReq`]).
+    #[serde(default)]
+    pub requires: Option<RelReq>,
+    /// The target can't say no (breaking up takes one).
+    #[serde(default)]
+    pub certain: bool,
+}
+
+/// A relationship a social needs; when it isn't met the social isn't offered at all.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RelReq {
+    /// Neither is spoken for (by each other or anyone else alive).
+    Unattached,
+    /// Engaged to each other, no wedding planned yet.
+    Engaged,
+    /// Engaged to each other (the wedding itself).
+    Betrothed,
+    /// Partners, engaged or married to each other.
+    Together,
+    /// They live in different households.
+    LiveApart,
 }
 
 fn default_min_friendship() -> f32 {

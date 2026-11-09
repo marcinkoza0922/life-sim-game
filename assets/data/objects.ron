@@ -633,4 +633,22 @@
         ],
         beauty: 0.0, dirt_per_use: 0.02,
     ),
+    (
+        id: "wedding_cake", name: "Tiered Cake of Questionable Structure", category: Kitchen, price: 120, footprint: (1, 1),
+        desc: "Three tiers, eight slices, one lean. Turns up on its own when there's a wedding.",
+        parts: [
+            (shape: Box, size: (0.7, 0.72, 0.7), at: (0.5, 0.36, 0.5), color: (0.55, 0.36, 0.22), rough: 0.6, material: "wood"),
+            (shape: Cylinder, size: (0.5, 0.18, 0.5), at: (0.5, 0.81, 0.5), color: (0.97, 0.95, 0.9), rough: 0.7),
+            (shape: Cylinder, size: (0.36, 0.16, 0.36), at: (0.51, 0.98, 0.5), color: (0.97, 0.93, 0.92), rough: 0.7),
+            (shape: Cylinder, size: (0.22, 0.14, 0.22), at: (0.53, 1.13, 0.5), color: (0.98, 0.9, 0.92), rough: 0.7),
+            (shape: Sphere, size: (0.07, 0.07, 0.07), at: (0.53, 1.23, 0.5), color: (0.85, 0.2, 0.3), rough: 0.4),
+        ],
+        slots: [(stand: (0.5, 1.5), use_at: (0.5, 0.0, 1.1), facing: 180.0)],
+        interactions: [
+            (id: "slice", name: "Have a Slice", anim: "eat", prop: "spoon", rates: {Hunger: 120.0, Fun: 40.0}, ads: {Hunger: 25.0, Fun: 15.0}, duration: Minutes(10), pose: Use,
+             stages: [Child, Teen, YoungAdult, Adult, Elder], tags: ["food", "fun"], bubble: "cake",
+             outcomes: [Log(chance: 0.1, text: "{name} found a plastic bride and groom in their slice. They're keeping them.")]),
+        ],
+        beauty: 2.0, servings: Some(8),
+    ),
 ]

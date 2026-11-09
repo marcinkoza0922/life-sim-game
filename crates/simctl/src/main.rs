@@ -295,7 +295,7 @@ fn main() {
         "render" => render(&a),
         "lineup" => lineup(&a.render),
         "materials" => materials(&a.render),
-        "hood" => hood_tour(a.seed, a.days),
+        "hood" => hood_tour(a.seed, a.days, a.log.as_deref()),
         other => {
             eprintln!("unknown command {other}; try `run`, `check`, `render`, `lineup`, `materials` or `hood`");
             std::process::exit(2);
@@ -509,7 +509,7 @@ fn print_street(sim: &Sim) {
     }
 }
 
-fn hood_tour(seed: u64, days: u64) {
+fn hood_tour(seed: u64, days: u64, log_path: Option<&str>) {
     use sim::neighborhood::{self as nh, LotKind};
     let mut sim = starter_sim(seed);
     sim.world.res_mut::<sim::time::Settings>().auto_career_choices = true;
@@ -518,7 +518,6 @@ fn hood_tour(seed: u64, days: u64) {
         let hood = sim.world.res::<nh::Neighborhood>();
         hood.lots.iter().position(|l| l.kind == LotKind::Community).unwrap()
     };
-    let neighbor = sim.world.res::<nh::Neighborhood>().households[0].home.unwrap();
     let t0 = Instant::now();
     for day in 0..days {
         let until = |sim: &mut Sim, h: u32| {
@@ -533,15 +532,26 @@ fn hood_tour(seed: u64, days: u64) {
                     println!("day {day}: no outing ({e})");
                 }
                 until(&mut sim, 15);
-                if !nh::at_home(&sim.world) && sim.trip().is_none() {
-                    sim.go_home().unwrap();
+                if !nh::at_home(&sim.world) && sim.trip().is_none() && sim.go_home().is_ok() {
                     sim.finish_trip();
                 }
             }
             1 => {
-                sim.play_household(neighbor).unwrap();
-                until(&mut sim, 9);
-                sim.play_household(0).unwrap();
+                // whoever lives next door now (households merge, move and die out)
+                let next_door = sim.world.res::<nh::Neighborhood>().households.first().and_then(|h| h.home);
+                if let Some(lot) = next_door.filter(|_| nh::at_home(&sim.world)) {
+                    // follow a member back: a parked household can merge into another meanwhile
+                    let ours = sim.world.res::<sim::economy::Household>().members.clone();
+                    sim.play_household(lot).unwrap();
+                    until(&mut sim, 9);
+                    let back = sim.world.res::<nh::Neighborhood>().households.iter()
+                        .find(|h| h.members.iter().any(|m| ours.contains(m)))
+                        .and_then(|h| h.home);
+                    match back {
+                        Some(lot) => sim.play_household(lot).unwrap(),
+                        None => println!("day {day}: our household is gone; staying with the neighbors"),
+                    }
+                }
             }
             _ => {
                 // drop in on whoever lives there now
@@ -550,8 +560,10 @@ fn hood_tour(seed: u64, days: u64) {
                     match sim.visit(lot) {
                         Ok(()) => {
                             until(&mut sim, 15);
-                            sim.go_home().unwrap();
-                            sim.finish_trip();
+                            // everyone may have gone off to work or school from there
+                            if sim.go_home().is_ok() {
+                                sim.finish_trip();
+                            }
                         }
                         Err(e) => println!("day {day}: no visit ({e})"),
                     }
@@ -561,11 +573,18 @@ fn hood_tour(seed: u64, days: u64) {
         until(&mut sim, 0);
     }
     print_street(&sim);
+    if let Some(path) = log_path {
+        let text: Vec<String> = sim.world.res::<sim::log::SimLog>().entries.iter().map(|e| format!("[{}] {}", sim::time::Clock { tick: e.tick }.label(), e.text)).collect();
+        std::fs::write(path, text.join("\n")).expect("write --log");
+    }
     let log = sim.world.res::<sim::log::SimLog>();
     let count = |s: &str| log.entries.iter().filter(|e| e.text.contains(s)).count();
     println!("\nvisits: {} at home, {} out and about, {} to the neighbors; newcomers: {}; neighbor promotions: {}; births: {}",
         count("dropped by") + count("rang the doorbell") + count("cup of sugar") + count("casserole") + count("wandered over"),
         count("too."), count("dropped in on"), count("moving van"), count("Word on the street"), count("had a baby"));
+    println!("romance: {} engaged, {} weddings, {} called off at the altar, {} breakups/divorces, {} moved in together, {} moved out, {} jealous scenes",
+        count("said yes") + count("answer was not"), count("are married!") + count("at the courthouse"), count("cold feet"),
+        count("broke up with") + count("getting divorced"), count("moved in with"), count("moved out to"), count("is Not Happy") + count("made a scene"));
     println!("simulated {days} days in {:.1}s", t0.elapsed().as_secs_f32());
     for e in log.entries.iter().filter(|e| e.kind == LogKind::Death || e.text.contains("up for sale")) {
         println!("  [{}] {}", sim::time::Clock { tick: e.tick }.label(), e.text);

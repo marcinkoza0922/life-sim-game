@@ -276,6 +276,10 @@ pub fn consequences(world: &mut World) {
         } else if let Some(mut n) = world.get_mut::<Needs>(e) {
             n.starving_minutes = 0;
         }
+        // taken away or gone: nothing more happens to them here
+        if !world.has::<Needs>(e) || world.has::<Dead>(e) {
+            continue;
+        }
 
         // the Cheerful can have too much fun: at full Fun, still having more, a laughing fit may take them
         if !small && tick.is_multiple_of(10) && laughing_too_hard(world, e) && world.res_mut::<crate::rng::SimRng>().chance(LAUGHING_FIT_CHANCE) {

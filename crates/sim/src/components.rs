@@ -15,6 +15,40 @@ pub struct Peon {
     pub last: String,
 }
 
+/// Biological sex. Decides who can carry a pregnancy, voice pitch, and which couples can get
+/// engaged and married (opposite-sex only, for now).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum Sex {
+    #[default]
+    Female,
+    Male,
+}
+
+impl Sex {
+    pub fn opposite(self) -> Sex {
+        match self {
+            Sex::Female => Sex::Male,
+            Sex::Male => Sex::Female,
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Sex::Female => "Female",
+            Sex::Male => "Male",
+        }
+    }
+    pub fn symbol(self) -> &'static str {
+        match self {
+            Sex::Female => "♀",
+            Sex::Male => "♂",
+        }
+    }
+    /// A stable pick for peons from before sex was modelled (no randomness consumed).
+    pub fn from_entity(e: Entity) -> Sex {
+        if (e.index().wrapping_mul(2_654_435_761) >> 15) & 1 == 0 { Sex::Female } else { Sex::Male }
+    }
+}
+
 impl Peon {
     pub fn full_name(&self) -> String {
         format!("{} {}", self.first, self.last)

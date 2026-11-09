@@ -823,6 +823,10 @@ fn arrive(world: &World, e: Entity, data: &GameData, cur: &mut CurrentAction, sl
             }
             let p_accept = accept_chance(world, &sd, e, target);
             let accepted = world.res_mut::<SimRng>().chance(p_accept);
+            if !accepted && sd.id == "exchange_vows" {
+                crate::romance::cold_feet(world, e, target);
+                return Ok(false);
+            }
             if !accepted {
                 world.res_mut::<Relationships>().add(e, target, -3.0, 0.0);
                 say(world, target, Some("no"), 10);
@@ -1054,6 +1058,13 @@ fn finish(world: &World, e: Entity, data: &GameData, cur: &CurrentAction, comple
             if broke && !inter.repairs {
                 log(world, LogKind::Funny, Some(e), format!("The {} broke! {} is looking at it accusingly.", def.name, name_of(world, e)));
             }
+            if def.servings.is_some_and(|n| world.get::<ObjectInstance>(*obj).is_some_and(|o| o.uses >= n)) {
+                log(world, LogKind::Info, Some(e), format!("{} had the last of the {}.", name_of(world, e), def.name));
+                let o = *obj;
+                world.defer(move |w| {
+                    crate::sim::remove_object(w, o);
+                });
+            }
             if inter.repairs {
                 log(world, LogKind::Info, Some(e), format!("{} fixed the {}.", name_of(world, e), def.name));
             }
@@ -1074,6 +1085,30 @@ fn finish(world: &World, e: Entity, data: &GameData, cur: &CurrentAction, comple
                 "kiss" => {
                     add_moodlet(world, e, "kissed");
                     add_moodlet(world, *target, "kissed");
+                    crate::romance::jealousy(world, e, *target, "kissing");
+                }
+                "flirt" => crate::romance::jealousy(world, e, *target, "flirting"),
+                "propose" => crate::romance::engage(world, e, *target),
+                "plan_wedding" => {
+                    let (a, b) = (e, *target);
+                    world.defer(move |w| crate::romance::plan_wedding(w, a, b));
+                }
+                "exchange_vows" => {
+                    let (a, b) = (e, *target);
+                    world.defer(move |w| crate::romance::wed(w, a, b, true));
+                }
+                "break_up" => {
+                    let (a, b) = (e, *target);
+                    world.defer(move |w| crate::romance::break_up(w, a, b));
+                }
+                "ask_move_in" => {
+                    let (a, b) = (e, *target);
+                    world.defer(move |w| {
+                        if let Err(why) = crate::neighborhood::move_in_with(w, b, a) {
+                            let line = format!("{} would love to move in with {}, but {why}.", name_of(w, b), name_of(w, a));
+                            log(w, LogKind::Info, Some(a), line);
+                        }
+                    });
                 }
                 "insult" => {
                     add_moodlet(world, *target, "insulted");

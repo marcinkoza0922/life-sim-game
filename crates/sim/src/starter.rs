@@ -506,9 +506,11 @@ pub fn spawn_family(sim: &mut Sim) -> Vec<Entity> {
     // spawn each before generating the next so first names stay unique
     let mut a_spec = sim.random_spec(LifeStage::Adult, None);
     let last = a_spec.last.clone();
+    let a_spec_sex = a_spec.sex;
     a_spec.skills.push((crate::data::Skill::Cooking, 2.0));
     let a = sim.spawn_peon(a_spec, Lot::tile_center(0, v(11, 16)));
-    let b_spec = sim.random_spec(LifeStage::Adult, Some(&last));
+    let mut b_spec = sim.random_spec(LifeStage::Adult, Some(&last));
+    b_spec.sex = a_spec_sex.opposite();
     let b = sim.spawn_peon(b_spec, Lot::tile_center(0, v(13, 16)));
     let c_spec = sim.random_spec(LifeStage::Child, Some(&last));
     let c = sim.spawn_peon(c_spec, Lot::tile_center(0, v(12, 15)));

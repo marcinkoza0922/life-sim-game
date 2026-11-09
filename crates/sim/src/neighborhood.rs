@@ -334,11 +334,17 @@ fn next_visit(world: &World, e: Entity, earliest_days: f32, latest_days: f32) ->
     let delay = (rng.range_f32(earliest_days, latest_days) * TICKS_PER_DAY as f32) as u64;
     let t = clock.tick + delay;
     let mod_ = t % TICKS_PER_DAY;
-    if !(from..to).contains(&mod_) {
+    let t = if !(from..to).contains(&mod_) {
         let day = t / TICKS_PER_DAY + if mod_ >= to { 1 } else { 0 };
         day * TICKS_PER_DAY + from + rng.below((to - from) as usize) as u64
     } else {
         t
+    };
+    drop(rng);
+    // nobody misses their own wedding
+    match crate::romance::own_wedding(world, e) {
+        Some(w) if w.saturating_sub(40) > clock.tick => t.min(w - 40),
+        _ => t,
     }
 }
 
@@ -376,6 +382,8 @@ fn settle_household(world: &mut World, lot: LotId, stages: &[LifeStage], couple:
     }
     let adults: Vec<Entity> = members.iter().copied().filter(|e| world.get::<Age>(*e).unwrap().stage.is_adult()).collect();
     if couple && adults.len() >= 2 {
+        let sex = *world.get::<Sex>(adults[0]).unwrap();
+        world.insert_one(adults[1], sex.opposite());
         crate::family::marry(world, adults[0], adults[1]);
     }
     for &k in members.iter().filter(|e| !adults.contains(e)) {
@@ -723,6 +731,7 @@ pub fn play_household(world: &mut World, home: LotId) -> Result<(), String> {
     if home != active_lot(world) {
         switch_lot(world, home, &travelers)?;
     }
+    crate::romance::took_over(world, &new.members);
     log(world, LogKind::Info, None, format!("Now playing {} at {}.", new.name, world.res::<Neighborhood>().lots[home].address));
     Ok(())
 }
@@ -1067,7 +1076,11 @@ fn closing_time(world: &mut World) {
 fn arrive(world: &mut World, e: Entity, tick: u64, community: bool) {
     world.remove::<Offlot>(e);
     reset(world, e);
-    let stay = 120 + world.res_mut::<SimRng>().below(180) as u64;
+    let mut stay = 120 + world.res_mut::<SimRng>().below(180) as u64;
+    // a bride or groom who came over for their wedding stays for it
+    if let Some(w) = crate::romance::wedding_with_household(world, e).filter(|&w| w > tick && w < tick + 6 * 60) {
+        stay = stay.max(w + 120 - tick);
+    }
     world.insert_one(e, Visitor { leave_at: tick + stay, leaving: false });
     // up the sidewalk from their end of the street
     let side = home_of(world, e).map(|h| direction(active_lot(world), h)).unwrap_or(1.0);
@@ -1222,6 +1235,167 @@ pub fn forget_member(world: &World, e: Entity) {
         let addr = h.home.map(|l| lots[l].address.clone()).unwrap_or_default();
         log(world, LogKind::Info, None, format!("{} is gone; the house at {addr} is up for sale.", h.name));
     }
+}
+
+// ------------------------------------------------------------------------------------------------
+// moving between households
+
+/// Which household someone lives in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Hh {
+    Played,
+    /// Index into [`Neighborhood::households`] (only valid until households are added or removed).
+    Neighbor(usize),
+}
+
+pub fn household_of(world: &World, e: Entity) -> Option<Hh> {
+    if world.res::<Household>().members.contains(&e) {
+        return Some(Hh::Played);
+    }
+    world.res::<Neighborhood>().households.iter().position(|h| h.members.contains(&e)).map(Hh::Neighbor)
+}
+
+/// The living members of `e`'s household, `e` included.
+pub fn housemates(world: &World, e: Entity) -> Vec<Entity> {
+    let members = match household_of(world, e) {
+        Some(Hh::Played) => world.res::<Household>().members.clone(),
+        Some(Hh::Neighbor(i)) => world.res::<Neighborhood>().households[i].members.clone(),
+        None => return Vec::new(),
+    };
+    members.into_iter().filter(|&m| world.contains(m) && !world.has::<Dead>(m)).collect()
+}
+
+/// Takes `e` out of their household with their share of its funds. A neighbor household left
+/// with nobody moves off the street and its house goes up for sale.
+fn take_out(world: &World, e: Entity) -> i64 {
+    let n = housemates(world, e).len().max(1) as i64;
+    match household_of(world, e) {
+        Some(Hh::Played) => {
+            let mut hh = world.res_mut::<Household>();
+            let share = hh.funds / n;
+            hh.funds -= share;
+            hh.members.retain(|m| *m != e);
+            share
+        }
+        Some(Hh::Neighbor(i)) => {
+            let mut hood = world.res_mut::<Neighborhood>();
+            let share = hood.households[i].funds / n;
+            hood.households[i].funds -= share;
+            hood.households[i].members.retain(|m| *m != e);
+            if n <= 1 {
+                let h = hood.households.remove(i);
+                let addr = h.home.map(|l| hood.lots[l].address.clone()).unwrap_or_default();
+                drop(hood);
+                log(world, LogKind::Info, None, format!("{} is no more; the house at {addr} is up for sale.", h.name));
+            }
+            share
+        }
+        None => 0,
+    }
+}
+
+/// Puts `e` where their (new) household lives: joining the played household brings them onto
+/// the lot; leaving it sends them off down the street unless they're already home.
+fn settle_in(world: &mut World, e: Entity) {
+    let tick = now(world);
+    match household_of(world, e) {
+        Some(Hh::Played) => {
+            world.insert_one(e, Member);
+            if world.remove::<Visitor>(e).is_some() {
+                reset(world, e);
+            }
+            if world.has::<Offlot>(e) && !world.has::<AtWork>(e) {
+                world.remove::<Offlot>(e);
+                reset(world, e);
+                freshen(world, e);
+                let pos = arrival_spot(world, 0);
+                place_at(world, e, pos);
+            }
+        }
+        Some(Hh::Neighbor(_)) => {
+            world.remove::<Member>(e);
+            if world.has::<Offlot>(e) {
+                return;
+            }
+            if world.has::<AtWork>(e) {
+                let visit_at = next_visit(world, e, 1.0, 3.0);
+                world.insert_one(e, Offlot { visit_at });
+            } else if home_of(world, e) == Some(active_lot(world)) {
+                world.remove::<Visitor>(e);
+            } else if let Some(mut v) = world.get_mut::<Visitor>(e) {
+                v.leave_at = v.leave_at.min(tick + 30);
+            } else {
+                world.insert_one(e, Visitor { leave_at: tick + 30, leaving: false });
+            }
+        }
+        None => {}
+    }
+    world.flush();
+}
+
+/// `mover` joins `host`'s household (bringing their share of their old household's funds).
+pub fn move_in_with(world: &mut World, mover: Entity, host: Entity) -> Result<(), String> {
+    let from = household_of(world, mover).ok_or("they don't live anywhere")?;
+    let to = household_of(world, host).ok_or("they don't live anywhere")?;
+    let (nm, nh) = (name_of(world, mover), name_of(world, host));
+    if from == to {
+        return Err(format!("{nm} and {nh} already live together"));
+    }
+    if housemates(world, host).len() >= crate::family::MAX_HOUSEHOLD {
+        return Err(format!("{nh}'s house is full"));
+    }
+    if from == Hh::Played && housemates(world, mover).len() <= 1 {
+        return Err(format!("{nm} is the last one home"));
+    }
+    let share = take_out(world, mover);
+    let name = match household_of(world, host) {
+        Some(Hh::Played) => {
+            let mut hh = world.res_mut::<Household>();
+            hh.members.push(mover);
+            hh.funds += share;
+            hh.name.clone()
+        }
+        Some(Hh::Neighbor(i)) => {
+            let mut hood = world.res_mut::<Neighborhood>();
+            hood.households[i].members.push(mover);
+            hood.households[i].funds += share;
+            hood.households[i].name.clone()
+        }
+        None => unreachable!("the host's household can't vanish"),
+    };
+    settle_in(world, mover);
+    log(world, LogKind::Life, Some(mover), format!("{nm} moved in with {nh} ({name}), bringing ${share} and too many mugs."));
+    Ok(())
+}
+
+/// `e` leaves their household for a vacant lot (furnished first; on an empty plot they build a
+/// studio), with their share of the funds.
+pub fn move_out(world: &mut World, e: Entity) -> Result<LotId, String> {
+    if housemates(world, e).len() <= 1 {
+        return Err("they already live alone".into());
+    }
+    let active = active_lot(world);
+    let open: Vec<LotId> = vacant_lots(world).into_iter().filter(|&l| l != active).collect();
+    let furnished: Vec<LotId> = open.iter().copied().filter(|&l| build_value(world, l) > 0).collect();
+    let lot = *furnished.first().or(open.first()).ok_or("there's nowhere on the street to move to")?;
+    if build_value(world, lot) == 0 {
+        let parked = build_parked(world, plan_for(1));
+        let mut hood = world.res_mut::<Neighborhood>();
+        hood.lots[lot].value = parked.build_value();
+        hood.lots[lot].parked = Some(parked);
+    }
+    let share = take_out(world, e);
+    let (first, last) = world.get::<Peon>(e).map(|p| (p.first.clone(), p.last.clone())).unwrap_or_default();
+    let mut name = format!("The {last} Household");
+    let taken = world.res::<Household>().name == name || world.res::<Neighborhood>().households.iter().any(|h| h.name == name);
+    if taken {
+        name = format!("{first} {last}'s Place");
+    }
+    push_household(world, Household { name, funds: share, members: vec![e], unpaid: 0, unpaid_since: None, home: Some(lot) });
+    settle_in(world, e);
+    let addr = world.res::<Neighborhood>().lots[lot].address.clone();
+    log(world, LogKind::Life, Some(e), format!("{first} packed three boxes and a lamp and moved out to {addr}."));
+    Ok(lot)
 }
 
 // ------------------------------------------------------------------------------------------------

@@ -65,6 +65,9 @@ pub struct SavedEntity {
     pub dead: Option<Dead>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub genes: Option<Genes>,
+    /// Missing in saves from before sex was modelled (assigned on load).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sex: Option<Sex>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub student: Option<Student>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -142,6 +145,7 @@ pub fn capture(world: &World) -> SaveGame {
                 at_work: take(world, e),
                 dead: take(world, e),
                 genes: take(world, e),
+                sex: take(world, e),
                 student: take(world, e),
                 pregnant: take(world, e),
                 ghost: take(world, e),
@@ -205,7 +209,7 @@ pub fn restore(save: SaveGame, data: GameData) -> Result<Sim, String> {
             ($($field:ident),*) => { $( if let Some(c) = s.$field { w.insert_one(e, c); } )* };
         }
         let away = s.at_work.is_some();
-        put!(peon, age, needs, personality, skills, mood, transform, appearance, posture, bubble, actions, brain, family, job, at_work, dead, genes, student, pregnant, ghost, offlot, visitor);
+        put!(peon, age, needs, personality, skills, mood, transform, appearance, posture, bubble, actions, brain, family, job, at_work, dead, genes, sex, student, pregnant, ghost, offlot, visitor);
         if let Some(t) = s.townie {
             townies.push((e, t, away));
         }
@@ -236,6 +240,7 @@ pub fn restore(save: SaveGame, data: GameData) -> Result<Sim, String> {
     lot.rooms_dirty = true;
     lot.version += 1;
     w.insert_resource(lot);
+    assign_sexes(w);
     if migrating {
         crate::neighborhood::migrate(w, old_hood.map(|h| h.name), townies);
         w.flush();
@@ -244,6 +249,29 @@ pub fn restore(save: SaveGame, data: GameData) -> Result<Sim, String> {
         crate::neighborhood::add_community_lots(w);
     }
     Ok(sim)
+}
+
+/// Saves from before sex was modelled: whoever is pregnant is a woman, spouses are a woman and
+/// a man, and everyone else gets a stable pick from their entity handle.
+fn assign_sexes(w: &mut World) {
+    let mut missing: Vec<Entity> = w.query_filtered::<Entity, (hearth_ecs::With<Peon>, hearth_ecs::Without<Sex>)>().iter().collect();
+    if missing.is_empty() {
+        return;
+    }
+    missing.sort();
+    for &e in &missing {
+        if w.has::<Pregnant>(e) {
+            w.insert_one(e, Sex::Female);
+        }
+    }
+    for &e in &missing {
+        if w.has::<Sex>(e) {
+            continue;
+        }
+        let spouse = w.get::<Family>(e).and_then(|f| f.spouse).and_then(|s| w.get::<Sex>(s).map(|x| *x));
+        let sex = spouse.map(Sex::opposite).unwrap_or_else(|| Sex::from_entity(e));
+        w.insert_one(e, sex);
+    }
 }
 
 pub fn to_string(save: &SaveGame) -> Result<String, String> {
@@ -304,6 +332,24 @@ mod tests {
         assert_eq!(la, lb);
         // and saving again gives the same file
         assert_eq!(a.save_to_string().unwrap(), b.save_to_string().unwrap());
+    }
+
+    #[test]
+    fn old_saves_get_opposite_sex_spouses() {
+        let sim = starter_sim(4);
+        let mut save = capture(&sim.world);
+        for s in save.entities.iter_mut() {
+            s.sex = None;
+        }
+        let b = restore(save, GameData::embedded()).unwrap();
+        let w = &b.world;
+        let peons: Vec<Entity> = w.query_filtered::<Entity, hearth_ecs::With<Peon>>().iter().collect();
+        assert!(peons.iter().all(|e| w.has::<Sex>(*e)));
+        for &e in &peons {
+            if let Some(s) = w.get::<Family>(e).and_then(|f| f.spouse) {
+                assert_ne!(*w.get::<Sex>(e).unwrap(), *w.get::<Sex>(s).unwrap());
+            }
+        }
     }
 
     #[test]

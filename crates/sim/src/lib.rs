@@ -17,6 +17,7 @@ pub mod needs;
 pub mod neighborhood;
 pub mod objects;
 pub mod rng;
+pub mod romance;
 pub mod save;
 pub mod school;
 pub mod sim;
