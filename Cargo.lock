@@ -926,6 +926,7 @@ dependencies = [
  "glam",
  "hearth_ecs",
  "hearth_render",
+ "hearth_ui",
  "image",
  "log",
  "pollster",
@@ -1149,6 +1150,18 @@ dependencies = [
  "pollster",
  "serde_json",
  "wgpu",
+]
+
+[[package]]
+name = "hearth_ui"
+version = "0.1.0"
+dependencies = [
+ "ab_glyph",
+ "bytemuck",
+ "glam",
+ "log",
+ "wgpu",
+ "winit",
 ]
 
 [[package]]

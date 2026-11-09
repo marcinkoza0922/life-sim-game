@@ -4,6 +4,7 @@
 pub mod audio;
 pub mod camera;
 pub mod creator;
+pub mod debug_ui;
 pub mod lotmesh;
 pub mod materials;
 pub mod peons;

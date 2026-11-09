@@ -125,6 +125,8 @@ pub struct Game {
     pub mute: bool,
     /// The lot that was live last frame (see [`Game::check_lot_change`]).
     pub shown_lot: usize,
+    /// Interface-only state (open menus, tabs).
+    pub hud: crate::ui::HudState,
 }
 
 impl Game {
@@ -170,6 +172,7 @@ impl Game {
             autosave_day: None,
             mute: false,
             shown_lot,
+            hud: Default::default(),
         }
     }
 

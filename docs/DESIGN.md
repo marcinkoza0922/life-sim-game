@@ -20,7 +20,7 @@ Written in Rust on a custom, fit-to-purpose ECS.
 
 | Area | Decision |
 |---|---|
-| Engine | Custom archetype ECS + wgpu 30 + winit 0.30; crates for math (glam), glTF, audio (kira), UI (egui 0.36) |
+| Engine | Custom archetype ECS + wgpu 30 + winit 0.30; crates for math (glam), glTF, audio (kira); game UI is our own `hearth_ui` (egui 0.36 only for developer windows) |
 | Platform | Linux first (Vulkan). Cross-platform later — avoid platform-specific code |
 | Visual style | Semi-realistic PBR; greybox placeholders first, glTF art later |
 | Camera | Free orbit/zoom/pan, wall cutaway, upper-floor hiding |
@@ -49,10 +49,14 @@ crates/
                  resources, events, commands, schedule. No game knowledge.
   hearth_render  wgpu renderer: meshes, PBR-lite shading, shadows, instancing,
                  offscreen capture (screenshots). No game knowledge.
+  hearth_ui      Immediate-mode game UI on wgpu: SDF shapes (rounded boxes, arcs,
+                 triangles, soft shadows), springs on every widget, ab_glyph text
+                 atlas from bundled fonts. No game knowledge.
   sim            The game simulation. Pure logic on hearth_ecs — no rendering,
                  no windowing, fully deterministic given a seed. Testable headless.
   game           The playable binary (`lifesim`): window, input, camera, build
-                 tools, egui UI, sim→render bridging, debug overlays.
+                 tools, hearth_ui interface (ui.rs, creator.rs), egui developer
+                 windows (debug_ui.rs), sim→render bridging, debug overlays.
   simctl         Headless CLI: run the sim for N days, run scenario files,
                  dump event logs / stats as JSON, render screenshots offscreen.
 assets/
@@ -61,10 +65,11 @@ assets/
   textures/      <material id>/{albedo,normal,orm}.png tiling maps (embedded by game/build.rs)
   materialcraft/ materials.py: generates the .sbs packages and textures/ maps headlessly
   blender/       make_peons.py: builds the bodies, rig, hair and clips headlessly
+  fonts/         Nunito, Fredoka, Noto Emoji (OFL, licences alongside; embedded by hearth_ui)
 docs/
 ```
 
-Dependency direction: `game → {sim, hearth_render, hearth_ecs}`, `simctl → {sim, hearth_render}`,
+Dependency direction: `game → {sim, hearth_render, hearth_ui, hearth_ecs}`, `simctl → {sim, hearth_render}`,
 `sim → hearth_ecs`. The sim never depends on the renderer. This keeps the simulation
 deterministic, fast to test, and runnable at thousands of ticks per second.
 
@@ -318,8 +323,20 @@ bills every 3 days (scaled by lot value). Unpaid bills → warnings → repo-man
 
 - **Camera:** orbit target on the active level; RMB rotate, MMB/WASD pan, wheel zoom, PageUp/Down
   change level. Walls modes: Up / Cutaway / Down.
-- **UI (egui, themed later):** needs panel, peon portraits, action queue, mood & moodlets,
-  career panel, build/buy catalog, clock/speed controls, notification feed.
+- **UI (`hearth_ui`, bubbly toy-box style):** cream paper cards with plum outlines and solid drop
+  shadows, candy accents (teal, coral, sun, grass, sky, lilac), Fredoka headings over Nunito body text,
+  Noto Emoji as an icon font. Everything moves on damped springs: buttons lift on hover and squash
+  when pressed, panels slide in with overshoot, windows and tooltips pop, bars wobble when their value
+  jumps, funds count up, the interaction menu fans out radially. Screens: floating HUD (household and
+  funds, clock and speeds, modes and menu), cartoon portrait bubbles with mood rings, tabbed peon panel
+  (needs, moodlets, traits/skills, career, relationships), Buy/Build tile catalogs, saves and
+  neighborhood windows, career events, toasts, Create-a-Household. `Ui::instant` snaps springs for
+  deterministic screenshots. Developer windows (F1–F4, F8, L) stay on egui.
+  `hearth_ui` in brief: per-frame `begin_frame` / widgets / `end_frame`; widget ids hash a label in the
+  id scope (repeats get a counter); springs and small floats live in per-id memory (unused springs are
+  dropped after 30 frames); areas register their rects so the next frame's `wants_pointer` keeps clicks
+  from reaching the world; layers back to front are Background (world bubbles, never block), Panel,
+  Window, Popup, Tooltip.
 - **Speech:** gibberish syllable generator + pitch by age/sex; bubbles show icons of topics.
 
 ## 7. Debug & Test Tooling

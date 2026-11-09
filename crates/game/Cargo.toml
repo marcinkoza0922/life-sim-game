@@ -15,6 +15,7 @@ path = "src/main.rs"
 sim.workspace = true
 hearth_ecs.workspace = true
 hearth_render.workspace = true
+hearth_ui.workspace = true
 glam.workspace = true
 winit.workspace = true
 egui.workspace = true
