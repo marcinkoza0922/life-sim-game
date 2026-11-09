@@ -24,7 +24,20 @@ use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::raw_window_handle::HasDisplayHandle;
 use winit::window::{Window, WindowId};
+
+/// The OS clipboard (Wayland or X11) for hearth_ui text fields, via egui-winit's wrapper.
+struct SystemClipboard(egui_winit::clipboard::Clipboard);
+
+impl hearth_ui::Clipboard for SystemClipboard {
+    fn get(&mut self) -> Option<String> {
+        self.0.get()
+    }
+    fn set(&mut self, text: String) {
+        self.0.set_text(text);
+    }
+}
 
 struct Args {
     seed: u64,
@@ -601,6 +614,7 @@ impl ApplicationHandler for App {
         let egui_renderer = egui_wgpu::Renderer::new(&gpu.device, format, egui_wgpu::RendererOptions::default());
         let mut ui = hearth_ui::Ui::new();
         ui.input.ppp = window.scale_factor() as f32;
+        ui.clipboard = Box::new(SystemClipboard(egui_winit::clipboard::Clipboard::new(window.display_handle().ok().map(|h| h.as_raw()))));
         let ui_renderer = hearth_ui::Renderer::new(&gpu.device, format);
         if self.args.screenshot_after.is_some() {
             // automated captures shouldn't catch anything mid-bounce

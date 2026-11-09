@@ -51,7 +51,8 @@ crates/
                  offscreen capture (screenshots). No game knowledge.
   hearth_ui      Immediate-mode game UI on wgpu: SDF shapes (rounded boxes, arcs,
                  triangles, soft shadows), springs on every widget, ab_glyph text
-                 atlas from bundled fonts. No game knowledge.
+                 atlas from bundled fonts, RGBA image atlas, clipboard-aware text
+                 fields. No game knowledge.
   sim            The game simulation. Pure logic on hearth_ecs — no rendering,
                  no windowing, fully deterministic given a seed. Testable headless.
   game           The playable binary (`lifesim`): window, input, camera, build
@@ -336,7 +337,14 @@ bills every 3 days (scaled by lot value). Unpaid bills → warnings → repo-man
   id scope (repeats get a counter); springs and small floats live in per-id memory (unused springs are
   dropped after 30 frames); areas register their rects so the next frame's `wants_pointer` keeps clicks
   from reaching the world; layers back to front are Background (world bubbles, never block), Panel,
-  Window, Popup, Tooltip.
+  Window, Popup, Tooltip. Images: register RGBA or PNG bytes once with `ui.images.add_rgba` /
+  `add_png(bytes, max_side)` (packed into a 2048² atlas, never repacked, no mipmaps, so load near
+  display size), then draw with `ui.image`, `ui.image_framed`, `Button::icon` or
+  `painter.image` (rounded corners, tint, outline); they share the one instanced draw with shapes and
+  text. Text fields select by drag, Shift+click/arrows and double-click, jump words with Ctrl, and
+  copy/cut/paste through `Ui::clipboard` (the game installs the OS clipboard via egui-winit; tests
+  use an in-memory one). `crates/hearth_ui/tests/gpu.rs` renders a sample to
+  `out/hearth_ui_snapshot.png`.
 - **Speech:** gibberish syllable generator + pitch by age/sex; bubbles show icons of topics.
 
 ## 7. Debug & Test Tooling

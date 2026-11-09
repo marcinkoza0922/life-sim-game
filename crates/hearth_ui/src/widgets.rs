@@ -7,6 +7,7 @@ use glam::{Vec2, vec2};
 
 use crate::anim::SpringCfg;
 use crate::geom::{Color, Rect};
+use crate::images::ImageId;
 use crate::paint::{Order, Paint};
 use crate::text::FontId;
 use crate::theme::{self, CREAM, INK, INK_SOFT, LIP, OUTLINE, PAPER, TEAL};
@@ -76,11 +77,17 @@ pub struct Button {
     pub selected: Option<bool>,
     pub min_w: f32,
     pub round: bool,
+    /// An image drawn before the label (or alone, centred, when the label is empty).
+    pub icon: Option<ImageId>,
 }
 
 impl Button {
     pub fn new(label: impl Into<String>) -> Button {
-        Button { label: label.into(), color: TEAL, height: 34.0, font: FontId::Bold, font_size: 15.0, enabled: true, selected: None, min_w: 0.0, round: false }
+        Button { label: label.into(), color: TEAL, height: 34.0, font: FontId::Bold, font_size: 15.0, enabled: true, selected: None, min_w: 0.0, round: false, icon: None }
+    }
+    pub fn icon(mut self, id: ImageId) -> Button {
+        self.icon = Some(id);
+        self
     }
     pub fn small(mut self) -> Button {
         self.height = 26.0;
@@ -191,10 +198,17 @@ impl Ui {
     }
 
     pub fn btn(&mut self, b: Button) -> Resp {
-        let id = self.make_id(("btn", &b.label));
+        let id = self.make_id(("btn", &b.label, b.icon));
         let g = self.fonts.layout(&b.label, b.font, b.font_size, None);
         let pad = b.height * if b.height <= 28.0 { 0.4 } else { 0.5 };
-        let w = if b.round { b.height } else { (g.size.x + pad * 2.0).max(b.min_w) };
+        // icon fitted into a square of 1.35 em, keeping its aspect ratio
+        let icon = b.icon.map(|im| {
+            let px = self.images.size(im);
+            (im, px * (b.font_size * 1.35 / px.x.max(px.y)))
+        });
+        let gap = if icon.is_some() && !b.label.is_empty() { 6.0 } else { 0.0 };
+        let content_w = g.size.x + gap + icon.map_or(0.0, |(_, s)| s.x);
+        let w = if b.round { b.height } else { (content_w + pad * 2.0).max(b.min_w) };
         let slot = self.alloc(vec2(w, b.height + LIP));
         let body = Rect::from_min_size(slot.min, vec2(w, b.height));
         let resp = self.interact(id, slot, b.enabled);
@@ -207,7 +221,13 @@ impl Ui {
         if !b.enabled {
             tc = tc.alpha(0.55);
         }
-        let tpos = body.center() - g.size * 0.5 + vec2(0.0, 0.5);
+        let left = body.center().x - content_w * 0.5;
+        if let Some((im, size)) = icon {
+            let r = Rect::from_center_size(vec2(left + size.x * 0.5, body.center().y), size);
+            let tint = if b.enabled { Color::WHITE } else { Color::WHITE.alpha(0.55) };
+            self.painter.image(&self.images, im, r, 0.0, tint, None);
+        }
+        let tpos = vec2(left + content_w - g.size.x, body.center().y - g.size.y * 0.5 + 0.5);
         self.painter.galley(&mut self.fonts, &g, tpos, tc);
         self.painter.pop_transform();
         resp
@@ -346,59 +366,120 @@ impl Ui {
     // Text field
 
     /// A single-line text field. `resp.changed` is set when the text changes.
+    ///
+    /// Click to place the caret, drag or Shift+click to select, double-click selects a word.
+    /// Keys: arrows/Home/End (Shift extends, Ctrl jumps words), Ctrl+A/C/X/V via
+    /// [`Ui::clipboard`].
     pub fn text_field(&mut self, src: impl Hash, s: &mut String, hint: &str, width: f32) -> Resp {
         let id = self.make_id(("field", src));
         let r = self.alloc(vec2(width, 32.0));
         let mut resp = self.interact(id, r, true);
         let g = self.fonts.layout(s, FontId::Body, 15.0, None);
         let pad = 12.0;
-        let scroll_key = 7;
+        let (scroll_key, click_key, drag_key) = (7, 8, 9);
+        let scroll = self.get_f(id, scroll_key).unwrap_or(0.0);
+        let at_pointer = self.input.pointer.map(|p| {
+            let x = p.x - r.min.x - pad + scroll;
+            g.glyphs.iter().find(|gl| gl.pos.x + gl.advance * 0.5 > x).map(|gl| gl.byte).unwrap_or(s.len())
+        });
         if resp.pressed {
             let was = self.focus == Some(id);
             self.focus = Some(id);
             self.focus_touched = true;
-            self.caret = s.len();
-            if was && let Some(p) = self.input.pointer {
-                let x = p.x - r.min.x - pad + self.get_f(id, scroll_key).unwrap_or(0.0);
-                self.caret = g.glyphs.iter().find(|gl| gl.pos.x + gl.advance * 0.5 > x).map(|gl| gl.byte).unwrap_or(s.len());
+            let at = at_pointer.unwrap_or(s.len());
+            let last = self.get_f(id, click_key).unwrap_or(f32::NEG_INFINITY);
+            if was && self.time - last < 0.4 {
+                (self.anchor, self.caret) = word_at(s, at);
+                self.set_f(id, click_key, f32::NEG_INFINITY);
+                self.set_f(id, drag_key, 0.0);
+            } else {
+                self.caret = at;
+                if !(was && self.input.mods.shift) {
+                    self.anchor = at;
+                }
+                self.set_f(id, click_key, self.time);
+                self.set_f(id, drag_key, 1.0);
             }
             self.kick(id, 0, 5.0);
+        } else if resp.down && self.focus == Some(id) && self.get_f(id, drag_key) == Some(1.0) && let Some(at) = at_pointer {
+            self.caret = at;
         }
         let focused = self.focus == Some(id);
         if focused {
-            let mut c = self.caret.min(s.len());
-            while !s.is_char_boundary(c) {
-                c -= 1;
-            }
+            let fix = |mut i: usize| {
+                i = i.min(s.len());
+                while !s.is_char_boundary(i) {
+                    i -= 1;
+                }
+                i
+            };
+            let (mut a, mut c) = (fix(self.anchor), fix(self.caret));
+            let (shift, word) = (self.input.mods.shift, self.input.mods.command);
             let typed = std::mem::take(&mut self.input.text);
-            for ch in typed.chars() {
-                s.insert(c, ch);
-                c += ch.len_utf8();
+            if !typed.is_empty() {
+                replace_sel(s, &mut a, &mut c, &typed);
                 resp.changed = true;
             }
             for k in std::mem::take(&mut self.input.keys) {
+                let sel = a.min(c)..a.max(c);
                 match k {
+                    Key::Backspace | Key::Delete if !sel.is_empty() => {
+                        replace_sel(s, &mut a, &mut c, "");
+                        resp.changed = true;
+                    }
                     Key::Backspace => {
-                        if let Some((i, _)) = s[..c].char_indices().next_back() {
-                            s.replace_range(i..c, "");
-                            c = i;
+                        let to = if word { prev_word(s, c) } else { prev_char(s, c) };
+                        if to < c {
+                            s.replace_range(to..c, "");
+                            (a, c) = (to, to);
                             resp.changed = true;
                         }
                     }
                     Key::Delete => {
-                        if let Some(ch) = s[c..].chars().next() {
-                            s.replace_range(c..c + ch.len_utf8(), "");
+                        let to = if word { next_word(s, c) } else { next_char(s, c) };
+                        if to > c {
+                            s.replace_range(c..to, "");
+                            a = c;
                             resp.changed = true;
                         }
                     }
-                    Key::Left => c = s[..c].char_indices().next_back().map(|(i, _)| i).unwrap_or(0),
-                    Key::Right => c = s[c..].chars().next().map(|ch| c + ch.len_utf8()).unwrap_or(c),
-                    Key::Home => c = 0,
-                    Key::End => c = s.len(),
+                    Key::Left | Key::Right | Key::Home | Key::End => {
+                        c = match k {
+                            // an unextended move from a selection lands on its edge
+                            Key::Left if !shift && !sel.is_empty() => sel.start,
+                            Key::Right if !shift && !sel.is_empty() => sel.end,
+                            Key::Left if word => prev_word(s, c),
+                            Key::Left => prev_char(s, c),
+                            Key::Right if word => next_word(s, c),
+                            Key::Right => next_char(s, c),
+                            Key::Home => 0,
+                            _ => s.len(),
+                        };
+                        if !shift {
+                            a = c;
+                        }
+                    }
+                    Key::SelectAll => (a, c) = (0, s.len()),
+                    Key::Copy | Key::Cut if !sel.is_empty() => {
+                        self.clipboard.set(s[sel].to_string());
+                        if k == Key::Cut {
+                            replace_sel(s, &mut a, &mut c, "");
+                            resp.changed = true;
+                        }
+                    }
+                    Key::Copy | Key::Cut => {}
+                    Key::Paste => {
+                        // single line: newlines and tabs become spaces, other controls go
+                        let t: String = self.clipboard.get().unwrap_or_default().trim_end_matches(['\n', '\r']).chars().filter_map(|ch| if ch == '\n' || ch == '\t' { Some(' ') } else { (!ch.is_control()).then_some(ch) }).collect();
+                        if !t.is_empty() {
+                            replace_sel(s, &mut a, &mut c, &t);
+                            resp.changed = true;
+                        }
+                    }
                     Key::Enter | Key::Escape | Key::Tab => self.focus = None,
                 }
             }
-            self.caret = c;
+            (self.anchor, self.caret) = (a, c);
         }
         let g = if resp.changed { self.fonts.layout(s, FontId::Body, 15.0, None) } else { g };
         let wob = self.spring(id, 0, 0.0, 0.0, SpringCfg::WOBBLY);
@@ -409,7 +490,7 @@ impl Ui {
         let old = self.painter.clip;
         self.painter.clip = old.intersect(&inner.expand(1.0));
         let caret_x = g.caret_x(self.caret.min(s.len()));
-        let mut scroll = self.get_f(id, scroll_key).unwrap_or(0.0);
+        let mut scroll = scroll;
         if focused {
             if caret_x - scroll > inner.width() - 4.0 {
                 scroll = caret_x - inner.width() + 4.0;
@@ -422,6 +503,11 @@ impl Ui {
         }
         self.set_f(id, scroll_key, scroll);
         let ty = r.center().y - g.line_height * 0.5;
+        if focused && self.anchor != self.caret {
+            let (x0, x1) = (g.caret_x(self.anchor.min(self.caret)), g.caret_x(self.anchor.max(self.caret)));
+            let sel = Rect::new(inner.min.x + x0 - scroll, ty + 1.0, x1 - x0, g.line_height - 2.0);
+            self.painter.rect(sel, 4.0, Paint::fill(theme::SUN.alpha(0.55)));
+        }
         if s.is_empty() {
             let hg = self.fonts.layout(hint, FontId::Body, 15.0, None);
             self.painter.galley(&mut self.fonts, &hg, vec2(inner.min.x, ty), INK_SOFT.alpha(0.7));
@@ -585,5 +671,97 @@ impl Ui {
         });
         self.set_f(id, 10, rect.height());
         keep
+    }
+
+    // --------------------------------------------------------------------------------------------
+    // Images
+
+    /// Shows a registered image at `size` points.
+    pub fn image(&mut self, id: ImageId, size: Vec2) -> Rect {
+        let r = self.alloc(size);
+        self.painter.image(&self.images, id, r, 0.0, Color::WHITE, None);
+        r
+    }
+
+    /// A rounded, outlined image (portraits, thumbnails).
+    pub fn image_framed(&mut self, id: ImageId, size: Vec2, radius: f32) -> Rect {
+        let r = self.alloc(size);
+        self.painter.image(&self.images, id, r, radius, Color::WHITE, Some((OUTLINE, INK)));
+        r
+    }
+}
+
+// ------------------------------------------------------------------------------------------------
+// Text editing helpers (byte indices on char boundaries)
+
+fn prev_char(s: &str, i: usize) -> usize {
+    s[..i].char_indices().next_back().map_or(0, |(j, _)| j)
+}
+
+fn next_char(s: &str, i: usize) -> usize {
+    s[i..].chars().next().map_or(i, |ch| i + ch.len_utf8())
+}
+
+fn is_word(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_' || ch == '\''
+}
+
+/// Start of the word before `i` (skipping any gap first).
+fn prev_word(s: &str, i: usize) -> usize {
+    let mut it = s[..i].char_indices().rev().peekable();
+    while it.next_if(|(_, ch)| !is_word(*ch)).is_some() {}
+    let mut at = it.peek().map_or(0, |(j, _)| *j);
+    while let Some((j, _)) = it.next_if(|(_, ch)| is_word(*ch)) {
+        at = j;
+    }
+    at
+}
+
+/// End of the word after `i` (skipping any gap first).
+fn next_word(s: &str, i: usize) -> usize {
+    let mut it = s[i..].char_indices().map(|(j, ch)| (i + j, ch)).peekable();
+    while it.next_if(|(_, ch)| !is_word(*ch)).is_some() {}
+    while it.next_if(|(_, ch)| is_word(*ch)).is_some() {}
+    it.peek().map_or(s.len(), |(j, _)| *j)
+}
+
+/// The (start, end) of the word around `i`, or just the character there if it isn't a word.
+fn word_at(s: &str, i: usize) -> (usize, usize) {
+    let here = s[i..].chars().next();
+    let before = s[..i].chars().next_back();
+    if here.is_some_and(is_word) || before.is_some_and(is_word) {
+        let start = s[..i].char_indices().rev().take_while(|(_, ch)| is_word(*ch)).last().map_or(i, |(j, _)| j);
+        let end = s[i..].char_indices().find(|(_, ch)| !is_word(*ch)).map_or(s.len(), |(j, _)| i + j);
+        (start, end)
+    } else {
+        (i, next_char(s, i))
+    }
+}
+
+/// Replaces the selection `a..c` (either order) with `t`, leaving the caret after it.
+fn replace_sel(s: &mut String, a: &mut usize, c: &mut usize, t: &str) {
+    let start = (*a).min(*c);
+    s.replace_range(start..(*a).max(*c), t);
+    *c = start + t.len();
+    *a = *c;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn word_motion() {
+        let s = "hi  there, friend";
+        assert_eq!(next_word(s, 0), 2);
+        assert_eq!(next_word(s, 2), 9);
+        assert_eq!(next_word(s, 9), s.len());
+        assert_eq!(prev_word(s, s.len()), 11);
+        assert_eq!(prev_word(s, 11), 4);
+        assert_eq!(prev_word(s, 4), 0);
+        assert_eq!(word_at(s, 6), (4, 9));
+        assert_eq!(word_at(s, 9), (4, 9), "just after a word picks that word");
+        assert_eq!(word_at(s, 3), (3, 4), "a gap selects one character");
+        assert_eq!(word_at("żółw ok", 2), (0, 7), "multi-byte letters");
     }
 }

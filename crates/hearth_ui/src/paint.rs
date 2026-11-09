@@ -5,6 +5,7 @@ use bytemuck::{Pod, Zeroable};
 use glam::{Affine2, Vec2, vec2};
 
 use crate::geom::{Color, Rect};
+use crate::images::{ImageId, Images};
 use crate::text::{Fonts, Galley};
 
 /// Draw/hit-test layers, back to front.
@@ -24,6 +25,7 @@ pub(crate) const KIND_RRECT: u32 = 0;
 pub(crate) const KIND_GLYPH: u32 = 1;
 pub(crate) const KIND_TRI: u32 = 2;
 pub(crate) const KIND_ARC: u32 = 3;
+pub(crate) const KIND_IMAGE: u32 = 4;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -37,7 +39,7 @@ pub struct Instance {
     pub fill0: [f32; 4],
     pub fill1: [f32; 4],
     pub stroke: [f32; 4],
-    /// Glyph: uv rect. Arc: half-aperture, ring radius, half thickness.
+    /// Glyph and image: uv rect. Arc: half-aperture, ring radius, half thickness.
     pub params: [f32; 4],
     pub clip: [f32; 4],
     pub soft: f32,
@@ -208,6 +210,15 @@ impl Painter {
         let mut i = Self::base((a + b) * 0.5, vec2(len * 0.5 + w * 0.5, w * 0.5), KIND_RRECT, &Paint::fill(color));
         i.radius = w * 0.5;
         i.rot = d.y.atan2(d.x);
+        self.push(i);
+    }
+
+    /// Draws image `id` stretched over `r`, multiplied by `tint` (WHITE = as is), with rounded
+    /// corners and an optional outline from `stroke`.
+    pub fn image(&mut self, images: &Images, id: ImageId, r: Rect, radius: f32, tint: Color, stroke: Option<(f32, Color)>) {
+        let mut i = Self::base(r.center(), r.size() * 0.5, KIND_IMAGE, &Paint { fill: tint, fill_bottom: None, stroke });
+        i.radius = radius.min(r.width() * 0.5).min(r.height() * 0.5).max(0.0);
+        i.params = images.entry(id).uv;
         self.push(i);
     }
 

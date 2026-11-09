@@ -1,5 +1,6 @@
-//! wgpu backend: uploads the glyph atlas and draws the frame's instances in one call.
+//! wgpu backend: uploads the glyph and image atlases and draws the frame's instances in one call.
 
+use crate::images::IMAGE_ATLAS_SIZE;
 use crate::paint::Instance;
 use crate::text::ATLAS_SIZE;
 use crate::Ui;
@@ -8,6 +9,7 @@ pub struct Renderer {
     pipeline: wgpu::RenderPipeline,
     globals: wgpu::Buffer,
     atlas: wgpu::Texture,
+    images: wgpu::Texture,
     bind_group: wgpu::BindGroup,
     instances: wgpu::Buffer,
     capacity: u64,
@@ -29,7 +31,18 @@ impl Renderer {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor { label: Some("ui sampler"), mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear, ..Default::default() });
+        let images = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("ui image atlas"),
+            size: wgpu::Extent3d { width: IMAGE_ATLAS_SIZE, height: IMAGE_ATLAS_SIZE, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            // gamma-space values, like every other UI colour
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let sampler =device.create_sampler(&wgpu::SamplerDescriptor { label: Some("ui sampler"), mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear, ..Default::default() });
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("ui bgl"),
             entries: &[
@@ -46,9 +59,16 @@ impl Renderer {
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry { binding: 2, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+                    count: None,
+                },
             ],
         });
         let view = atlas.create_view(&Default::default());
+        let images_view = images.create_view(&Default::default());
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("ui bg"),
             layout: &bgl,
@@ -56,6 +76,7 @@ impl Renderer {
                 wgpu::BindGroupEntry { binding: 0, resource: globals.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&view) },
                 wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&sampler) },
+                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&images_view) },
             ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("ui layout"), bind_group_layouts: &[Some(&bgl)], immediate_size: 0 });
@@ -90,7 +111,7 @@ impl Renderer {
         });
         let capacity = 4096;
         let instances = Self::instance_buffer(device, capacity);
-        Renderer { pipeline, globals, atlas, bind_group, instances, capacity, count: 0 }
+        Renderer { pipeline, globals, atlas, images, bind_group, instances, capacity, count: 0 }
     }
 
     fn instance_buffer(device: &wgpu::Device, n: u64) -> wgpu::Buffer {
@@ -116,6 +137,18 @@ impl Renderer {
                     &ui.fonts.atlas.pixels[start..end],
                     wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(ATLAS_SIZE), rows_per_image: Some(y1 - y0) },
                     wgpu::Extent3d { width: ATLAS_SIZE, height: y1 - y0, depth_or_array_layers: 1 },
+                );
+            }
+        }
+        if let Some((y0, y1)) = ui.images.dirty.take() {
+            let y1 = y1.min(IMAGE_ATLAS_SIZE);
+            if y1 > y0 && !ui.images.pixels.is_empty() {
+                let row = (IMAGE_ATLAS_SIZE * 4) as usize;
+                queue.write_texture(
+                    wgpu::TexelCopyTextureInfo { texture: &self.images, mip_level: 0, origin: wgpu::Origin3d { x: 0, y: y0, z: 0 }, aspect: wgpu::TextureAspect::All },
+                    &ui.images.pixels[y0 as usize * row..y1 as usize * row],
+                    wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(IMAGE_ATLAS_SIZE * 4), rows_per_image: Some(y1 - y0) },
+                    wgpu::Extent3d { width: IMAGE_ATLAS_SIZE, height: y1 - y0, depth_or_array_layers: 1 },
                 );
             }
         }

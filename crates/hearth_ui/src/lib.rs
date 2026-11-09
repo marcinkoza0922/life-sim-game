@@ -3,7 +3,11 @@
 //! Every widget keeps springs in per-id memory, so hovering lifts, pressing squashes, panels pop
 //! in with overshoot and bars wobble when their value jumps. Shapes are SDF quads (round corners,
 //! soft shadows, gradients, arcs) drawn in one instanced call; text comes from bundled OFL fonts
-//! (Nunito, Fredoka, Noto Emoji for icons) rasterised into a glyph atlas.
+//! (Nunito, Fredoka, Noto Emoji for icons) rasterised into a glyph atlas; images registered in
+//! [`Ui::images`] live in a second (RGBA) atlas, so they draw in the same call.
+//!
+//! Text fields copy and paste through [`Ui::clipboard`]; the host should install one backed by
+//! the system clipboard (the default only shares text within the process).
 //!
 //! Frame flow: feed winit events to [`Ui::input`] (`Input::on_event`), call [`Ui::begin_frame`],
 //! build the interface, call [`Ui::end_frame`], then [`Renderer::prepare`] + [`Renderer::paint`].
@@ -11,7 +15,9 @@
 //! belong to the UI.
 
 pub mod anim;
+pub mod clipboard;
 pub mod geom;
+pub mod images;
 pub mod input;
 pub mod paint;
 pub mod render;
@@ -23,9 +29,11 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
 pub use anim::{Spring, SpringCfg};
+pub use clipboard::{Clipboard, LocalClipboard};
 pub use geom::{Color, Rect};
 pub use glam::{Vec2, vec2};
-pub use input::{Input, Key};
+pub use images::{ImageError, ImageId, Images};
+pub use input::{Input, Key, Mods};
 pub use paint::{Order, Paint, Painter};
 pub use render::Renderer;
 pub use text::{FontId, Fonts, Galley};
@@ -86,6 +94,8 @@ pub struct Ui {
     pub input: Input,
     pub painter: Painter,
     pub fonts: Fonts,
+    pub images: Images,
+    pub clipboard: Box<dyn Clipboard>,
     /// Seconds since start, and since the last frame.
     pub time: f32,
     pub dt: f32,
@@ -106,6 +116,8 @@ pub struct Ui {
     focus_touched: bool,
     /// Caret byte index in the focused text field.
     pub caret: usize,
+    /// The other end of the selection (equal to `caret` when nothing is selected).
+    pub anchor: usize,
     hover: Option<Id>,
     hover_now: Option<Id>,
     hover_since: f32,
@@ -127,6 +139,8 @@ impl Ui {
             input: Input::default(),
             painter: Painter::default(),
             fonts: Fonts::new(),
+            images: Images::default(),
+            clipboard: Box::new(LocalClipboard::default()),
             time: 0.0,
             dt: 1.0 / 60.0,
             screen: Rect::new(0.0, 0.0, 800.0, 600.0),
@@ -143,6 +157,7 @@ impl Ui {
             focus: None,
             focus_touched: false,
             caret: 0,
+            anchor: 0,
             hover: None,
             hover_now: None,
             hover_since: 0.0,
@@ -553,6 +568,9 @@ mod tests {
         frame(&mut ui, |ui| field(ui, &mut s));
         assert!(ui.wants_keyboard());
         release(&mut ui);
+        assert_eq!(ui.caret, 0, "the caret goes where the field was clicked");
+        ui.input.keys.push(Key::End);
+        frame(&mut ui, |ui| field(ui, &mut s));
         ui.input.text.push_str("cd");
         ui.input.keys.extend([Key::Left, Key::Backspace]);
         let r = frame(&mut ui, |ui| field(ui, &mut s));
@@ -571,6 +589,102 @@ mod tests {
         press(&mut ui);
         frame(&mut ui, |ui| field(ui, &mut s));
         assert!(!ui.wants_keyboard());
+    }
+
+    fn focused_field(text: &str) -> (Ui, String) {
+        let mut ui = Ui::new();
+        let mut s = String::from(text);
+        ui.input.pointer = Some(vec2(20.0, 20.0));
+        press(&mut ui);
+        frame(&mut ui, |ui| field(ui, &mut s));
+        release(&mut ui);
+        frame(&mut ui, |ui| field(ui, &mut s));
+        (ui, s)
+    }
+
+    fn field(ui: &mut Ui, s: &mut String) -> Resp {
+        ui.area("f", Order::Panel, vec2(10.0, 10.0), 300.0, |ui| ui.text_field("name", s, "", 200.0)).0
+    }
+
+    fn keys(ui: &mut Ui, s: &mut String, k: &[Key]) -> Resp {
+        ui.input.keys.extend_from_slice(k);
+        frame(ui, |ui| field(ui, s))
+    }
+
+    #[test]
+    fn text_field_copies_cuts_and_pastes() {
+        let (mut ui, mut s) = focused_field("hello world");
+        keys(&mut ui, &mut s, &[Key::End]);
+        ui.input.mods.shift = true;
+        ui.input.mods.command = true;
+        keys(&mut ui, &mut s, &[Key::Left]);
+        ui.input.mods = Mods::default();
+        assert_eq!((ui.anchor, ui.caret), (11, 6), "shift+ctrl+left selects the last word");
+        keys(&mut ui, &mut s, &[Key::Copy]);
+        assert_eq!(ui.clipboard.get().as_deref(), Some("world"));
+        // typing replaces the selection
+        ui.input.text.push_str("there");
+        frame(&mut ui, |ui| field(ui, &mut s));
+        assert_eq!(s, "hello there");
+        // paste at the caret, newlines flattened
+        ui.clipboard.set("big\nwide\n".into());
+        keys(&mut ui, &mut s, &[Key::Paste]);
+        assert_eq!(s, "hello therebig wide");
+        keys(&mut ui, &mut s, &[Key::SelectAll, Key::Cut]);
+        assert_eq!(s, "");
+        assert_eq!(ui.clipboard.get().as_deref(), Some("hello therebig wide"));
+        // nothing selected: copy keeps the clipboard as it was
+        s.push_str("abc");
+        keys(&mut ui, &mut s, &[Key::End, Key::Copy]);
+        assert_eq!(ui.clipboard.get().as_deref(), Some("hello therebig wide"));
+        // a plain arrow collapses a selection onto its edge
+        keys(&mut ui, &mut s, &[Key::SelectAll, Key::Left]);
+        assert_eq!((ui.anchor, ui.caret), (0, 0));
+        ui.input.mods.command = true;
+        let r = keys(&mut ui, &mut s, &[Key::End, Key::Backspace]);
+        assert!(r.changed);
+        assert_eq!(s, "", "ctrl+backspace deletes a word");
+    }
+
+    #[test]
+    fn text_field_drag_and_double_click_select() {
+        let (mut ui, mut s) = focused_field("one two three");
+        ui.time += 1.0; // too late for a double-click
+        // drag from the very left to past the end
+        ui.input.pointer = Some(vec2(23.0, 20.0));
+        press(&mut ui);
+        frame(&mut ui, |ui| field(ui, &mut s));
+        assert_eq!(ui.caret, 0);
+        ui.input.pressed[0] = false;
+        ui.input.pointer = Some(vec2(205.0, 20.0));
+        frame(&mut ui, |ui| field(ui, &mut s));
+        assert_eq!((ui.anchor, ui.caret), (0, s.len()));
+        release(&mut ui);
+        frame(&mut ui, |ui| field(ui, &mut s));
+        ui.time += 1.0;
+        // double-click in "two"
+        let x = 22.0 + ui.fonts.layout("one tw", FontId::Body, 15.0, None).size.x;
+        ui.input.pointer = Some(vec2(x, 20.0));
+        for _ in 0..2 {
+            press(&mut ui);
+            frame(&mut ui, |ui| field(ui, &mut s));
+            release(&mut ui);
+            frame(&mut ui, |ui| field(ui, &mut s));
+        }
+        assert_eq!((ui.anchor, ui.caret), (4, 7));
+    }
+
+    #[test]
+    fn image_buttons_size_to_icon_and_label() {
+        let mut ui = Ui::new();
+        let im = ui.images.add_rgba(2, 1, &[255; 8]).unwrap();
+        let (plain, with_icon) = frame(&mut ui, |ui| {
+            ui.area("a", Order::Panel, vec2(0.0, 0.0), 400.0, |ui| (ui.button("Go").rect, ui.btn(Button::new("Go").icon(im)).rect)).0
+        });
+        // a 2:1 icon fitted to 1.35 em of 15pt is 20.25 wide, plus a 6pt gap
+        assert!((with_icon.width() - plain.width() - 26.25).abs() < 0.01, "{plain:?} {with_icon:?}");
+        let n = ui.instances().iter().filter(|i| i.kind == paint::KIND_IMAGE).count();
+        assert_eq!(n, 1);
     }
 
     #[test]

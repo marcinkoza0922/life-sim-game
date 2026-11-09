@@ -10,4 +10,8 @@ glam.workspace = true
 bytemuck.workspace = true
 winit.workspace = true
 ab_glyph.workspace = true
+image.workspace = true
 log.workspace = true
+
+[dev-dependencies]
+hearth_render.workspace = true

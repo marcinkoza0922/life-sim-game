@@ -1159,6 +1159,8 @@ dependencies = [
  "ab_glyph",
  "bytemuck",
  "glam",
+ "hearth_render",
+ "image",
  "log",
  "wgpu",
  "winit",

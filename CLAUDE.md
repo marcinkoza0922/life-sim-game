@@ -43,8 +43,10 @@ need no UVs; no other image or audio files exist yet.
   rather than producing maps nothing loads).
 - **PhotoCraft**: raster images: reviewing or annotating `simctl render` / `screenshots/` output,
   contact sheets, reference boards, any future PNG asset (icons, thumbnails, splash).
-- **VectorCraft**: icon/UI art (bubble icons, catalog/category icons, logo). `hearth_ui` draws only
-  SDF shapes and font glyphs today (icons are Noto Emoji), so images need an image layer in it first.
+- **VectorCraft**: icon/UI art (bubble icons, catalog/category icons, logo). Icons are Noto Emoji
+  today; `hearth_ui` can show images (export PNGs into `assets/ui/`, `include_bytes!` them, register
+  with `ui.images.add_png(bytes, Some(max_px))` at about display size × 2 for HiDPI, then
+  `Button::icon` / `ui.image`). No SVG rasteriser, so export raster.
 - **SoundCraft**: music and SFX when audio assets land (M9); speech stays synthesized.
 
 The craft MCP servers are user-scoped, and their read/write root is `~/CreativeWork` (outside the repo).

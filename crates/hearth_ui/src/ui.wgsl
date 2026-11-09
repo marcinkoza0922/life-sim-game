@@ -1,5 +1,5 @@
 // hearth_ui: one instanced quad per shape, shaded by signed distance (rounded boxes, triangles,
-// arcs) or sampled from the glyph atlas. Output is premultiplied alpha in gamma space.
+// arcs) or sampled from the glyph or image atlas. Output is premultiplied alpha in gamma space.
 
 struct Globals {
     screen: vec2<f32>, // pixels
@@ -10,6 +10,8 @@ struct Globals {
 @group(0) @binding(0) var<uniform> g: Globals;
 @group(0) @binding(1) var atlas: texture_2d<f32>;
 @group(0) @binding(2) var samp: sampler;
+// premultiplied RGBA
+@group(0) @binding(3) var images: texture_2d<f32>;
 
 struct Inst {
     @location(0) center: vec2<f32>,
@@ -107,6 +109,9 @@ fn fs_main(v: VOut) -> @location(0) vec4<f32> {
         discard;
     }
     let tex = textureSample(atlas, samp, v.uv).r;
+    // images: the quad has an anti-aliasing fringe beyond `half`, so clamp to the image's rect
+    let it = clamp(v.local / max(v.half, vec2<f32>(0.001)) * 0.5 + vec2<f32>(0.5), vec2<f32>(0.0), vec2<f32>(1.0));
+    let img = textureSample(images, samp, mix(v.params.xy, v.params.zw, it));
     if (v.kind == 1u) {
         let a = v.fill0.a * tex;
         return vec4<f32>(v.fill0.rgb * a, a);
@@ -128,6 +133,14 @@ fn fs_main(v: VOut) -> @location(0) vec4<f32> {
         cover = 1.0 - smoothstep(-soft, soft, d);
     } else {
         cover = 1.0 - smoothstep(-0.5 * px, 0.5 * px, d);
+    }
+    if (v.kind == 4u) {
+        var pm = img * vec4<f32>(v.fill0.rgb * v.fill0.a, v.fill0.a);
+        if (border > 0.0) {
+            let inner = 1.0 - smoothstep(-0.5 * px, 0.5 * px, d + border);
+            pm = mix(vec4<f32>(v.stroke.rgb * v.stroke.a, v.stroke.a), pm, inner);
+        }
+        return pm * cover;
     }
     let t = clamp(v.local.y / max(v.half.y, 0.001) * 0.5 + 0.5, 0.0, 1.0);
     var col = mix(v.fill0, v.fill1, t);
