@@ -638,12 +638,246 @@ def exercise_bike():
         box((0.1, 0.025, 0.06), (x + (-0.05 if x < 0.5 else 0.05), 0.33 + dy, 0.4), black, bevel=0.006)
 
 
+def chess_table():
+    wood = mat("wood", (0.54, 0.37, 0.26), 0.5)
+    dark = mat("wood.dark", (0.3, 0.2, 0.14), 0.5)
+    cyl(0.35, 0.04, (0.5, 0.72, 0.5), wood, bevel=0.012, verts=40)
+    cyl(0.045, 0.62, (0.5, 0.39, 0.5), dark, verts=16)
+    cyl(0.22, 0.04, (0.5, 0.02, 0.5), dark, bevel=0.012, verts=32)
+    # 8x8 board inlay with a frame, a few pieces mid-game
+    box((0.42, 0.012, 0.42), (0.5, 0.745, 0.5), dark, bevel=0.004)
+    light = mat("square.light", (0.92, 0.88, 0.78), 0.4)
+    black = mat("square.dark", (0.2, 0.15, 0.12), 0.4)
+    sq = 0.045
+    for i in range(8):
+        for j in range(8):
+            box((sq, 0.004, sq), (0.5 + (i - 3.5) * sq, 0.752, 0.5 + (j - 3.5) * sq), light if (i + j) % 2 else black, bevel=0.0)
+    white_p = mat("piece.white", (0.95, 0.93, 0.88), 0.35)
+    black_p = mat("piece.black", (0.08, 0.08, 0.09), 0.3)
+    for (i, j, m, h) in ((1, 1, white_p, 0.04), (3, 1, white_p, 0.06), (4, 2, white_p, 0.04), (2, 6, black_p, 0.04), (4, 6, black_p, 0.07), (5, 5, black_p, 0.04)):
+        x, z = 0.5 + (i - 3.5) * sq, 0.5 + (j - 3.5) * sq
+        cyl(0.014, h, (x, 0.754 + h / 2, z), m, verts=12)
+        sphere(0.012, (x, 0.754 + h + 0.008, z), m)
+    # toppled king
+    cyl(0.012, 0.06, (0.75, 0.76, 0.6), black_p, axis="x", verts=12)
+
+
+def rug():
+    red = mat("fabric", (0.63, 0.23, 0.21), 1.0)
+    gold = mat("fabric.gold", (0.86, 0.69, 0.4), 1.0)
+    navy = mat("fabric.navy", (0.2, 0.25, 0.45), 1.0)
+    box((1.9, 0.01, 1.9), (1.0, 0.005, 1.0), red, bevel=0.004)
+    box((1.6, 0.012, 1.6), (1.0, 0.006, 1.0), gold, bevel=0.0)
+    box((1.4, 0.014, 1.4), (1.0, 0.007, 1.0), red, bevel=0.0)
+    # diamond medallion and corner motifs
+    bpy.ops.mesh.primitive_cylinder_add(vertices=4, radius=0.45, depth=0.016, location=g2b(1.0, 0.008, 1.0))
+    _place(bpy.context.active_object, navy, 0, 1)
+    for (x, z) in ((0.45, 0.45), (1.55, 0.45), (0.45, 1.55), (1.55, 1.55)):
+        bpy.ops.mesh.primitive_cylinder_add(vertices=4, radius=0.12, depth=0.016, location=g2b(x, 0.008, z))
+        _place(bpy.context.active_object, navy, 0, 1)
+    # fringe on the short ends
+    for z in (0.03, 1.97):
+        for k in range(19):
+            box((0.02, 0.006, 0.06), (0.1 + k * 0.1, 0.003, z), gold, bevel=0.0)
+
+
+def end_table():
+    wood = mat("wood", (0.6, 0.43, 0.29), 0.5)
+    dark = mat("wood.dark", (0.45, 0.31, 0.21), 0.5)
+    box((0.52, 0.04, 0.52), (0.5, 0.55, 0.5), wood, bevel=0.012)
+    for (x, z) in ((0.28, 0.28), (0.72, 0.28), (0.28, 0.72), (0.72, 0.72)):
+        box((0.04, 0.53, 0.04), (x, 0.265, z), dark, bevel=0.006)
+    box((0.44, 0.03, 0.44), (0.5, 0.15, 0.5), wood, bevel=0.008)
+    box((0.42, 0.1, 0.42), (0.5, 0.47, 0.5), dark, bevel=0.008)
+    box((0.08, 0.02, 0.012), (0.5, 0.47, 0.716), mat("knob", (0.8, 0.65, 0.3), 0.3, 0.8), bevel=0.004)
+    # table lamp: base, stem, glowing shade
+    cyl(0.07, 0.05, (0.5, 0.595, 0.45), mat("ceramic", (0.3, 0.5, 0.55), 0.3), bevel=0.015)
+    cyl(0.01, 0.15, (0.5, 0.69, 0.45), mat("brass", (0.8, 0.65, 0.3), 0.3, 1.0))
+    bpy.ops.mesh.primitive_cone_add(vertices=24, radius1=0.11, radius2=0.07, depth=0.13, location=g2b(0.5, 0.79, 0.45))
+    _place(bpy.context.active_object, mat("shade", (0.95, 0.88, 0.7), 0.8, emit=0.8), 0, 1)
+    box((0.12, 0.03, 0.09), (0.66, 0.585, 0.62), mat("book", (0.3, 0.45, 0.3), 0.7), bevel=0.005)
+
+
+def kids_desk():
+    blue = mat("desk", (0.35, 0.6, 0.85), 0.5)
+    side = mat("desk.side", (0.3, 0.5, 0.75), 0.5)
+    box((0.9, 0.04, 0.55), (0.5, 0.6, 0.3), blue, bevel=0.015, segments=3)
+    for x in (0.08, 0.92):
+        box((0.04, 0.58, 0.5), (x, 0.29, 0.3), side, bevel=0.01)
+    box((0.8, 0.25, 0.02), (0.5, 0.45, 0.06), side, bevel=0.006)
+    # drawer cube on the right with a yellow handle
+    box((0.25, 0.2, 0.45), (0.78, 0.48, 0.3), side, bevel=0.008)
+    box((0.08, 0.02, 0.012), (0.78, 0.48, 0.53), mat("handle", (0.98, 0.8, 0.25), 0.4), bevel=0.004)
+    # open notebook, pencil cup with pencils, gum under the top
+    box((0.3, 0.012, 0.22), (0.4, 0.626, 0.35), mat("paper", (0.95, 0.95, 0.9), 0.8), bevel=0.003)
+    box((0.004, 0.014, 0.22), (0.4, 0.628, 0.35), mat("spine", (0.85, 0.3, 0.3), 0.6), bevel=0.0)
+    cyl(0.04, 0.12, (0.75, 0.68, 0.2), mat("cup", (0.9, 0.5, 0.2), 0.5))
+    for (dx, c) in ((-0.015, (0.95, 0.85, 0.2)), (0.012, (0.3, 0.6, 0.9)), (0.0, (0.9, 0.3, 0.3))):
+        cyl(0.006, 0.16, (0.75 + dx, 0.78, 0.2 + dx), mat(f"pencil{c[0]}", c, 0.5), verts=6)
+    sphere(0.025, (0.3, 0.57, 0.4), mat("gum", (0.95, 0.55, 0.7), 0.6), scale=(1, 0.5, 1))
+
+
+def tombstone():
+    stone = mat("stone", (0.6, 0.6, 0.62), 0.85)
+    base = mat("stone.dark", (0.45, 0.45, 0.47), 0.9)
+    box((0.6, 0.08, 0.35), (0.5, 0.04, 0.5), base, bevel=0.015)
+    box((0.5, 0.7, 0.14), (0.5, 0.43, 0.5), stone, bevel=0.012)
+    cyl(0.25, 0.14, (0.5, 0.78, 0.5), stone, axis="z", bevel=0.012, verts=32)
+    # carved plaque and RIP lettering bars
+    engr = mat("engraving", (0.35, 0.35, 0.37), 0.9)
+    box((0.32, 0.22, 0.01), (0.5, 0.55, 0.572), engr, bevel=0.0)
+    box((0.04, 0.12, 0.012), (0.5, 0.86, 0.572), engr, bevel=0.0)
+    box((0.1, 0.035, 0.012), (0.5, 0.88, 0.572), engr, bevel=0.0)
+    # flowers at the foot, grass tufts
+    stem = mat("stem", (0.25, 0.5, 0.2), 0.7)
+    for (x, c) in ((0.3, (0.85, 0.25, 0.4)), (0.36, (0.95, 0.85, 0.3)), (0.25, (0.9, 0.9, 0.95))):
+        cyl(0.006, 0.12, (x, 0.06, 0.72), stem, verts=6)
+        sphere(0.035, (x, 0.13, 0.72), mat(f"flower{x}", c, 0.5))
+    for (x, z) in ((0.22, 0.4), (0.8, 0.62), (0.72, 0.38)):
+        sphere(0.05, (x, 0.02, z), mat("grass", (0.3, 0.55, 0.25), 0.9), scale=(1, 0.5, 1))
+
+
+def treadmill():
+    body = mat("body", (0.15, 0.15, 0.17), 0.5, 0.3)
+    belt = mat("belt", (0.08, 0.08, 0.08), 1.0)
+    post = mat("post", (0.25, 0.25, 0.28), 0.35, 0.6)
+    # deck with side rails and a motor hood at the front (-z), rollers at both ends
+    box((0.7, 0.1, 1.7), (0.5, 0.06, 1.05), body, bevel=0.02)
+    box((0.55, 0.02, 1.5), (0.5, 0.12, 1.05), belt, bevel=0.0)
+    for x in (0.17, 0.83):
+        box((0.08, 0.03, 1.55), (x, 0.12, 1.07), mat("rail", (0.3, 0.3, 0.33), 0.5), bevel=0.008)
+    box((0.7, 0.18, 0.25), (0.5, 0.12, 0.2), mat("hood", (0.2, 0.2, 0.22), 0.4, 0.3), bevel=0.04, segments=3)
+    for z in (0.32, 1.85):
+        cyl(0.04, 0.6, (0.5, 0.08, z), post, axis="x")
+    # uprights, console and handrails
+    for x in (0.17, 0.83):
+        box((0.06, 1.1, 0.06), (x, 0.65, 0.18), post, bevel=0.01, rot_x=-8)
+        cyl(0.018, 0.4, (x, 1.0, 0.4), mat("grip", (0.1, 0.1, 0.1), 0.8), axis="z")
+    box((0.72, 0.22, 0.12), (0.5, 1.22, 0.14), body, bevel=0.03, segments=3, rot_x=-25)
+    box((0.3, 0.12, 0.01), (0.5, 1.24, 0.21), mat("screen", (0.3, 0.8, 0.5), 0.2, emit=0.7), bevel=0.0, rot_x=-25)
+    for x in (0.32, 0.68):
+        cyl(0.02, 0.01, (x, 1.2, 0.2), mat("button", (0.9, 0.3, 0.2), 0.4), axis="z", verts=12)
+
+
+def weight_bench():
+    pad = mat("pad", (0.6, 0.12, 0.12), 0.55)
+    steel = mat("steel", (0.2, 0.2, 0.22), 0.35, 0.7)
+    bar = mat("metal", (0.7, 0.7, 0.72), 0.3, 1.0)
+    plate = mat("plate", (0.1, 0.1, 0.1), 0.6, 0.2)
+    box((0.35, 0.08, 1.2), (0.5, 0.45, 1.0), pad, bevel=0.03, segments=3)
+    box((0.12, 0.04, 1.1), (0.5, 0.39, 1.0), steel, bevel=0.006)
+    # legs with T-feet
+    for z in (0.55, 1.45):
+        box((0.06, 0.38, 0.06), (0.5, 0.2, z), steel, bevel=0.008)
+        box((0.45, 0.04, 0.08), (0.5, 0.02, z), steel, bevel=0.01)
+    # rack uprights with J-hooks, base, barbell with plates and collars
+    for x in (0.12, 0.88):
+        box((0.06, 1.0, 0.06), (x, 0.5, 0.3), steel, bevel=0.01)
+        box((0.08, 0.04, 0.5), (x, 0.02, 0.3), steel, bevel=0.01)
+        box((0.05, 0.08, 0.05), (x, 0.93, 0.34), steel, bevel=0.008)
+    cyl(0.015, 0.98, (0.5, 0.97, 0.3), bar, axis="x")
+    for s in (-1, 1):
+        cyl(0.15, 0.04, (0.5 + s * 0.44, 0.97, 0.3), plate, axis="x", bevel=0.008, verts=32)
+        cyl(0.1, 0.035, (0.5 + s * 0.475, 0.97, 0.3), plate, axis="x", bevel=0.008, verts=28)
+        cyl(0.03, 0.03, (0.5 + s * 0.4, 0.97, 0.3), bar, axis="x", verts=16)
+    # dumbbell on the floor, towel on the bench end
+    cyl(0.01, 0.2, (0.85, 0.06, 1.7), bar, axis="x")
+    for dx in (-0.08, 0.08):
+        cyl(0.05, 0.04, (0.85 + dx, 0.06, 1.7), plate, axis="x", verts=6)
+    box((0.3, 0.02, 0.2), (0.5, 0.5, 1.5), mat("towel", (0.95, 0.95, 0.95), 0.9), bevel=0.008)
+
+
+def espresso_bar():
+    wood = mat("wood", (0.36, 0.25, 0.18), 0.6)
+    top = mat("top", (0.85, 0.85, 0.82), 0.3)
+    steel = mat("metal", (0.75, 0.75, 0.78), 0.22, 1.0)
+    black = mat("black", (0.1, 0.1, 0.11), 0.4)
+    box((0.95, 0.88, 0.6), (0.5, 0.44, 0.35), wood, bevel=0.015)
+    for x in (0.27, 0.73):
+        box((0.4, 0.7, 0.01), (x, 0.47, 0.655), mat("wood.panel", (0.42, 0.3, 0.21), 0.6), bevel=0.004)
+    box((0.95, 0.06, 0.03), (0.5, 0.03, 0.66), black, bevel=0.005)
+    box((1.0, 0.04, 0.65), (0.5, 0.9, 0.35), top, bevel=0.01)
+    # machine: body, top cup tray, group heads, steam wand, gauge, drip tray
+    box((0.5, 0.36, 0.33), (0.5, 1.1, 0.24), steel, bevel=0.03, segments=3)
+    box((0.46, 0.03, 0.3), (0.5, 1.3, 0.24), black, bevel=0.006)
+    for x in (0.4, 0.6):
+        cyl(0.04, 0.06, (x, 1.03, 0.43), black, verts=16)
+        box((0.025, 0.02, 0.12), (x, 1.05, 0.52), black, bevel=0.005)
+    cyl(0.008, 0.18, (0.72, 1.0, 0.43), steel, verts=8)
+    cyl(0.04, 0.01, (0.5, 1.2, 0.408), mat("gauge", (0.95, 0.95, 0.9), 0.3), axis="z", verts=20)
+    box((0.42, 0.02, 0.12), (0.5, 0.93, 0.47), black, bevel=0.004)
+    cup = mat("cup", (0.95, 0.93, 0.88), 0.3)
+    for x in (0.4, 0.6):
+        cyl(0.03, 0.06, (x, 0.97, 0.47), cup, verts=16)
+    for (x, y) in ((0.42, 1.34), (0.5, 1.34), (0.58, 1.34)):
+        cyl(0.03, 0.06, (x, y, 0.2), cup, verts=16)
+    # bean grinder with a hopper
+    box((0.12, 0.2, 0.14), (0.15, 1.02, 0.3), black, bevel=0.01)
+    bpy.ops.mesh.primitive_cone_add(vertices=16, radius1=0.04, radius2=0.07, depth=0.12, location=g2b(0.15, 1.18, 0.3))
+    _place(bpy.context.active_object, mat("hopper", (0.45, 0.3, 0.2), 0.2, alpha=0.7), 0, 1)
+
+
+def vending_machine():
+    red = mat("shell", (0.7, 0.12, 0.1), 0.35, 0.2)
+    dark = mat("dark", (0.15, 0.15, 0.16), 0.4, 0.5)
+    box((0.9, 1.8, 0.7), (0.5, 0.9, 0.4), red, bevel=0.03, segments=3)
+    box((0.86, 0.15, 0.02), (0.5, 1.68, 0.76), mat("sign", (0.98, 0.9, 0.5), 0.3, emit=0.8), bevel=0.0)
+    # window into lit shelves of snacks
+    box((0.6, 1.15, 0.05), (0.38, 1.0, 0.73), mat("interior", (0.85, 0.88, 0.9), 0.5, emit=0.4), bevel=0.0)
+    cols = ((0.9, 0.3, 0.2), (0.95, 0.8, 0.2), (0.3, 0.6, 0.9), (0.4, 0.8, 0.35), (0.8, 0.4, 0.8))
+    for r in range(5):
+        y = 0.52 + r * 0.22
+        box((0.58, 0.012, 0.06), (0.38, y, 0.74), steel_m := mat("shelf", (0.7, 0.7, 0.72), 0.3, 1.0), bevel=0.0)
+        for c in range(4):
+            box((0.1, 0.14, 0.03), (0.15 + c * 0.15, y + 0.08, 0.74), mat(f"snack{(r + c) % 5}", cols[(r + c) % 5], 0.5), bevel=0.006)
+    box((0.62, 1.17, 0.015), (0.38, 1.0, 0.765), mat("glass", (0.7, 0.85, 0.9), 0.05, alpha=0.3), bevel=0.0)
+    # keypad panel, coin slot, dispensing flap; a snack stuck mid-fall
+    box((0.18, 0.5, 0.02), (0.82, 1.25, 0.76), dark, bevel=0.006)
+    for r in range(4):
+        for c in range(3):
+            box((0.035, 0.035, 0.01), (0.77 + c * 0.05, 1.38 - r * 0.06, 0.772), mat("key", (0.85, 0.85, 0.85), 0.4), bevel=0.003)
+    box((0.08, 0.06, 0.02), (0.82, 1.1, 0.772), mat("display", (0.3, 0.9, 0.4), 0.2, emit=0.8), bevel=0.0)
+    box((0.02, 0.06, 0.01), (0.82, 1.02, 0.772), mat("slot", (0.05, 0.05, 0.05), 0.5), bevel=0.0)
+    box((0.55, 0.18, 0.04), (0.38, 0.3, 0.75), mat("flap", (0.08, 0.08, 0.09), 0.3), bevel=0.01)
+    box((0.1, 0.14, 0.03), (0.45, 0.68, 0.74), mat("stuck", (0.95, 0.8, 0.2), 0.5), bevel=0.006, rot_x=25)
+    for x in (0.1, 0.9):
+        box((0.08, 0.04, 0.6), (x, 0.02, 0.4), dark, bevel=0.008)
+
+
+def wedding_cake():
+    wood = mat("wood", (0.55, 0.36, 0.22), 0.6)
+    cloth = mat("fabric", (0.97, 0.96, 0.94), 0.9)
+    box((0.7, 0.04, 0.7), (0.5, 0.7, 0.5), wood, bevel=0.012)
+    for (x, z) in ((0.2, 0.2), (0.8, 0.2), (0.2, 0.8), (0.8, 0.8)):
+        box((0.05, 0.68, 0.05), (x, 0.34, z), wood, bevel=0.008)
+    box((0.72, 0.015, 0.72), (0.5, 0.727, 0.5), cloth, bevel=0.004)
+    for z in (0.135, 0.865):
+        box((0.72, 0.15, 0.01), (0.5, 0.66, z), cloth, bevel=0.0)
+    # cake stand, three leaning tiers with piped trim, strawberry and a little topper
+    cyl(0.04, 0.06, (0.5, 0.765, 0.5), mat("silver", (0.8, 0.8, 0.82), 0.2, 1.0))
+    cyl(0.28, 0.012, (0.5, 0.8, 0.5), mat("silver", (0.8, 0.8, 0.82), 0.2, 1.0), verts=32)
+    tiers = ((0.25, 0.17, 0.5, (0.97, 0.95, 0.9)), (0.18, 0.15, 0.515, (0.97, 0.93, 0.92)), (0.11, 0.13, 0.535, (0.98, 0.9, 0.92)))
+    y = 0.806
+    trim = mat("trim", (0.95, 0.75, 0.8), 0.6)
+    for (r, h, x, c) in tiers:
+        cyl(r, h, (x, y + h / 2, 0.5), mat(f"tier{r}", c, 0.7), bevel=0.02, verts=32)
+        bpy.ops.mesh.primitive_torus_add(major_radius=r, minor_radius=0.012, location=g2b(x, y + 0.01, 0.5))
+        _place(bpy.context.active_object, trim, 0, 1)
+        y += h
+    sphere(0.035, (0.535, y + 0.03, 0.5), mat("berry", (0.85, 0.2, 0.3), 0.4))
+    for (dx, c) in ((-0.03, (0.1, 0.1, 0.1)), (0.03, (0.97, 0.97, 0.97))):
+        cyl(0.012, 0.08, (0.535 + dx, y + 0.04, 0.45), mat(f"topper{c[0]}", c, 0.5), verts=10)
+        sphere(0.012, (0.535 + dx, y + 0.095, 0.45), mat("skin", (0.9, 0.75, 0.6), 0.6))
+
+
 BUILDERS = {
     f.__name__: f
     for f in (
         fridge_basic, stove_basic, counter_basic, kitchen_sink, toilet_basic, bed_single, bed_double, sofa_basic, dining_chair, dining_table,
         armchair, tv_basic, bookshelf, computer_desk, shower_basic, bathtub_basic, crib, floor_lamp,
         plant_potted, painting, trash_can, mirror, toy_box, exercise_bike,
+        chess_table, rug, end_table, kids_desk, tombstone, treadmill, weight_bench, espresso_bar, vending_machine,
+        wedding_cake,
     )
 }
 
