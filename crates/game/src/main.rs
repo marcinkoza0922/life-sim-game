@@ -5,7 +5,7 @@
 //! Home focus · L story log · F1 inspector · F2 autonomy · F3 overlays · F4 profiler · F8 settings ·
 //! F12 screenshot · Esc cancel.
 //!
-//! Ctrl+S save · Ctrl+O load · T roofs · M mute voices.
+//! Ctrl+S quick save · Ctrl+O quick load · ☰ Game → Saves… · `--continue` resumes the newest save · T roofs · M mute voices.
 //!
 //! Test hooks: `--seed N --minutes M --screenshot-after FRAMES PATH --mode live|buy|build --level L
 //! --debug --size WxH --cam YAW,PITCH,DIST --menu-on OBJECT_ID --speed I --load SAVE --creator --walls up|cutaway|down`
@@ -38,12 +38,14 @@ struct Args {
     menu_on: Option<String>,
     speed: usize,
     load: Option<PathBuf>,
+    /// Resume the newest save in `saves/`.
+    resume: bool,
     creator: bool,
     walls: Option<scene::WallMode>,
 }
 
 fn parse_args() -> Args {
-    let mut a = Args { seed: 7, minutes: 0, screenshot_after: None, mode: Mode::Live, level: 0, debug: false, size: (1600, 960), cam: None, menu_on: None, speed: 0, load: None, creator: false, walls: None };
+    let mut a = Args { seed: 7, minutes: 0, screenshot_after: None, mode: Mode::Live, level: 0, debug: false, size: (1600, 960), cam: None, menu_on: None, speed: 0, load: None, resume: false, creator: false, walls: None };
     let mut it = std::env::args().skip(1);
     while let Some(x) = it.next() {
         match x.as_str() {
@@ -73,6 +75,7 @@ fn parse_args() -> Args {
             "--menu-on" => a.menu_on = it.next(),
             "--speed" => a.speed = it.next().unwrap().parse().unwrap(),
             "--load" => a.load = it.next().map(PathBuf::from),
+            "--continue" => a.resume = true,
             "--creator" => a.creator = true,
             "--walls" => {
                 a.walls = Some(match it.next().unwrap().as_str() {
@@ -123,7 +126,17 @@ struct App {
 
 impl App {
     fn new(args: Args) -> App {
-        let mut sim = match &args.load {
+        let load = args.load.clone().or_else(|| {
+            if !args.resume {
+                return None;
+            }
+            let newest = game::saves::list().into_iter().next();
+            if newest.is_none() {
+                eprintln!("--continue: no saves found, starting a new game");
+            }
+            newest.map(|s| s.path)
+        });
+        let mut sim = match &load {
             Some(p) => sim::Sim::load_from_file(p, sim::data::GameData::embedded()).unwrap_or_else(|e| {
                 eprintln!("couldn't load {}: {e}", p.display());
                 std::process::exit(1)
@@ -252,7 +265,12 @@ impl App {
                 let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
                 g.screenshot = Some(PathBuf::from(format!("screenshots/lifesim-{t}.png")));
             }
-            KeyCode::F10 => event_loop.exit(),
+            KeyCode::F10 => {
+                if g.creator.is_none() {
+                    g.autosave();
+                }
+                event_loop.exit()
+            }
             _ => {}
         }
     }
@@ -345,6 +363,9 @@ impl App {
             }
         }
         self.game.update(dt);
+        if self.args.screenshot_after.is_none() {
+            self.game.autosave_if_new_day();
+        }
         // terrain brush repeats while the mouse is held
         if let (Some(last), Some(n)) = (self.game.sculpting, self.ndc())
             && self.game.time - last > 0.08 {
@@ -566,7 +587,12 @@ impl ApplicationHandler for App {
         let wants_kb = gfx.egui_ctx.egui_wants_keyboard_input();
         let over_ui = gfx.egui_ctx.is_pointer_over_egui();
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => {
+                if self.args.screenshot_after.is_none() && self.game.creator.is_none() {
+                    self.game.autosave();
+                }
+                event_loop.exit()
+            }
             WindowEvent::Resized(s) => {
                 gfx.config.width = s.width.max(1);
                 gfx.config.height = s.height.max(1);

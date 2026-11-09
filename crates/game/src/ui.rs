@@ -72,6 +72,9 @@ pub fn draw(ui: &mut Ui, g: &mut Game, cx: &UiCtx) {
     if g.show_neighborhood {
         neighborhood_window(ui, g);
     }
+    if g.show_saves {
+        saves_window(ui, g);
+    }
     household_panel(ui, g);
     match g.mode {
         Mode::Live => {
@@ -145,13 +148,17 @@ fn top_bar(ui: &mut Ui, g: &mut Game) {
             }
             ui.separator();
             ui.menu_button("☰ Game", |ui| {
-                if ui.button("Save (Ctrl+S)").clicked() {
+                if ui.button("Quick save (Ctrl+S)").clicked() {
                     g.save_to(std::path::Path::new(QUICKSAVE));
                     ui.close();
                 }
                 let has_save = std::path::Path::new(QUICKSAVE).exists();
-                if ui.add_enabled(has_save, egui::Button::new("Load (Ctrl+O)")).clicked() {
+                if ui.add_enabled(has_save, egui::Button::new("Quick load (Ctrl+O)")).clicked() {
                     g.load_from(std::path::Path::new(QUICKSAVE));
+                    ui.close();
+                }
+                if ui.button("Saves…").clicked() {
+                    g.show_saves = true;
                     ui.close();
                 }
                 ui.separator();
@@ -273,6 +280,71 @@ enum HoodAction {
     Move(usize),
     NewHousehold,
     Invite(sim::Entity),
+}
+
+fn saves_window(ui: &mut Ui, g: &mut Game) {
+    use crate::saves;
+    enum Act {
+        Save(String),
+        Load(std::path::PathBuf),
+        Delete(std::path::PathBuf),
+    }
+    let mut open = true;
+    let mut act = None;
+    egui::Window::new("Saves").open(&mut open).default_width(380.0).show(ui.ctx(), |ui| {
+        ui.horizontal(|ui| {
+            ui.label("Name:");
+            ui.add(egui::TextEdit::singleline(&mut g.save_name).hint_text("my save").desired_width(180.0));
+            let name = saves::sanitize(&g.save_name);
+            if ui.add_enabled(name.is_some(), egui::Button::new("Save")).clicked()
+                && let Some(n) = name
+            {
+                act = Some(Act::Save(n));
+            }
+        });
+        ui.separator();
+        let slots = saves::list();
+        if slots.is_empty() {
+            ui.label(RichText::new("No saves yet.").weak());
+        }
+        egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+            for s in &slots {
+                ui.horizontal(|ui| {
+                    ui.label(if s.name == saves::AUTOSAVE { format!("{} (auto)", s.name) } else { s.name.clone() });
+                    ui.label(RichText::new(saves::age_label(s.modified)).weak().small());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("🗑").on_hover_text("Delete").clicked() {
+                            act = Some(Act::Delete(s.path.clone()));
+                        }
+                        if ui.small_button("Load").clicked() {
+                            act = Some(Act::Load(s.path.clone()));
+                        }
+                        if s.name != saves::AUTOSAVE && ui.small_button("Overwrite").clicked() {
+                            act = Some(Act::Save(s.name.clone()));
+                        }
+                    });
+                });
+            }
+        });
+    });
+    if !open {
+        g.show_saves = false;
+    }
+    match act {
+        Some(Act::Save(n)) => {
+            g.save_to(&saves::path_for(&n));
+            g.save_name.clear();
+        }
+        Some(Act::Load(p)) => {
+            g.load_from(&p);
+            g.show_saves = false;
+        }
+        Some(Act::Delete(p)) => match std::fs::remove_file(&p) {
+            Ok(()) => g.say(format!("Deleted {}", p.display())),
+            Err(e) => g.say(format!("Delete failed: {e}")),
+        },
+        None => {}
+    }
 }
 
 fn neighborhood_window(ui: &mut Ui, g: &mut Game) {

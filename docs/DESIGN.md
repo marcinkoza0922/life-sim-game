@@ -381,6 +381,9 @@ Added since:
 - **Saves:** whole-world RON snapshots with exact entity handles (`World::spawn_empty_at`); object defs by
   string id. Save → load → continue is bit-identical to never saving (tested). Systems that consume
   randomness iterate in sorted entity order so ECS storage layout never changes outcomes.
+  **Slots:** ☰ Game → Saves… lists `saves/*.ron` (save under a name, overwrite, load, delete); Ctrl+S/O stay the
+  quicksave. The game autosaves to `saves/autosave.ron` at each new sim day and on quit, and `lifesim --continue`
+  resumes the newest save.
 - **Roofs:** gable/hip/flat roofs on rectangles, auto-roof (greedy rectangles over top-floor rooms), roof tool,
   procedural meshes with overhangs and gable-end walls. **Terrain:** corner heightmap with raise/lower/
   flatten/smooth brush; floors/walls flatten and lock their corners; objects need flat ground; steep steps block nav.

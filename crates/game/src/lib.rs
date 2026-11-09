@@ -6,6 +6,7 @@ pub mod camera;
 pub mod creator;
 pub mod lotmesh;
 pub mod peons;
+pub mod saves;
 pub mod scene;
 pub mod state;
 pub mod ui;
