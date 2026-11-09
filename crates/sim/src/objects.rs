@@ -19,6 +19,9 @@ pub struct ObjectInstance {
     pub slot_users: Vec<Option<hearth_ecs::Entity>>,
     pub uses: u32,
     pub price_paid: i64,
+    /// Height of the ground it stands on above the level's floor (outdoor terrain).
+    #[serde(default)]
+    pub ground: f32,
 }
 
 /// Footprint size after rotation.
@@ -53,6 +56,7 @@ impl ObjectInstance {
             slot_users: vec![None; def.slots.len()],
             uses: 0,
             price_paid: def.price,
+            ground: 0.0,
         }
     }
 
@@ -61,7 +65,7 @@ impl ObjectInstance {
         let c = Vec2::new(def.footprint.0 as f32, def.footprint.1 as f32) * 0.5;
         let rs = rotated_size(def, self.rot).as_vec2() * 0.5;
         let q = rotate(Vec2::new(p.x, p.z) - c, self.rot) + rs + self.tile.as_vec2();
-        Vec3::new(q.x, p.y + self.level as f32 * LEVEL_HEIGHT, q.y)
+        Vec3::new(q.x, p.y + self.level as f32 * LEVEL_HEIGHT + self.ground, q.y)
     }
 
     pub fn yaw(&self) -> f32 {

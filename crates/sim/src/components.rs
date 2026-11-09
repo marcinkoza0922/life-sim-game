@@ -217,6 +217,7 @@ pub enum ActionKind {
     Respond { initiator: Entity, social: usize, minutes: u32 },
     GoTo { level: i32, tile: IVec2 },
     GoToWork,
+    GoToSchool,
     /// Collapse on the floor from exhaustion.
     PassOut,
     /// Stand around / fidget, optionally muttering.
@@ -234,7 +235,15 @@ pub struct QueuedAction {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Phase {
     Start,
-    Walking { path: Vec<Vec3>, idx: usize, slot: Option<usize>, retries: u8 },
+    Walking {
+        path: Vec<Vec3>,
+        idx: usize,
+        slot: Option<usize>,
+        retries: u8,
+        /// Minutes spent waiting for someone to get out of the way.
+        #[serde(default)]
+        blocked: u8,
+    },
     Performing { slot: Option<usize>, elapsed: u32 },
 }
 
@@ -291,6 +300,9 @@ pub struct AtWork {
     pub until: u64,
     pub event_at: u64,
     pub event_done: bool,
+    /// At school rather than at a job.
+    #[serde(default)]
+    pub school: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -309,3 +321,66 @@ pub struct Dead {
 /// Marks a peon as part of the player's household.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Member;
+
+/// Inheritable genotype. [`Appearance`] is the phenotype (elders go grey; clothes aren't genetic).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Genes {
+    pub skin: [f32; 3],
+    pub hair: [f32; 3],
+    pub eyes: [f32; 3],
+    /// Multiplier on stage height (0.9–1.1).
+    pub height: f32,
+    /// 0 = slim, 1 = heavy.
+    pub build: f32,
+}
+
+/// Enrolled in school (Child and Teen).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Student {
+    /// -100..100. Report cards are derived from this.
+    pub grade: f32,
+    /// Day index of the last school day attended or skipped (avoid double scheduling).
+    pub last_school_day: Option<u64>,
+    /// Homework done since the last school day.
+    pub homework_done: bool,
+}
+
+impl Student {
+    pub fn new() -> Self {
+        Student { grade: 0.0, last_school_day: None, homework_done: false }
+    }
+    pub fn letter(&self) -> &'static str {
+        match self.grade {
+            g if g >= 60.0 => "A",
+            g if g >= 25.0 => "B",
+            g if g >= -10.0 => "C",
+            g if g >= -50.0 => "D",
+            _ => "F",
+        }
+    }
+}
+
+impl Default for Student {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Expecting a baby with `other` (who may since have died or left).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Pregnant {
+    pub other: Entity,
+    pub since: u64,
+    pub due: u64,
+}
+
+/// A dead peon who lingers as a ghost, bound to their grave marker object.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Ghost {
+    pub grave: Entity,
+    /// Visible on the lot until this tick (0 = not manifested).
+    pub visible_until: u64,
+    /// Where the ghost is drifting to while manifested.
+    pub drift_to: Option<Vec3>,
+    pub next_prank: u64,
+}

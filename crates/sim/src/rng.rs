@@ -43,7 +43,7 @@ impl SimRng {
     }
 
     pub fn below(&mut self, n: usize) -> usize {
-        if n == 0 { 0 } else { (self.next_u32() as u64 * n as u64 >> 32) as usize }
+        if n == 0 { 0 } else { ((self.next_u32() as u64 * n as u64) >> 32) as usize }
     }
 
     pub fn chance(&mut self, p: f32) -> bool {

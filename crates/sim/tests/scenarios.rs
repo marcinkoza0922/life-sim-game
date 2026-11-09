@@ -58,11 +58,10 @@ fn player_order_is_carried_out() {
     for _ in 0..120 {
         sim.tick();
         let q = sim.world.get::<ActionQueue>(adult).unwrap();
-        if let Some(c) = &q.current {
-            if matches!(c.phase, Phase::Performing { .. }) && c.action.label.contains("Shower") {
+        if let Some(c) = &q.current
+            && matches!(c.phase, Phase::Performing { .. }) && c.action.label.contains("Shower") {
                 showered = true;
             }
-        }
     }
     assert!(showered, "peon should walk to the shower and use it");
     assert!(sim.world.get::<Needs>(adult).unwrap().get(Need::Hygiene) > 60.0);

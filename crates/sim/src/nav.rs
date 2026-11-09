@@ -68,6 +68,11 @@ impl NavField {
 
     /// Flood from `start`. The start tile itself may be blocked (e.g. peon standing at an object).
     pub fn flood(lot: &Lot, start: NavNode, max_dist: f32) -> NavField {
+        Self::flood_avoiding(lot, start, max_dist, &[])
+    }
+
+    /// Like [`NavField::flood`], treating `avoid` tiles as blocked (e.g. someone standing there).
+    pub fn flood_avoiding(lot: &Lot, start: NavNode, max_dist: f32, avoid: &[NavNode]) -> NavField {
         let levels = (MAX_LEVEL - MIN_LEVEL + 1) as usize;
         let n = (lot.width * lot.depth) as usize * levels;
         let mut f = NavField {
@@ -102,7 +107,7 @@ impl NavField {
                         continue;
                     }
                     let nt = cur.tile + IVec2::new(dx, dz);
-                    if lot.can_step(cur.level, cur.tile, nt) {
+                    if lot.can_step(cur.level, cur.tile, nt) && !avoid.contains(&NavNode::new(cur.level, nt)) {
                         let cost = if dx != 0 && dz != 0 { std::f32::consts::SQRT_2 } else { 1.0 };
                         relax(&mut f, NavNode::new(cur.level, nt), cost);
                     }
@@ -182,7 +187,7 @@ pub fn waypoints(lot: &Lot, path: &[NavNode]) -> Vec<Vec3> {
                 }
             }
         }
-        out.push(n.center());
+        out.push(lot.ground_center(n.level, n.tile));
     }
     out
 }

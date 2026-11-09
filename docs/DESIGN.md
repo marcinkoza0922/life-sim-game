@@ -360,6 +360,31 @@ Built in from day one:
   catalog, placement ghosts, rotation, selling.
 - Tooling: simctl run/trace/check/render; in-game inspector, autonomy, overlays, profiler, settings.
 
-**Known gaps / next up:** roofs & terrain tools; pregnancy, genetics and ghosts; school for kids;
-the character creator (needs rigged glTF base meshes); saves; audio (gibberish voices); multi-tile
-object picking polish; route-around for peons blocking each other; neighborhoods.
+Added since:
+
+- **School:** Child/Teen students take the bus Moonday–Fryday 8:00–14:00 (breakfast and lunch included),
+  grades from mood + homework (kids' desk), truancy, Fryday report cards, graduation at Young Adult.
+- **Family:** "Try for Baby" (either partner may carry), 2-day pregnancy (× lifespan scale), births with
+  twins, adoption agency, household cap of 8. **Genetics:** `Genes` (skin, hair, eyes, height, build)
+  separate from rendered `Appearance`; skin blends, hair/eyes pick a parent (darker hair slightly
+  dominant), rare throwbacks; newborns usually inherit a parent's trait.
+- **Ghosts:** the dead get a tombstone in the yard (Mourn / Talk to Grave) and may haunt at night:
+  translucent, drifting through walls, smearing ectoplasm, spooking the living. Selling the grave lets them move on.
+- **Crowding:** walkers look one stride ahead; they wait for, then route around, people standing in the way
+  (squeezing past after ~15 min), and keep right when passing someone head-on.
+- **Saves:** whole-world RON snapshots with exact entity handles (`World::spawn_empty_at`); object defs by
+  string id. Save → load → continue is bit-identical to never saving (tested). Systems that consume
+  randomness iterate in sorted entity order so ECS storage layout never changes outcomes.
+- **Roofs:** gable/hip/flat roofs on rectangles, auto-roof (greedy rectangles over top-floor rooms), roof tool,
+  procedural meshes with overhangs and gable-end walls. **Terrain:** corner heightmap with raise/lower/
+  flatten/smooth brush; floors/walls flatten and lock their corners; objects need flat ground; steep steps block nav.
+- **Voices:** formant-synthesized gibberish (no assets) via rodio, pitch by life stage, voiced once per bubble.
+- **Create-a-Household:** names, stages, genes/looks, traits, quirk, axes (25-point budget), careers, live
+  line-up preview on the lawn, Move In to the starter house.
+- **Neighborhood:** townies who live on other lots drop by during the day (or when invited), socialize,
+  raid the fridge and go home; neighborhood window lists neighbors and relationships.
+
+**Known gaps / next up:** rigged glTF base meshes per life stage (the creator currently drives the greybox
+bodies; needs a skinned-mesh path in `hearth_render` plus Blender-authored assets); playable multi-lot
+neighborhoods (switching households, community lots) — townies are the first step; multi-tile object
+picking polish; hygiene still occasionally bottoms out in long headless runs (warning, not a failure).

@@ -630,17 +630,15 @@ impl GameData {
             }
             for i in &o.interactions {
                 for out in &i.outcomes {
-                    if let Outcome::Moodlet { id, .. } = out {
-                        if !moodlet(id) {
+                    if let Outcome::Moodlet { id, .. } = out
+                        && !moodlet(id) {
                             errs.push(format!("{}.{}: unknown moodlet {id}", o.id, i.id));
                         }
-                    }
                 }
-                if let Some(t) = &i.requires_trait {
-                    if !has_trait(t) {
+                if let Some(t) = &i.requires_trait
+                    && !has_trait(t) {
                         errs.push(format!("{}.{}: unknown trait {t}", o.id, i.id));
                     }
-                }
                 for &s in &i.slots {
                     if s >= o.slots.len() {
                         errs.push(format!("{}.{}: slot {s} out of range", o.id, i.id));
@@ -659,20 +657,18 @@ impl GameData {
             }
         }
         for s in &self.socials {
-            if let Some(t) = &s.requires_trait {
-                if !has_trait(t) {
+            if let Some(t) = &s.requires_trait
+                && !has_trait(t) {
                     errs.push(format!("social {}: unknown trait {t}", s.id));
                 }
-            }
         }
         for c in &self.careers {
             let check = |effs: &Vec<CareerEffect>, errs: &mut Vec<String>| {
                 for e in effs {
-                    if let CareerEffect::Moodlet(m) = e {
-                        if !moodlet(m) {
+                    if let CareerEffect::Moodlet(m) = e
+                        && !moodlet(m) {
                             errs.push(format!("career {}: unknown moodlet {m}", c.id));
                         }
-                    }
                 }
             };
             for ev in &c.events {

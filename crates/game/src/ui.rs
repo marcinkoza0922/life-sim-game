@@ -46,6 +46,30 @@ fn kind_color(k: LogKind) -> Color32 {
 
 pub fn draw(ui: &mut Ui, g: &mut Game, cx: &UiCtx) {
     top_bar(ui, g);
+    if let Some(c) = g.creator.as_mut() {
+        match crate::creator::window(ui, c) {
+            crate::creator::CreatorAction::MoveIn => {
+                let seed = g.sim.clock().tick.wrapping_mul(31) ^ 0xbeef;
+                match g.creator.as_ref().unwrap().move_in(seed) {
+                    Ok(mut sim) => {
+                        sim::townies::populate(&mut sim.world, 5);
+                        g.replace_sim(sim);
+                        g.creator = None;
+                        g.say("Welcome home!");
+                    }
+                    Err(e) => g.creator.as_mut().unwrap().error = Some(e),
+                }
+            }
+            crate::creator::CreatorAction::Cancel => g.creator = None,
+            crate::creator::CreatorAction::None => {}
+        }
+        labels(ui, cx);
+        toasts(ui, g, cx);
+        return;
+    }
+    if g.show_neighborhood {
+        neighborhood_window(ui, g);
+    }
     household_panel(ui, g);
     match g.mode {
         Mode::Live => {
@@ -91,6 +115,30 @@ fn top_bar(ui: &mut Ui, g: &mut Game) {
                 }
             }
             ui.separator();
+            ui.menu_button("☰ Game", |ui| {
+                if ui.button("Save (Ctrl+S)").clicked() {
+                    g.save_to(std::path::Path::new(QUICKSAVE));
+                    ui.close();
+                }
+                let has_save = std::path::Path::new(QUICKSAVE).exists();
+                if ui.add_enabled(has_save, egui::Button::new("Load (Ctrl+O)")).clicked() {
+                    g.load_from(std::path::Path::new(QUICKSAVE));
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button("New household…").clicked() {
+                    g.open_creator();
+                    ui.close();
+                }
+                if ui.button("Neighborhood…").clicked() {
+                    g.show_neighborhood = true;
+                    ui.close();
+                }
+                ui.separator();
+                ui.checkbox(&mut g.show_roofs, "Show roofs (T)");
+                ui.checkbox(&mut g.mute, "Mute voices (M)");
+            });
+            ui.separator();
             if ui.button("⬇").on_hover_text("Level down (PgDn)").clicked() {
                 g.set_level(g.level - 1);
             }
@@ -118,12 +166,11 @@ fn top_bar(ui: &mut Ui, g: &mut Game) {
             if g.mode != Mode::Live {
                 ui.label(RichText::new("(time paused while building)").weak());
             }
-            if let Some((msg, t)) = &g.status {
-                if g.time - t < 4.0 {
+            if let Some((msg, t)) = &g.status
+                && g.time - t < 4.0 {
                     ui.separator();
                     ui.label(RichText::new(msg).color(Color32::YELLOW));
                 }
-            }
         });
     });
 }
@@ -133,6 +180,9 @@ fn household_panel(ui: &mut Ui, g: &mut Game) {
         ui.heading("Household");
         for e in g.sim.peons() {
             let w = &g.sim.world;
+            if !w.has::<Member>(e) {
+                continue;
+            }
             let Some(p) = w.get::<Peon>(e).map(|p| p.clone()) else { continue };
             let dead = w.has::<Dead>(e);
             let away = w.has::<AtWork>(e);
@@ -142,7 +192,10 @@ fn household_panel(ui: &mut Ui, g: &mut Game) {
             if dead {
                 text = format!("✝ {}\n(deceased)", p.first);
             } else if away {
-                text.push_str(" · at work");
+                let school = w.get::<AtWork>(e).is_some_and(|a| a.school);
+                text.push_str(if school { " · at school" } else { " · at work" });
+            } else if w.has::<Pregnant>(e) {
+                text.push_str(" · 🍼");
             }
             let selected = g.selected == Some(e);
             let resp = ui.add_enabled(!dead, egui::Button::selectable(selected, text).min_size(egui::vec2(135.0, 36.0)));
@@ -163,7 +216,69 @@ fn household_panel(ui: &mut Ui, g: &mut Game) {
             }
             ui.add_space(4.0);
         }
+        ui.separator();
+        ui.menu_button("Adopt…", |ui| {
+            ui.label(RichText::new(format!("Agency fee ${}", sim::family::ADOPTION_FEE)).small());
+            for s in [LifeStage::Infant, LifeStage::Toddler, LifeStage::Child, LifeStage::Teen] {
+                if ui.button(s.label()).clicked() {
+                    match g.sim.adopt(s) {
+                        Ok(kid) => {
+                            let name = g.sim.name(kid);
+                            g.say(format!("{name} joined the family!"));
+                        }
+                        Err(e) => g.say(e),
+                    }
+                    ui.close();
+                }
+            }
+        });
     });
+}
+
+fn neighborhood_window(ui: &mut Ui, g: &mut Game) {
+    let mut open = true;
+    egui::Window::new("Neighborhood").open(&mut open).default_width(360.0).show(ui.ctx(), |ui| {
+        let hood = g.sim.world.res::<sim::townies::Neighborhood>().clone();
+        ui.label(RichText::new(&hood.name).strong());
+        ui.label(RichText::new("Townies drop by now and then. Make friends (or enemies) with the neighbors.").small().weak());
+        ui.separator();
+        let tick = g.sim.clock().tick;
+        let mut invite = None;
+        for (e, t) in sim::townies::townies(&g.sim.world) {
+            let w = &g.sim.world;
+            let Some(p) = w.get::<Peon>(e).map(|p| p.full_name()) else { continue };
+            let here = !w.has::<AtWork>(e) && !w.has::<Dead>(e);
+            let status = if w.has::<Dead>(e) {
+                "passed on".to_string()
+            } else if here {
+                "visiting now".to_string()
+            } else {
+                let mins = w.get::<AtWork>(e).map(|a| a.until.saturating_sub(tick)).unwrap_or(0);
+                format!("next visit in ~{}h", mins / 60)
+            };
+            let best = g.sim.living_peons().into_iter().filter(|m| w.has::<Member>(*m)).map(|m| w.res::<Relationships>().get(m, e)).max_by(|a, b| a.friendship.total_cmp(&b.friendship));
+            let rel = best.map(|r| r.label()).unwrap_or("Stranger");
+            ui.horizontal(|ui| {
+                ui.label(format!("{p} — {} ({})", t.address, status));
+                ui.label(RichText::new(rel).weak());
+                if !here && !w.has::<Dead>(e) && ui.small_button("Invite over").clicked() {
+                    invite = Some(e);
+                }
+            });
+        }
+        if let Some(e) = invite {
+            sim::townies::invite(&mut g.sim.world, e);
+            g.say("Invitation sent. They'll be right over.");
+        }
+        ui.separator();
+        ui.label(RichText::new("Lots").strong());
+        for l in &hood.lots {
+            ui.label(format!("{} — {}", l.address, l.residents));
+        }
+    });
+    if !open {
+        g.show_neighborhood = false;
+    }
 }
 
 fn peon_panel(ui: &mut Ui, g: &mut Game, e: sim::Entity) {
@@ -182,8 +297,37 @@ fn peon_panel(ui: &mut Ui, g: &mut Game, e: sim::Entity) {
             let brain_fw = w.get::<Brain>(e).and_then(|b| b.free_will);
             ui.heading(p.full_name());
             ui.label(format!("{} · day {:.1} of {:.0} in stage", age.stage.label(), age.days_in_stage, age.stage_len));
-            if w.has::<AtWork>(e) {
-                ui.label(RichText::new("At work").italics());
+            if let Some(a) = w.get::<AtWork>(e) {
+                ui.label(RichText::new(if a.school { "At school" } else { "At work" }).italics());
+            }
+            if let Some(pg) = w.get::<Pregnant>(e) {
+                let now = g.sim.clock().tick;
+                let other = w.get::<Peon>(pg.other).map(|p| p.first.clone()).unwrap_or_else(|| "someone".into());
+                ui.label(RichText::new(format!("🍼 Expecting with {other} — due in {:.0}h", pg.due.saturating_sub(now) as f32 / 60.0)).color(Color32::from_rgb(250, 190, 220)));
+            }
+            if let Some(st) = w.get::<Student>(e) {
+                ui.label(format!("School grade: {} {}", st.letter(), if st.homework_done { "· homework done ✔" } else { "· homework due" }));
+            }
+            if let Some(gn) = w.get::<Genes>(e) {
+                let c = |x: [f32; 3]| Color32::from_rgb((x[0] * 255.0) as u8, (x[1] * 255.0) as u8, (x[2] * 255.0) as u8);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Genes:").small());
+                    for (name, col) in [("skin", gn.skin), ("hair", gn.hair), ("eyes", gn.eyes)] {
+                        let (rect, resp) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
+                        ui.painter().rect_filled(rect, 2.0, c(col));
+                        resp.on_hover_text(name);
+                    }
+                    ui.label(RichText::new(format!("height {:.2} · build {:.2}", gn.height, gn.build)).small());
+                });
+            }
+            if let Some(f) = w.get::<Family>(e) {
+                let names = |v: &[sim::Entity]| v.iter().filter_map(|x| w.get::<Peon>(*x).map(|p| p.first.clone())).collect::<Vec<_>>().join(", ");
+                if !f.parents.is_empty() {
+                    ui.label(RichText::new(format!("Parents: {}", names(&f.parents))).small());
+                }
+                if !f.children.is_empty() {
+                    ui.label(RichText::new(format!("Children: {}", names(&f.children))).small());
+                }
             }
             ui.horizontal(|ui| {
                 ui.label("Mood");
@@ -225,11 +369,10 @@ fn peon_panel(ui: &mut Ui, g: &mut Game, e: sim::Entity) {
             ui.horizontal(|ui| {
                 ui.label("Free will:");
                 for (fw, name) in [(None, "Default"), (Some(FreeWill::Off), "Off"), (Some(FreeWill::Low), "Low"), (Some(FreeWill::Full), "Full")] {
-                    if ui.selectable_label(brain_fw == fw, name).clicked() {
-                        if let Some(mut b) = g.sim.world.get_mut::<Brain>(e) {
+                    if ui.selectable_label(brain_fw == fw, name).clicked()
+                        && let Some(mut b) = g.sim.world.get_mut::<Brain>(e) {
                             b.free_will = fw;
                         }
-                    }
                 }
             });
 
@@ -239,7 +382,7 @@ fn peon_panel(ui: &mut Ui, g: &mut Game, e: sim::Entity) {
                 let now = g.sim.clock().tick;
                 for m in &mood.moodlets {
                     let col = if m.value >= 0.0 { Color32::from_rgb(130, 220, 130) } else { Color32::from_rgb(240, 120, 110) };
-                    ui.label(RichText::new(format!("{:+.0} {} ({}h)", m.value, m.name, (m.until.saturating_sub(now) + 59) / 60)).color(col));
+                    ui.label(RichText::new(format!("{:+.0} {} ({}h)", m.value, m.name, m.until.saturating_sub(now).div_ceil(60))).color(col));
                 }
             }
 
@@ -381,6 +524,9 @@ fn build_panel(ui: &mut Ui, g: &mut Game) {
             (Tool::DeleteFloor, "Delete floor".to_string()),
             (Tool::Stairs { dir: sim::lot::Dir4::PosZ }, format!("Stairs (${COST_STAIRS})")),
             (Tool::Basement, format!("Dig basement (${COST_DIG}/tile, basement levels only)")),
+            (Tool::Roof { kind: sim::lot::RoofKind::Gable }, format!("Roof (${COST_ROOF_TILE}/tile, on the level you're viewing)")),
+            (Tool::DeleteRoof, "Delete roof".to_string()),
+            (Tool::Terrain { brush: sim::lot::TerrainBrush::Raise, radius: 2.0 }, format!("Terrain (${COST_TERRAIN}/corner, hold to sculpt)")),
         ];
         for (t, label) in tools {
             let sel = std::mem::discriminant(&g.tool) == std::mem::discriminant(&t);
@@ -389,6 +535,40 @@ fn build_panel(ui: &mut Ui, g: &mut Game) {
                 g.drag_start = None;
             }
         }
+        match &mut g.tool {
+            Tool::Roof { kind } => {
+                ui.horizontal(|ui| {
+                    for (k, name) in [(sim::lot::RoofKind::Gable, "Gable"), (sim::lot::RoofKind::Hip, "Hip"), (sim::lot::RoofKind::Flat, "Flat")] {
+                        if ui.selectable_label(*kind == k, name).clicked() {
+                            *kind = k;
+                        }
+                    }
+                });
+                ui.add(egui::Slider::new(&mut g.roof_pitch, 0.2..=1.0).text("pitch"));
+            }
+            Tool::Terrain { brush, radius } => {
+                ui.horizontal(|ui| {
+                    use sim::lot::TerrainBrush as B;
+                    for (b, name) in [(B::Raise, "Raise"), (B::Lower, "Lower"), (B::Flatten, "Flatten"), (B::Smooth, "Smooth")] {
+                        if ui.selectable_label(*brush == b, name).clicked() {
+                            *brush = b;
+                        }
+                    }
+                });
+                ui.add(egui::Slider::new(radius, 0.5..=6.0).text("radius"));
+                ui.label(RichText::new("Ground under floors, walls and furniture stays put.").small().weak());
+            }
+            _ => {}
+        }
+        ui.horizontal(|ui| {
+            for (k, name) in [(sim::lot::RoofKind::Gable, "Auto-roof: gable"), (sim::lot::RoofKind::Hip, "hip"), (sim::lot::RoofKind::Flat, "flat")] {
+                if ui.button(name).on_hover_text("Replace all roofs with automatic ones over the top floors").clicked() {
+                    let pitch = g.roof_pitch;
+                    let n = g.sim.lot_mut().auto_roof(k, pitch);
+                    g.say(format!("{n} roof(s) built."));
+                }
+            }
+        });
         ui.separator();
         ui.label("Wall covering");
         ui.horizontal(|ui| {
@@ -647,20 +827,17 @@ fn debug_windows(ui: &mut Ui, g: &mut Game, cx: &UiCtx) {
                 if ui.button("+$10,000").clicked() {
                     g.sim.world.res_mut::<Household>().funds += 10_000;
                 }
-                if ui.button("Max needs (selected)").clicked() {
-                    if let Some(e) = g.selected {
-                        if let Some(mut n) = g.sim.world.get_mut::<Needs>(e) {
+                if ui.button("Max needs (selected)").clicked()
+                    && let Some(e) = g.selected
+                        && let Some(mut n) = g.sim.world.get_mut::<Needs>(e) {
                             for k in Need::ALL {
                                 n.set(k, 100.0);
                             }
                         }
-                    }
-                }
-                if ui.button("Age up (selected)").clicked() {
-                    if let Some(e) = g.selected {
+                if ui.button("Age up (selected)").clicked()
+                    && let Some(e) = g.selected {
                         sim::life::grow_up(&mut g.sim.world, e);
                     }
-                }
             });
             if ui.button("Reload data from assets/data").clicked() {
                 match sim::data::GameData::load_dir(std::path::Path::new("assets/data")) {

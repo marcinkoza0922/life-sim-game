@@ -34,7 +34,7 @@ fn buy_place_and_sell() {
     assert!(g.sim.can_place("plant_potted", 0, IVec2::new(3, 3), 0).is_err());
     let v = g.sim.sell_object(e).unwrap();
     assert_eq!(v, 60, "unused items refund in full");
-    assert!(g.sim.world.res::<Lot>().occupancy.get(&(0, 3, 3)).is_none());
+    assert!(!g.sim.world.res::<Lot>().occupancy.contains_key(&(0, 3, 3)));
 }
 
 #[test]

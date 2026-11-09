@@ -71,6 +71,13 @@ pub struct Settings {
     pub auto_career_choices: bool,
     /// Write a Debug log line for every action start/finish (for `simctl run --trace`).
     pub trace_actions: bool,
+    /// The dead may haunt the lot at night.
+    #[serde(default = "yes")]
+    pub ghosts: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 impl Default for Settings {
@@ -83,6 +90,7 @@ impl Default for Settings {
             bills: true,
             auto_career_choices: false,
             trace_actions: false,
+            ghosts: true,
         }
     }
 }

@@ -5,8 +5,10 @@
 //! Home focus · L story log · F1 inspector · F2 autonomy · F3 overlays · F4 profiler · F8 settings ·
 //! F12 screenshot · Esc cancel.
 //!
+//! Ctrl+S save · Ctrl+O load · T roofs · M mute voices.
+//!
 //! Test hooks: `--seed N --minutes M --screenshot-after FRAMES PATH --mode live|buy|build --level L
-//! --debug --size WxH --cam YAW,PITCH,DIST --menu-on OBJECT_ID --speed I`
+//! --debug --size WxH --cam YAW,PITCH,DIST --menu-on OBJECT_ID --speed I --load SAVE --creator --walls up|cutaway|down`
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -35,10 +37,13 @@ struct Args {
     cam: Option<(f32, f32, f32)>,
     menu_on: Option<String>,
     speed: usize,
+    load: Option<PathBuf>,
+    creator: bool,
+    walls: Option<scene::WallMode>,
 }
 
 fn parse_args() -> Args {
-    let mut a = Args { seed: 7, minutes: 0, screenshot_after: None, mode: Mode::Live, level: 0, debug: false, size: (1600, 960), cam: None, menu_on: None, speed: 0 };
+    let mut a = Args { seed: 7, minutes: 0, screenshot_after: None, mode: Mode::Live, level: 0, debug: false, size: (1600, 960), cam: None, menu_on: None, speed: 0, load: None, creator: false, walls: None };
     let mut it = std::env::args().skip(1);
     while let Some(x) = it.next() {
         match x.as_str() {
@@ -67,6 +72,15 @@ fn parse_args() -> Args {
             }
             "--menu-on" => a.menu_on = it.next(),
             "--speed" => a.speed = it.next().unwrap().parse().unwrap(),
+            "--load" => a.load = it.next().map(PathBuf::from),
+            "--creator" => a.creator = true,
+            "--walls" => {
+                a.walls = Some(match it.next().unwrap().as_str() {
+                    "up" => scene::WallMode::Up,
+                    "down" => scene::WallMode::Down,
+                    _ => scene::WallMode::Cutaway,
+                })
+            }
             "--help" | "-h" => {
                 println!("{}", include_str!("main.rs").lines().take_while(|l| l.starts_with("//!")).map(|l| l.trim_start_matches("//!")).collect::<Vec<_>>().join("\n"));
                 std::process::exit(0);
@@ -86,6 +100,7 @@ struct Gfx {
     egui_state: egui_winit::State,
     egui_renderer: egui_wgpu::Renderer,
     window: Arc<Window>,
+    meshes: game::lotmesh::LotMeshes,
 }
 
 struct App {
@@ -99,13 +114,31 @@ struct App {
     lmb_down_at: Option<(f32, f32)>,
     last: Instant,
     frames: u32,
+    audio: game::audio::Audio,
 }
 
 impl App {
     fn new(args: Args) -> App {
-        let mut sim = sim::starter::starter_sim(args.seed);
+        let mut sim = match &args.load {
+            Some(p) => sim::Sim::load_from_file(p, sim::data::GameData::embedded()).unwrap_or_else(|e| {
+                eprintln!("couldn't load {}: {e}", p.display());
+                std::process::exit(1)
+            }),
+            None => {
+                let mut s = sim::starter::starter_sim(args.seed);
+                sim::townies::populate(&mut s.world, 5);
+                s
+            }
+        };
         sim.run_minutes(args.minutes);
         let mut game = Game::new(sim);
+        if args.creator {
+            game.open_creator();
+            game.cam.snap();
+        }
+        if let Some(w) = args.walls {
+            game.wall_mode = w;
+        }
         game.mode = args.mode;
         game.level = args.level;
         game.speed = args.speed.min(SPEEDS.len() - 1);
@@ -122,7 +155,9 @@ impl App {
             game.cam.snap();
         }
         game.log_seen = game.sim.world.res::<sim::log::SimLog>().total;
-        App { args, game, gfx: None, cursor: (0.0, 0.0), keys: HashSet::new(), rmb: false, mmb: false, lmb_down_at: None, last: Instant::now(), frames: 0 }
+        // automated captures stay silent
+        let audio = if args.screenshot_after.is_some() { game::audio::Audio::disabled() } else { game::audio::Audio::new() };
+        App { args, game, gfx: None, cursor: (0.0, 0.0), keys: HashSet::new(), rmb: false, mmb: false, lmb_down_at: None, last: Instant::now(), frames: 0, audio }
     }
 
     fn ndc(&self) -> Option<(f32, f32)> {
@@ -142,9 +177,20 @@ impl App {
             self.keys.remove(&key);
             return;
         }
+        let ctrl = self.keys.contains(&KeyCode::ControlLeft) || self.keys.contains(&KeyCode::ControlRight);
         let g = &mut self.game;
+        if ctrl {
+            match key {
+                KeyCode::KeyS => g.save_to(std::path::Path::new(QUICKSAVE)),
+                KeyCode::KeyO => g.load_from(std::path::Path::new(QUICKSAVE)),
+                _ => {}
+            }
+            return;
+        }
         match key {
             KeyCode::Space => g.paused = !g.paused,
+            KeyCode::KeyT => g.show_roofs = !g.show_roofs,
+            KeyCode::KeyM => g.mute = !g.mute,
             KeyCode::Digit1 => (g.speed, g.paused) = (0, false),
             KeyCode::Digit2 => (g.speed, g.paused) = (1, false),
             KeyCode::Digit3 => (g.speed, g.paused) = (2, false),
@@ -169,7 +215,9 @@ impl App {
             }
             KeyCode::KeyR => g.rotate_tool(),
             KeyCode::Escape => {
-                if g.menu.is_some() {
+                if g.creator.is_some() {
+                    g.creator = None;
+                } else if g.menu.is_some() {
                     g.menu = None;
                 } else if g.tool != Tool::None {
                     g.tool = Tool::None;
@@ -188,13 +236,11 @@ impl App {
             }
             KeyCode::Home => g.focus_selected(),
             KeyCode::Delete => {
-                if g.mode == Mode::Buy {
-                    if let Some(Pick::Object(e)) = g.hover_pick.clone() {
-                        if let Some(v) = g.sim.sell_object(e) {
+                if g.mode == Mode::Buy
+                    && let Some(Pick::Object(e)) = g.hover_pick.clone()
+                        && let Some(v) = g.sim.sell_object(e) {
                             g.say(format!("Sold for ${v}"));
                         }
-                    }
-                }
             }
             KeyCode::F12 => {
                 let _ = std::fs::create_dir_all("screenshots");
@@ -219,25 +265,23 @@ impl App {
                 }
                 g.menu = None;
                 let Some(pick) = g.pick(&cam, ndc) else { return };
-                if let Pick::Peon(e) = pick {
-                    if g.selected != Some(e) && g.sim.world.has::<sim::components::Member>(e) && g.selected.is_none_or(|_| true) {
+                if let Pick::Peon(e) = pick
+                    && g.selected != Some(e) && g.sim.world.has::<sim::components::Member>(e) && g.selected.is_none_or(|_| true) {
                         // clicking a different household member: select (Shift+click would interact)
                         if !self.keys.contains(&KeyCode::ShiftLeft) {
                             g.selected = Some(e);
                             return;
                         }
                     }
-                }
                 g.open_menu(&pick, self.cursor);
             }
             (Mode::Live, MouseButton::Left, true) => self.lmb_down_at = Some(self.cursor),
             (Mode::Buy, MouseButton::Left, true) => match g.tool.clone() {
                 Tool::Sell => {
-                    if let Some(Pick::Object(e)) = g.pick(&cam, ndc) {
-                        if let Some(v) = g.sim.sell_object(e) {
+                    if let Some(Pick::Object(e)) = g.pick(&cam, ndc)
+                        && let Some(v) = g.sim.sell_object(e) {
                             g.say(format!("Sold for ${v}"));
                         }
-                    }
                 }
                 Tool::Place { .. } => {
                     if let Some(p) = g.floor_point(&cam, ndc) {
@@ -296,6 +340,15 @@ impl App {
             }
         }
         self.game.update(dt);
+        // terrain brush repeats while the mouse is held
+        if let (Some(last), Some(n)) = (self.game.sculpting, self.ndc())
+            && self.game.time - last > 0.08 {
+                let cam = self.game.camera(self.aspect());
+                if let Some(p) = self.game.floor_point(&cam, n) {
+                    self.game.sculpt_at(p);
+                }
+                self.game.sculpting = Some(self.game.time);
+            }
 
         let aspect = self.aspect();
         let ndc = self.ndc();
@@ -310,7 +363,39 @@ impl App {
         self.game.hover_pick = pick;
         let cursor_floor = if over_ui { None } else { ndc.and_then(|n| self.game.floor_point(&cam, n)) };
 
+        // voices for visible speakers (louder when the camera is close)
+        {
+            self.audio.muted = self.game.mute || self.game.paused;
+            let w = &self.game.sim.world;
+            let eye = cam.eye;
+            let mut speakers = Vec::new();
+            for (e, tf, age, b) in w.query_filtered::<(sim::Entity, &sim::components::Transform, &sim::components::Age, &sim::components::Bubble), hearth_ecs::Without<sim::components::AtWork>>().iter() {
+                let Some(line) = &b.speech else { continue };
+                if tf.level() > self.game.level {
+                    continue;
+                }
+                let dist = (tf.pos - eye).length();
+                let loud = (1.0 - (dist - 8.0) / 40.0).clamp(0.0, 1.0);
+                speakers.push((e, age.stage, line.clone(), loud));
+            }
+            speakers.sort_by_key(|s| s.0);
+            let fast = SPEEDS[self.game.speed].0 > 10.0;
+            if fast {
+                speakers.clear();
+            }
+            self.audio.update(dt, &speakers);
+        }
+
+        if let Some(gfx) = self.gfx.as_mut() {
+            gfx.meshes.sync(&mut gfx.renderer, &self.game.sim.world.res::<sim::lot::Lot>());
+        }
+        let (terrain_mesh, roof_meshes) = self.gfx.as_ref().map(|g| (g.meshes.terrain, g.meshes.roofs.clone())).unwrap_or_default();
+        let preview = self.game.creator.as_ref().map(|c| c.preview()).unwrap_or_default();
         let opts = SceneOptions {
+            terrain_mesh,
+            roof_meshes,
+            show_roofs: self.game.show_roofs,
+            preview,
             active_level: self.game.level,
             wall_mode: self.game.wall_mode,
             alpha: self.game.alpha,
@@ -411,8 +496,8 @@ impl App {
         self.game.frame_ms = now.elapsed().as_secs_f32() * 1000.0;
 
         // test hook: open a pie menu on an object after the first frame
-        if self.frames == 2 {
-            if let Some(id) = self.args.menu_on.clone() {
+        if self.frames == 2
+            && let Some(id) = self.args.menu_on.clone() {
                 let data = self.game.sim.data();
                 let target = self.game.sim.objects().into_iter().find(|e| {
                     self.game.sim.world.get::<sim::objects::ObjectInstance>(*e).is_some_and(|o| data.object(o.def).id == id)
@@ -426,7 +511,6 @@ impl App {
                     self.game.open_menu(&Pick::Object(t), screen);
                 }
             }
-        }
     }
 }
 
@@ -466,7 +550,7 @@ impl ApplicationHandler for App {
             // automated captures shouldn't catch windows mid-fade
             egui_ctx.all_styles_mut(|s| s.animation_time = 0.0);
         }
-        self.gfx = Some(Gfx { surface, config, renderer, egui_ctx, egui_state, egui_renderer, window });
+        self.gfx = Some(Gfx { surface, config, renderer, egui_ctx, egui_state, egui_renderer, window, meshes: Default::default() });
         self.last = Instant::now();
     }
 
@@ -504,11 +588,10 @@ impl ApplicationHandler for App {
                 if button == MouseButton::Right && !pressed {
                     self.rmb = false;
                 }
-                if !(consumed || over_ui) || !pressed {
-                    if !(over_ui && pressed) {
+                if (!(consumed || over_ui) || !pressed)
+                    && !(over_ui && pressed) {
                         self.on_click(button, pressed);
                     }
-                }
             }
             WindowEvent::MouseWheel { delta, .. } if !over_ui => {
                 let y = match delta {
@@ -518,11 +601,10 @@ impl ApplicationHandler for App {
                 self.game.cam.zoom(1.0 - y * 0.1);
             }
             WindowEvent::KeyboardInput { event, .. } if !wants_kb => {
-                if let PhysicalKey::Code(code) = event.physical_key {
-                    if !event.repeat || !event.state.is_pressed() {
+                if let PhysicalKey::Code(code) = event.physical_key
+                    && (!event.repeat || !event.state.is_pressed()) {
                         self.on_key(code, event.state.is_pressed(), event_loop);
                     }
-                }
             }
             _ => {}
         }

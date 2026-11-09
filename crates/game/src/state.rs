@@ -3,7 +3,7 @@
 use glam::{IVec2, Vec3};
 use hearth_render::Camera;
 use sim::components::*;
-use sim::lot::{Axis, Dir4, Edge, LEVEL_HEIGHT, Lot, MAX_LEVEL, MIN_LEVEL, Opening, Stair};
+use sim::lot::{Axis, Dir4, Edge, LEVEL_HEIGHT, Lot, MAX_LEVEL, MIN_LEVEL, Opening, Roof, RoofKind, Stair, TerrainBrush};
 use sim::objects::ObjectInstance;
 use sim::{Entity, Sim};
 
@@ -19,6 +19,10 @@ pub const COST_DOOR: i64 = 150;
 pub const COST_WINDOW: i64 = 100;
 pub const COST_STAIRS: i64 = 800;
 pub const COST_DIG: i64 = 120;
+pub const COST_ROOF_TILE: i64 = 15;
+/// Per terrain corner moved.
+pub const COST_TERRAIN: i64 = 2;
+pub const QUICKSAVE: &str = "saves/quicksave.ron";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -41,6 +45,9 @@ pub enum Tool {
     DeleteFloor,
     Stairs { dir: Dir4 },
     Basement,
+    Terrain { brush: TerrainBrush, radius: f32 },
+    Roof { kind: RoofKind },
+    DeleteRoof,
 }
 
 #[derive(Clone, Debug)]
@@ -103,6 +110,14 @@ pub struct Game {
     pub screenshot: Option<std::path::PathBuf>,
     pub frame_ms: f32,
     pub sim_ms: f32,
+    pub show_roofs: bool,
+    pub roof_pitch: f32,
+    /// Create-a-Household editor, when open.
+    pub creator: Option<crate::creator::Creator>,
+    /// Mouse held with the terrain tool (brush repeats while held).
+    pub sculpting: Option<f32>,
+    pub show_neighborhood: bool,
+    pub mute: bool,
 }
 
 impl Game {
@@ -137,6 +152,12 @@ impl Game {
             screenshot: None,
             frame_ms: 0.0,
             sim_ms: 0.0,
+            show_roofs: true,
+            roof_pitch: 0.5,
+            creator: None,
+            sculpting: None,
+            show_neighborhood: false,
+            mute: false,
         }
     }
 
@@ -148,7 +169,7 @@ impl Game {
     pub fn update(&mut self, dt: f32) {
         self.time += dt;
         self.cam.update(dt);
-        let build_paused = self.mode != Mode::Live;
+        let build_paused = self.mode != Mode::Live || self.creator.is_some();
         if !self.paused && !build_paused {
             self.acc += dt * SPEEDS[self.speed].0;
             let t0 = std::time::Instant::now();
@@ -171,11 +192,10 @@ impl Game {
             self.alpha = 1.0;
         }
         // selected peon may have died / left
-        if let Some(s) = self.selected {
-            if !self.sim.world.contains(s) || self.sim.world.has::<Dead>(s) {
+        if let Some(s) = self.selected
+            && (!self.sim.world.contains(s) || self.sim.world.has::<Dead>(s)) {
                 self.selected = self.sim.living_peons().first().copied();
             }
-        }
         self.pull_notifications();
     }
 
@@ -203,6 +223,66 @@ impl Game {
 
     pub fn camera(&self, aspect: f32) -> Camera {
         self.cam.camera(self.level, aspect)
+    }
+
+    /// Replaces the running simulation (load, new household), keeping camera and settings.
+    pub fn replace_sim(&mut self, sim: Sim) {
+        self.sim = sim;
+        self.selected = self.sim.living_peons().into_iter().find(|e| self.sim.world.has::<Member>(*e));
+        self.menu = None;
+        self.tool = Tool::None;
+        self.mode = Mode::Live;
+        self.inspect_entity = None;
+        self.log_seen = self.sim.world.res::<sim::log::SimLog>().total;
+        self.toasts.clear();
+    }
+
+    pub fn save_to(&mut self, path: &std::path::Path) {
+        match self.sim.save_to_file(path) {
+            Ok(()) => self.say(format!("Saved to {}", path.display())),
+            Err(e) => self.say(format!("Save failed: {e}")),
+        }
+    }
+
+    pub fn load_from(&mut self, path: &std::path::Path) {
+        match Sim::load_from_file(path, (*self.sim.data()).clone()) {
+            Ok(sim) => {
+                self.replace_sim(sim);
+                self.say(format!("Loaded {}", path.display()));
+            }
+            Err(e) => self.say(format!("Load failed: {e}")),
+        }
+    }
+
+    pub fn open_creator(&mut self) {
+        let seed = self.sim.clock().tick ^ 0x5eed;
+        self.creator = Some(crate::creator::Creator::new(self.sim.data(), seed));
+        self.menu = None;
+        self.mode = Mode::Live;
+        self.tool = Tool::None;
+        // stage the line-up on the front lawn
+        self.level = 0;
+        self.cam.target = Vec3::new(17.5, 0.0, 26.5);
+        self.cam.dist = 9.0;
+        self.cam.pitch = 0.32;
+        self.cam.yaw = 0.25;
+    }
+
+    /// Applies the terrain brush at a world point, charging per corner moved.
+    pub fn sculpt_at(&mut self, p: Vec3) {
+        let Tool::Terrain { brush, radius } = self.tool.clone() else { return };
+        if self.level != 0 {
+            self.say("Terrain can only be shaped on the ground level.");
+            return;
+        }
+        let corner = IVec2::new(p.x.round() as i32, p.z.round() as i32);
+        let funds = self.sim.world.res::<sim::economy::Household>().funds;
+        if funds < COST_TERRAIN * 4 {
+            self.say("Can't afford to move any more dirt.");
+            return;
+        }
+        let n = self.sim.lot_mut().sculpt(corner, radius, 0.12, brush) as i64;
+        self.sim.world.res_mut::<sim::economy::Household>().funds -= n * COST_TERRAIN;
     }
 
     pub fn set_level(&mut self, l: i32) {
@@ -330,6 +410,33 @@ impl Game {
                 let tiles: Vec<IVec2> = s.tiles().collect();
                 vec![Ghost::Tiles { level: lvl, tiles, color: [0.9, 0.8, 0.3] }, Ghost::Tiles { level: lvl, tiles: vec![s.bottom_access()], color: [0.3, 1.0, 0.3] }]
             }
+            Tool::Terrain { radius, .. } => {
+                let c = IVec2::new(p.x.round() as i32, p.z.round() as i32);
+                let r = radius.ceil() as i32;
+                let mut tiles = Vec::new();
+                for dx in -r..r {
+                    for dz in -r..r {
+                        let t = c + IVec2::new(dx, dz);
+                        let mid = t.as_vec2() + glam::Vec2::splat(0.5) - c.as_vec2();
+                        if mid.length() <= *radius + 0.2 {
+                            tiles.push(t);
+                        }
+                    }
+                }
+                vec![Ghost::Tiles { level: 0, tiles, color: [0.9, 0.7, 0.3] }]
+            }
+            Tool::Roof { .. } | Tool::DeleteRoof => {
+                let start = self.drag_start.unwrap_or(tile);
+                let (min, max) = (start.min(tile), start.max(tile));
+                let mut tiles = Vec::new();
+                for x in min.x..=max.x {
+                    for z in min.y..=max.y {
+                        tiles.push(IVec2::new(x, z));
+                    }
+                }
+                let color = if self.tool == Tool::DeleteRoof { [1.0, 0.3, 0.3] } else { [0.85, 0.4, 0.3] };
+                vec![Ghost::Tiles { level: lvl + 1, tiles, color }]
+            }
             Tool::Sell | Tool::None => Vec::new(),
         }
     }
@@ -355,7 +462,17 @@ impl Game {
         let corner = IVec2::new(p.x.round() as i32, p.z.round() as i32);
         match self.tool.clone() {
             Tool::Wall | Tool::DeleteWall | Tool::Room => self.drag_start = Some(corner),
-            Tool::Floor | Tool::DeleteFloor | Tool::Basement => self.drag_start = Some(tile),
+            Tool::Floor | Tool::DeleteFloor | Tool::Basement | Tool::Roof { .. } => self.drag_start = Some(tile),
+            Tool::Terrain { .. } => {
+                self.sculpt_at(p);
+                self.sculpting = Some(self.time);
+            }
+            Tool::DeleteRoof => {
+                let n = self.sim.lot_mut().remove_roof_at(Some(self.level), tile);
+                if n == 0 {
+                    self.say("No roof on this level there (roofs sit on top of the level you're viewing).");
+                }
+            }
             Tool::Place { def, rot } => match self.sim.place_object(&def, self.level, tile, rot, true) {
                 Ok(_) => {
                     let price = self.sim.data().object_id(&def).map(|i| self.sim.data().object(i).price).unwrap_or(0);
@@ -392,6 +509,7 @@ impl Game {
 
     /// Mouse release: finish drag tools.
     pub fn tool_release(&mut self, p: Vec3) {
+        self.sculpting = None;
         let Some(start) = self.drag_start.take() else { return };
         let tile = Lot::tile_of(p);
         let corner = IVec2::new(p.x.round() as i32, p.z.round() as i32);
@@ -472,6 +590,20 @@ impl Game {
                 }
                 let (ws, fs) = (self.wall_style, self.floor_style);
                 self.sim.lot_mut().dig_basement(lvl, min, max, ws, fs);
+            }
+            Tool::Roof { kind } => {
+                let (min, max) = (start.min(tile), start.max(tile) + IVec2::ONE);
+                let n = ((max.x - min.x) * (max.y - min.y)) as i64;
+                if !self.sim.charge(n * COST_ROOF_TILE) {
+                    self.say("Can't afford that roof.");
+                    return;
+                }
+                let pitch = self.roof_pitch;
+                let r = self.sim.lot_mut().add_roof(Roof { level: lvl, min, max, kind, pitch, style: 0 });
+                if let Err(e) = r {
+                    self.sim.world.res_mut::<sim::economy::Household>().funds += n * COST_ROOF_TILE;
+                    self.say(format!("Can't build roof: {e}"));
+                }
             }
             _ => {}
         }

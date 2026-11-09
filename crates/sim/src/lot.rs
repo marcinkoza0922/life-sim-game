@@ -141,6 +141,139 @@ pub struct RoomInfo {
     pub score: f32,
 }
 
+/// Lowest/highest terrain height (meters). Kept within level 0 so `level_of` stays correct.
+pub const TERRAIN_MIN: f32 = -0.7;
+pub const TERRAIN_MAX: f32 = 2.0;
+/// Peons won't walk up a step steeper than this between tile centers.
+pub const MAX_SLOPE: f32 = 0.6;
+
+/// Ground heightmap: one height per tile corner, (width+1) × (depth+1). Empty = flat at 0.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Terrain {
+    pub width: i32,
+    pub depth: i32,
+    pub heights: Vec<f32>,
+}
+
+impl Terrain {
+    pub fn new(width: i32, depth: i32) -> Self {
+        Terrain { width, depth, heights: vec![0.0; ((width + 1) * (depth + 1)) as usize] }
+    }
+    fn idx(&self, c: IVec2) -> Option<usize> {
+        (c.x >= 0 && c.y >= 0 && c.x <= self.width && c.y <= self.depth && !self.heights.is_empty())
+            .then(|| (c.y * (self.width + 1) + c.x) as usize)
+    }
+    /// Height at a tile corner (0 outside the map).
+    pub fn corner(&self, c: IVec2) -> f32 {
+        self.idx(c).map(|i| self.heights[i]).unwrap_or(0.0)
+    }
+    pub fn set_corner(&mut self, c: IVec2, h: f32) {
+        if let Some(i) = self.idx(c) {
+            self.heights[i] = h.clamp(TERRAIN_MIN, TERRAIN_MAX);
+        }
+    }
+    pub fn tile_corners(t: IVec2) -> [IVec2; 4] {
+        [t, t + IVec2::X, t + IVec2::Y, t + IVec2::ONE]
+    }
+    /// Bilinear height at a world (x, z) point.
+    pub fn height_at(&self, x: f32, z: f32) -> f32 {
+        if self.heights.is_empty() {
+            return 0.0;
+        }
+        let (fx, fz) = (x.floor(), z.floor());
+        let (tx, tz) = (x - fx, z - fz);
+        let c = IVec2::new(fx as i32, fz as i32);
+        let h00 = self.corner(c);
+        let h10 = self.corner(c + IVec2::X);
+        let h01 = self.corner(c + IVec2::Y);
+        let h11 = self.corner(c + IVec2::ONE);
+        let a = h00 + (h10 - h00) * tx;
+        let b = h01 + (h11 - h01) * tx;
+        a + (b - a) * tz
+    }
+    /// Height at a tile's center.
+    pub fn tile_height(&self, t: IVec2) -> f32 {
+        self.height_at(t.x as f32 + 0.5, t.y as f32 + 0.5)
+    }
+    /// All four corners at the same height (objects need flat ground).
+    pub fn tile_flat(&self, t: IVec2) -> bool {
+        let c = Self::tile_corners(t).map(|c| self.corner(c));
+        c.iter().all(|h| (h - c[0]).abs() < 0.01)
+    }
+    pub fn is_flat_everywhere(&self) -> bool {
+        self.heights.iter().all(|h| h.abs() < 1e-4)
+    }
+}
+
+/// How a terrain brush changes corner heights.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum TerrainBrush {
+    Raise,
+    Lower,
+    /// Pull toward the height at the brush center.
+    Flatten,
+    /// Average with neighbours.
+    Smooth,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RoofKind {
+    /// Ridge runs along the rectangle's longer side.
+    Gable,
+    Hip,
+    Flat,
+}
+
+/// A rectangular roof sitting on top of `level`'s walls, covering tiles [min, max).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Roof {
+    pub level: i32,
+    pub min: IVec2,
+    pub max: IVec2,
+    pub kind: RoofKind,
+    /// Rise per meter of run (0.5 ≈ 27°).
+    pub pitch: f32,
+    pub style: u16,
+}
+
+impl Roof {
+    pub fn size(&self) -> IVec2 {
+        self.max - self.min
+    }
+    /// Eave height (top of the walls below).
+    pub fn base_y(&self) -> f32 {
+        (self.level + 1) as f32 * LEVEL_HEIGHT
+    }
+    /// Ridge height above the eaves.
+    pub fn rise(&self) -> f32 {
+        let s = self.size();
+        match self.kind {
+            RoofKind::Flat => 0.15,
+            _ => s.x.min(s.y) as f32 * 0.5 * self.pitch,
+        }
+    }
+    pub fn covers(&self, t: IVec2) -> bool {
+        t.x >= self.min.x && t.y >= self.min.y && t.x < self.max.x && t.y < self.max.y
+    }
+    /// Roof surface height at world (x, z), or None outside its footprint.
+    pub fn height_at(&self, x: f32, z: f32) -> Option<f32> {
+        let (x0, z0, x1, z1) = (self.min.x as f32, self.min.y as f32, self.max.x as f32, self.max.y as f32);
+        if x < x0 || z < z0 || x > x1 || z > z1 {
+            return None;
+        }
+        let dx = (x - x0).min(x1 - x);
+        let dz = (z - z0).min(z1 - z);
+        let run = match self.kind {
+            RoofKind::Flat => return Some(self.base_y() + 0.15),
+            RoofKind::Gable => {
+                if x1 - x0 >= z1 - z0 { dz } else { dx }
+            }
+            RoofKind::Hip => dx.min(dz),
+        };
+        Some(self.base_y() + (run * self.pitch).min(self.rise()))
+    }
+}
+
 /// The lot resource.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Lot {
@@ -150,6 +283,10 @@ pub struct Lot {
     pub openings: BTreeMap<Edge, Opening>,
     pub floors: BTreeMap<(i32, i32, i32), Floor>,
     pub stairs: Vec<Stair>,
+    #[serde(default)]
+    pub terrain: Terrain,
+    #[serde(default)]
+    pub roofs: Vec<Roof>,
     /// Tiles blocked by objects.
     #[serde(skip)]
     pub occupancy: HashMap<(i32, i32, i32), Entity>,
@@ -174,6 +311,8 @@ impl Lot {
             openings: BTreeMap::new(),
             floors: BTreeMap::new(),
             stairs: Vec::new(),
+            terrain: Terrain::new(width, depth),
+            roofs: Vec::new(),
             occupancy: HashMap::new(),
             room_of: HashMap::new(),
             rooms: Vec::new(),
@@ -206,6 +345,12 @@ impl Lot {
             return false;
         }
         let new = self.walls.insert(e, Wall { style }).is_none();
+        if e.level == 0 {
+            let (a, b) = e.endpoints();
+            for p in [a, b] {
+                self.terrain.set_corner(IVec2::new(p.x as i32, p.z as i32), 0.0);
+            }
+        }
         self.touch();
         new
     }
@@ -254,6 +399,11 @@ impl Lot {
             return false;
         }
         self.floors.insert((level, t.x, t.y), Floor { style });
+        if level == 0 {
+            for c in Terrain::tile_corners(t) {
+                self.terrain.set_corner(c, 0.0);
+            }
+        }
         self.touch();
         true
     }
@@ -315,6 +465,76 @@ impl Lot {
         self.touch();
     }
 
+    pub fn add_roof(&mut self, r: Roof) -> Result<(), String> {
+        if !Self::level_ok(r.level) || r.level < 0 {
+            return Err("roofs go on top of above-ground levels".into());
+        }
+        let s = r.size();
+        if s.x < 1 || s.y < 1 || !self.in_bounds(r.min) || !self.in_bounds(r.max - IVec2::ONE) {
+            return Err("roof out of bounds".into());
+        }
+        if self.roofs.iter().any(|o| o.level == r.level && o.min.x < r.max.x && r.min.x < o.max.x && o.min.y < r.max.y && r.min.y < o.max.y) {
+            return Err("overlaps another roof".into());
+        }
+        self.roofs.push(r);
+        self.touch();
+        Ok(())
+    }
+
+    /// Removes roofs covering tile `t` on `level` (any level if None). Returns how many.
+    pub fn remove_roof_at(&mut self, level: Option<i32>, t: IVec2) -> usize {
+        let before = self.roofs.len();
+        self.roofs.retain(|r| !(r.covers(t) && level.is_none_or(|l| l == r.level)));
+        let n = before - self.roofs.len();
+        if n > 0 {
+            self.touch();
+        }
+        n
+    }
+
+    /// Replaces all roofs with automatic ones: the indoor tiles with nothing built above them are
+    /// split greedily into rectangles, each getting its own roof. Returns the number of roofs.
+    pub fn auto_roof(&mut self, kind: RoofKind, pitch: f32) -> usize {
+        if self.rooms_dirty {
+            self.recompute_rooms();
+        }
+        self.roofs.clear();
+        for level in 0..=MAX_LEVEL {
+            let mut covered = std::collections::HashSet::new();
+            for z in 0..self.depth {
+                for x in 0..self.width {
+                    let t = IVec2::new(x, z);
+                    if covered.contains(&t) || !self.roofable(level, t) {
+                        continue;
+                    }
+                    let free = |c: IVec2, covered: &std::collections::HashSet<IVec2>| self.in_bounds(c) && !covered.contains(&c) && self.roofable(level, c);
+                    let mut x1 = x + 1;
+                    while free(IVec2::new(x1, z), &covered) {
+                        x1 += 1;
+                    }
+                    let mut z1 = z + 1;
+                    while (x..x1).all(|xx| free(IVec2::new(xx, z1), &covered)) {
+                        z1 += 1;
+                    }
+                    for xx in x..x1 {
+                        for zz in z..z1 {
+                            covered.insert(IVec2::new(xx, zz));
+                        }
+                    }
+                    self.roofs.push(Roof { level, min: t, max: IVec2::new(x1, z1), kind, pitch, style: 0 });
+                }
+            }
+        }
+        self.touch();
+        self.roofs.len()
+    }
+
+    /// An indoor tile with no floor directly above it.
+    fn roofable(&self, level: i32, t: IVec2) -> bool {
+        let indoor = self.room_at(level, t).is_some_and(|r| r.indoor);
+        indoor && !self.has_floor(level + 1, t) && self.stair_at(level, t).is_none()
+    }
+
     // ------------------------------------------------------------------ queries
 
     pub fn has_floor(&self, level: i32, t: IVec2) -> bool {
@@ -354,6 +574,9 @@ impl Lot {
         if !self.walkable(level, b) {
             return false;
         }
+        if level == 0 && (self.ground_y(0, a) - self.ground_y(0, b)).abs() > MAX_SLOPE {
+            return false;
+        }
         let d = b - a;
         if d.x.abs() + d.y.abs() == 1 {
             return !self.edge_blocked(&Edge::between(level, a, b).unwrap());
@@ -385,6 +608,76 @@ impl Lot {
 
     pub fn tile_center(level: i32, t: IVec2) -> Vec3 {
         Vec3::new(t.x as f32 + 0.5, level as f32 * LEVEL_HEIGHT, t.y as f32 + 0.5)
+    }
+
+    /// Height of the walking surface at a tile's center (floors are flat; bare ground follows terrain).
+    pub fn ground_y(&self, level: i32, t: IVec2) -> f32 {
+        if level == 0 && !self.has_floor(0, t) { self.terrain.tile_height(t) } else { level as f32 * LEVEL_HEIGHT }
+    }
+
+    /// Like [`Lot::tile_center`] but standing on the actual ground.
+    pub fn ground_center(&self, level: i32, t: IVec2) -> Vec3 {
+        let mut c = Self::tile_center(level, t);
+        c.y = self.ground_y(level, t);
+        c
+    }
+
+    /// A corner may be sculpted only if no ground-floor tile or wall touches it.
+    pub fn corner_locked(&self, c: IVec2) -> bool {
+        let tiles = [c, c - IVec2::X, c - IVec2::Y, c - IVec2::ONE];
+        tiles.iter().any(|t| self.has_floor(0, *t) || self.floors.contains_key(&(-1, t.x, t.y)))
+            || [
+                Edge::new(0, c.x, c.y, Axis::X),
+                Edge::new(0, c.x - 1, c.y, Axis::X),
+                Edge::new(0, c.x, c.y, Axis::Z),
+                Edge::new(0, c.x, c.y - 1, Axis::Z),
+            ]
+            .iter()
+            .any(|e| self.walls.contains_key(e))
+    }
+
+    /// Applies a circular brush around corner `center`. Returns how many corners changed.
+    /// `occupied` tiles (objects) are protected so furniture never ends up floating.
+    pub fn sculpt(&mut self, center: IVec2, radius: f32, strength: f32, brush: TerrainBrush) -> usize {
+        if self.terrain.heights.is_empty() {
+            self.terrain = Terrain::new(self.width, self.depth);
+        }
+        let target = self.terrain.corner(center);
+        let r = radius.ceil() as i32;
+        let mut changed = 0;
+        let before = self.terrain.clone();
+        for dz in -r..=r {
+            for dx in -r..=r {
+                let c = center + IVec2::new(dx, dz);
+                let d = ((dx * dx + dz * dz) as f32).sqrt();
+                if d > radius || self.corner_locked(c) || self.corner_has_object(c) {
+                    continue;
+                }
+                let falloff = 1.0 - d / (radius + 1.0);
+                let h = before.corner(c);
+                let nh = match brush {
+                    TerrainBrush::Raise => h + strength * falloff,
+                    TerrainBrush::Lower => h - strength * falloff,
+                    TerrainBrush::Flatten => h + (target - h) * falloff.min(1.0),
+                    TerrainBrush::Smooth => {
+                        let n = [IVec2::X, -IVec2::X, IVec2::Y, -IVec2::Y].map(|o| before.corner(c + o));
+                        h + ((n.iter().sum::<f32>() / 4.0) - h) * 0.5 * falloff
+                    }
+                };
+                if (nh - h).abs() > 1e-4 && self.terrain.idx(c).is_some() {
+                    self.terrain.set_corner(c, nh);
+                    changed += 1;
+                }
+            }
+        }
+        if changed > 0 {
+            self.touch();
+        }
+        changed
+    }
+
+    fn corner_has_object(&self, c: IVec2) -> bool {
+        [c, c - IVec2::X, c - IVec2::Y, c - IVec2::ONE].iter().any(|t| self.occupancy.contains_key(&(0, t.x, t.y)))
     }
 
     pub fn tile_of(pos: Vec3) -> IVec2 {
@@ -508,6 +801,45 @@ mod tests {
         lot.set_opening(Edge::new(0, 2, 3, Axis::Z), Opening::Door);
         lot.recompute_rooms();
         assert!(lot.room_at(0, IVec2::new(3, 3)).unwrap().indoor);
+    }
+
+    #[test]
+    fn auto_roof_covers_top_floor() {
+        let mut lot = boxed_lot();
+        assert_eq!(lot.auto_roof(RoofKind::Gable, 0.5), 1);
+        let r = lot.roofs[0];
+        assert_eq!((r.level, r.min, r.max), (0, IVec2::new(2, 2), IVec2::new(6, 6)));
+        // add a second storey: the roof moves up
+        lot.floor_rect(1, IVec2::new(2, 2), IVec2::new(6, 6), 0);
+        lot.wall_rect(1, IVec2::new(2, 2), IVec2::new(6, 6), 0);
+        lot.auto_roof(RoofKind::Hip, 0.5);
+        assert_eq!(lot.roofs.len(), 1);
+        assert_eq!(lot.roofs[0].level, 1);
+        let peak = lot.roofs[0].height_at(4.0, 4.0).unwrap();
+        assert!((peak - (6.0 + 1.0)).abs() < 1e-4, "{peak}");
+        assert!((lot.roofs[0].height_at(2.0, 4.0).unwrap() - 6.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn terrain_sculpting_respects_buildings() {
+        let mut lot = boxed_lot();
+        let open = IVec2::new(8, 8);
+        assert!(lot.sculpt(open, 1.5, 0.5, TerrainBrush::Raise) > 0);
+        assert!(lot.terrain.corner(open) > 0.4);
+        assert!(!lot.terrain.tile_flat(IVec2::new(8, 8)));
+        // corners touching the house stay put
+        let n = lot.sculpt(IVec2::new(4, 4), 3.0, 1.0, TerrainBrush::Raise);
+        assert!(n > 0);
+        assert_eq!(lot.terrain.corner(IVec2::new(4, 4)), 0.0);
+        assert_eq!(lot.terrain.corner(IVec2::new(2, 2)), 0.0);
+        // a cliff blocks walking
+        for c in Terrain::tile_corners(IVec2::new(9, 1)) {
+            lot.terrain.set_corner(c, 2.0);
+        }
+        assert!(!lot.can_step(0, IVec2::new(8, 1), IVec2::new(9, 1)), "too steep");
+        assert!(lot.can_step(0, IVec2::new(9, 0), IVec2::new(9, 1)) == ((lot.ground_y(0, IVec2::new(9, 0)) - 2.0).abs() <= MAX_SLOPE));
+        assert!(lot.ground_y(0, IVec2::new(8, 8)) > 0.0);
+        assert_eq!(lot.ground_y(0, IVec2::new(3, 3)), 0.0);
     }
 
     #[test]

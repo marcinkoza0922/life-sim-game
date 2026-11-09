@@ -62,6 +62,12 @@ pub fn build_house(sim: &mut Sim) {
         lot.dig_basement(-1, v(8, 13), v(16, 20), WALL_INTERIOR, FLOOR_CARPET);
         // stairs from basement (bottom access 15,19 on -1) rising -z to the living room
         lot.add_stair(Stair { level: -1, start: v(15, 18), dir: Dir4::NegZ }).expect("downstairs");
+        lot.auto_roof(crate::lot::RoofKind::Gable, 0.5);
+        // a gentle hill in the back yard and a dip by the street, so the terrain isn't a pancake
+        for (c, r, s, b) in [(v(4, 25), 3.0, 0.6, crate::lot::TerrainBrush::Raise), (v(28, 26), 2.5, 0.4, crate::lot::TerrainBrush::Raise), (v(25, 4), 2.5, 0.25, crate::lot::TerrainBrush::Lower)] {
+            lot.sculpt(c, r, s, b);
+            lot.sculpt(c, r + 1.0, 0.0, crate::lot::TerrainBrush::Smooth);
+        }
     }
 
     let place = |sim: &mut Sim, id: &str, level: i32, x: i32, z: i32, rot: u8| {
@@ -101,6 +107,7 @@ pub fn build_house(sim: &mut Sim) {
     place(sim, "bed_single", 1, 12, 8, 0);
     place(sim, "toy_box", 1, 14, 8, 0);
     place(sim, "chess_table", 1, 15, 11, 0);
+    place(sim, "kids_desk", 1, 16, 8, 0);
     place(sim, "plant_potted", 1, 21, 8, 0);
     // basement rec room
     place(sim, "exercise_bike", -1, 8, 13, 0);
