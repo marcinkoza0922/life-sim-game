@@ -15,7 +15,10 @@ from mathutils import Vector
 from mathutils.kdtree import KDTree
 
 # skin regions (bit numbers of the game's hide mask); 0 = always drawn (head, neck, hands)
-R_CHEST, R_BELLY, R_SHOULDER, R_UPPER_ARM, R_FOREARM, R_PELVIS, R_THIGH, R_KNEE, R_SHIN, R_FOOT = range(1, 11)
+R_CHEST, R_BELLY, R_SHOULDER, R_UPPER_ARM, R_FOREARM, R_PELVIS, R_THIGH, R_KNEE, R_SHIN, R_FOOT, R_YOKE, R_STRAP = range(1, 13)
+# R_CHEST runs up to the neck between the straps' outer edges; R_YOKE is the top of the torso
+# beside them, out to the armhole (bare in a tank top); R_STRAP is the part of the straps above the
+# neckline (sleeveless tops reach up over the shoulder there); R_SHOULDER is the cap of the arm
 
 # body shape keys: id -> label (the order of the keys); slim/heavy are driven by `build`
 BODY_SLIDERS = [
@@ -30,10 +33,10 @@ BODY_SLIDERS = [
 
 # garments: name -> (palette material, regions it covers, thickness as a fraction of H)
 GARMENTS = {
-    "top_tee": ("shirt", {R_CHEST, R_BELLY, R_SHOULDER}, 0.0045),
-    "top_long": ("shirt", {R_CHEST, R_BELLY, R_SHOULDER, R_UPPER_ARM, R_FOREARM}, 0.0045),
-    "top_tank": ("shirt", {R_CHEST, R_BELLY}, 0.004),
-    "top_dress": ("shirt", {R_CHEST, R_BELLY, R_PELVIS}, 0.0045),
+    "top_tee": ("shirt", {R_CHEST, R_STRAP, R_YOKE, R_BELLY, R_SHOULDER}, 0.0045),
+    "top_long": ("shirt", {R_CHEST, R_STRAP, R_YOKE, R_BELLY, R_SHOULDER, R_UPPER_ARM, R_FOREARM}, 0.0045),
+    "top_tank": ("shirt", {R_CHEST, R_STRAP, R_BELLY}, 0.004),
+    "top_dress": ("shirt", {R_CHEST, R_STRAP, R_BELLY, R_PELVIS}, 0.0045),
     "bottom_trousers": ("pants", {R_PELVIS, R_THIGH, R_KNEE, R_SHIN}, 0.005),
     "bottom_shorts": ("pants", {R_PELVIS, R_THIGH}, 0.005),
     "bottom_skirt": ("pants", {R_PELVIS}, 0.005),
@@ -66,9 +69,12 @@ class Hems:
     """Where garments end, shared by the region cuts and the skirt builder."""
 
     def __init__(self, d, arm_points, leg_points):
-        self.torso_x = d.width * 0.4  # past this the armpit web belongs to the arm
-        self.neckline = d.neck_z - d.torso * 0.07
-        self.neck_normal = Vector((0, -0.45, 1)).normalized()  # lower in front: a scoop neck
+        self.strap_x = d.width * 0.3  # outer edge of a tank top's straps
+        self.strap_in = d.width * 0.19  # inner edge: between the two the neckline doesn't cut
+        self.collar = d.neck_z  # tops of straps and shoulders: above this is the neck
+        self.armhole_z = torso_z(d, 0.8)  # where a tank top's armhole crosses the strap's edge
+        self.neckline = d.neck_z - d.torso * 0.045
+        self.neck_normal = Vector((0, -0.3, 1)).normalized()  # a little lower in front: a crew neck
         self.chest = torso_z(d, 0.52)
         self.belt = torso_z(d, 0.14)
         self.shoe = d.ankle_z + d.H * 0.032
@@ -80,6 +86,8 @@ class Hems:
             ax = (el - sh).normalized()
             self.arms[sfx] = dict(
                 # torso/arm boundary: a plane through the armpit leaning out
+                # armhole: one plane through the armpit, leaning out like the A-posed arm, so the
+                # flank stays torso and the top of the shoulder is the sleeve's cap
                 shoulder=(Vector((side * d.shoulder_x * 0.8, 0, d.shoulder_z)), Vector((side * 0.85, 0, 0.5)).normalized()),
                 sleeve=(sh.lerp(el, 0.42), ax),
                 elbow=(el, ax),
@@ -88,6 +96,12 @@ class Hems:
             hip, knee, ankle, toe = leg_points(d, side)
             lx = (knee - hip).normalized()
             self.legs[sfx] = dict(shorts=(hip.lerp(knee, 0.42), lx), knee=(knee + lx * d.H * 0.02, lx))
+
+    def armhole(self, sfx):
+        """Lower edge of the yoke: a plane rising from under the arm to the strap (a tank top's
+        curved armhole)."""
+        s = 1 if sfx == "L" else -1
+        return Vector((s * self.strap_x, 0, self.armhole_z)), Vector((s * 0.6, 0, 0.8)).normalized()
 
 
 # ------------------------------------------------------------------------------------------------
@@ -221,12 +235,16 @@ def nearest_bone(p, segs, names=None):
     return bn, bt
 
 
+def side_x(sfx):
+    return 1 if sfx == "L" else -1
+
+
 def side_of(p):
     return "L" if p.x > 0 else "R"
 
 
-def region_of(c, segs, hems):
-    """Skin region of a point on the body."""
+def region_of(c, segs, hems, n=None):
+    """Skin region of a point on the body (n: its face normal, if known)."""
     sfx = side_of(c)
     arm = hems.arms[sfx]
     wco, wno = arm["wrist"]
@@ -235,9 +253,12 @@ def region_of(c, segs, hems):
     co, no = arm["shoulder"]
     bn, _ = nearest_bone(c, segs)
     is_arm = bn.startswith(("upper_arm", "forearm", "hand"))
-    # the arm starts at the shoulder plane (up top, where the cut was made) or at the armpit
-    web = abs(c.x) > hems.torso_x and c.z > hems.belt and not bn.startswith(("thigh", "shin", "foot"))
-    if web or ((c - co).dot(no) > 0 and (is_arm or c.z > hems.chest - 0.02)):
+    is_leg = bn.startswith(("thigh", "shin", "foot"))
+    past = (c - co).dot(no) > 0 and c.z > hems.belt and bn not in ("neck", "head") and not is_leg
+    # the inside of the hanging arm lies within the armhole plane: it faces the body, where the
+    # torso's flank (also nearest the arm bones under the armpit) faces away from it
+    inner = is_arm and n is not None and n.x * (1 if c.x > 0 else -1) < -0.1
+    if past or inner or (is_arm and c.z <= hems.belt):
         if (c - arm["wrist"][0]).dot(arm["wrist"][1]) > 0:
             return 0
         if (c - arm["elbow"][0]).dot(arm["elbow"][1]) > 0:
@@ -255,12 +276,14 @@ def region_of(c, segs, hems):
             return R_KNEE
         return R_THIGH
     if (c - Vector((0, 0, hems.neckline))).dot(hems.neck_normal) > 0 or bn in ("neck", "head"):
+        if hems.chest < c.z < hems.collar and abs(c.x) > hems.strap_in:
+            return R_STRAP if abs(c.x) < hems.strap_x else R_YOKE
         return 0
     if c.z < hems.belt:
         return R_PELVIS
     if c.z < hems.chest:
         return R_BELLY
-    return R_CHEST
+    return R_YOKE if abs(c.x) > hems.strap_x and (c - hems.armhole(sfx)[0]).dot(hems.armhole(sfx)[1]) > 0 else R_CHEST
 
 
 def cut_regions(body, rig, hems):
@@ -281,25 +304,29 @@ def cut_regions(body, rig, hems):
     is_leg = lambda c: nearest_bone(c, segs)[0].startswith(("thigh", "shin", "foot")) and not in_hand(c)
     torso = lambda c: not is_arm(c) and nearest_bone(c, segs)[0] not in ("head",)
     cut(torso, (0, 0, hems.neckline), hems.neck_normal)
+    cut(torso, (0, 0, hems.collar), (0, 0, 1))
     cut(lambda c: torso(c) and not is_leg(c), (0, 0, hems.chest), (0, 0, 1))
     cut(lambda c: not is_arm(c), (0, 0, hems.belt), (0, 0, 1))
     cut(is_leg, (0, 0, hems.shoe), (0, 0, 1))
     for sfx, arm in hems.arms.items():
         mine = lambda c, sfx=sfx: side_of(c) == sfx
-        cut(lambda c, m=mine: m(c) and c.z > hems.chest - 0.02, *arm["shoulder"])
+        cut(lambda c, m=mine: m(c) and c.z > hems.belt - 0.02 and not is_leg(c), *arm["shoulder"])
+        for x in (hems.strap_x, hems.strap_in):
+            cut(lambda c, m=mine: m(c) and c.z > hems.chest - 0.02 and torso(c), (side_x(sfx) * x, 0, 0), (side_x(sfx), 0, 0))
+        cut(lambda c, m=mine: m(c) and c.z > hems.chest - 0.02 and torso(c) and abs(c.x) > hems.strap_x - 0.01, *hems.armhole(sfx))
         for k in ("sleeve", "elbow", "wrist"):
             cut(lambda c, m=mine: m(c) and is_arm(c), *arm[k])
         for k in ("shorts", "knee"):
             cut(lambda c, m=mine: m(c) and is_leg(c), *hems.legs[sfx][k])
 
-    names = [f"skin.r{i}" for i in range(11)]
+    names = [f"skin.r{i}" for i in range(R_STRAP + 1)]
     for n in names:
         if n not in bpy.data.materials:
             m = bpy.data.materials["skin"].copy()
             m.name = n
         me.materials.append(bpy.data.materials[n])
     for f in bm.faces:
-        f.material_index = region_of(f.calc_center_median(), segs, hems)
+        f.material_index = region_of(f.calc_center_median(), segs, hems, f.normal)
         f.smooth = True
     bm.to_mesh(me)
     bm.free()
@@ -450,9 +477,37 @@ def garment(body, name, mat, regions, thick, d):
             kb.data[i].co = kb.data[i].co + n * off
     for i, n in enumerate(normals):
         me.vertices[i].co = me.vertices[i].co + n * off
+    turn_hems(me, normals, off)
     me.materials.clear()
     me.materials.append(bpy.data.materials[mat])
     return g
+
+
+def turn_hems(me, normals, off):
+    """Folds every open edge of a garment shell back into the body (a turned hem), so no gap
+    between cloth and skin shows along necklines, sleeves and hems."""
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    bm.verts.ensure_lookup_table()
+    rim = [e for e in bm.edges if e.is_boundary]
+    if not rim:
+        bm.free()
+        return
+    # each new vertex sits on its source: match them by position
+    old = {tuple(round(c, 7) for c in v.co): normals[v.index] for e in rim for v in e.verts}
+    res = bmesh.ops.extrude_edge_only(bm, edges=rim)
+    new = [g for g in res["geom"] if isinstance(g, bmesh.types.BMVert)]
+    layers = list(bm.verts.layers.shape.values())
+    for v in new:
+        n = old.get(tuple(round(c, 7) for c in v.co))
+        if n is None:
+            continue
+        push = -n * off * 2.2
+        v.co += push
+        for L in layers:
+            v[L] = v[L] + push
+    bm.to_mesh(me)
+    bm.free()
 
 
 def transfer_keys(obj, src, k=4):

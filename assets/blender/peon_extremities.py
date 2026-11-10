@@ -359,7 +359,7 @@ def add_extremities(body, rig, d, hems, arm_points, leg_points):
         snap_loop(piece_loop, body_loop, co, no, band, d.H * 0.02)
         res = bmesh.ops.bridge_loops(bm, edges=body_loop + piece_loop)
         for f in list(res["faces"]) + [f for f in bm.faces if f.material_index == ti]:
-            f.material_index = names.index(f"skin.r{region_of(f.calc_center_median(), segs, hems)}")
+            f.material_index = names.index(f"skin.r{region_of(f.calc_center_median(), segs, hems, f.normal)}")
             f.smooth = True
         bm.to_mesh(me)
         bm.free()

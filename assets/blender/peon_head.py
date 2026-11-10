@@ -68,12 +68,13 @@ class Face:
         self.rz_top = 0.47 + 0.02 * c
         # the lower face is shorter on children (big cranium, small face)
         self.face_len = (0.5 - 0.07 * c) * (1 + 0.07 * p(P, "face_length"))
-        self.eye_x = (0.165 - 0.005 * c) * (1 + 0.08 * p(P, "eye_spacing"))
-        self.eye_r = (0.063 + 0.008 * c) * (1 + 0.12 * p(P, "eye_size"))
+        self.eye_x = (0.172 - 0.005 * c) * (1 + 0.08 * p(P, "eye_spacing"))
+        self.eye_r = (0.073 + 0.008 * c) * (1 + 0.12 * p(P, "eye_size"))
         self.eye_tilt = math.radians(5 * p(P, "eye_tilt"))
         self.nose_len = self.face_len * (0.32 + 0.05 * p(P, "nose_length")) - 0.02 * c
         self.mouth_z = -self.face_len * 0.56
-        self.smile, self.frown = p(P, "x_smile"), p(P, "x_frown")
+        # a hint of a smile at rest: a pleasant default face rather than a blank or startled one
+        self.smile, self.frown = 0.18 + p(P, "x_smile"), p(P, "x_frown")
         self.mouth_w0 = (0.105 - 0.01 * c) * (1 + 0.15 * p(P, "mouth_width"))
         self.mouth_w = self.mouth_w0 * (1 + 0.18 * self.smile - 0.06 * self.frown)
         self.chin_z = -self.face_len
@@ -281,11 +282,27 @@ def eye_mesh(f, side, segs=24, rings=16):
             i1 = r * segs + (k + 1) % segs
             faces.append((i0, i1, i1 + segs, i0 + segs))
             th = math.pi * (r + 0.5) / rings
-            mats.append("pupil" if th < pupil_a else "iris" if th < iris_a else "eye_white")
+            up = math.sin(th) * math.sin(2 * math.pi * (k + 0.5) / segs)  # height on the ball
+            # the upper lid shades the top of the white, so the eye sits in its socket
+            mats.append("pupil" if th < pupil_a else "iris" if th < iris_a else "eye_shade" if up > 0.42 else "eye_white")
+    # catchlight: a small bright disc on the cornea, up and to the peon's right on both eyes (one
+    # light source), so the eyes read as wet and alive even in shade
+    gb = len(verts)
+    gth, ga, gr = 0.3, math.radians(125), 0.13
+    centre = Vector((math.sin(gth) * math.cos(ga), -math.cos(gth), math.sin(gth) * math.sin(ga)))
+    t1 = centre.cross(Vector((0, 0, 1))).normalized()
+    t2 = t1.cross(centre).normalized()
+    verts.append(centre * er * 1.075)
+    for k in range(10):
+        a = 2 * math.pi * k / 10
+        verts.append((centre + (t1 * math.cos(a) + t2 * math.sin(a)) * gr) .normalized() * er * 1.075)
+    for k in range(10):
+        faces.append((gb, gb + 1 + (k + 1) % 10, gb + 1 + k))
+        mats.append("glint")
     # look very slightly inward and down, like a relaxed gaze at a few metres
     from mathutils import Euler
 
-    rot = Euler((math.radians(3), 0, math.radians(-side * 3)), "XYZ").to_matrix()
+    rot = Euler((math.radians(2), 0, math.radians(side * 4)), "XYZ").to_matrix()
     verts = [rot @ v + Vector((cx, cy, cz)) for v in verts]
     return verts, faces, mats
 
@@ -302,7 +319,7 @@ def lid_mesh(f, side, segs=20, rows=6):
     er = f.eye_r
     c = eye_centre(f, side)
     open_ = p(f.P, "eye_open")
-    up_line = math.radians(24 + 8 * open_ - 8 * f.c)  # upper lid edge covers the top of the iris
+    up_line = math.radians(19 + 8 * open_ - 6 * f.c)  # relaxed: the lid covers the top of the iris  # upper lid edge covers the top of the iris
     lo_line = math.radians(-30 - 4 * open_ + 7 * f.smile)  # a smile lifts the lower lid
     blink = p(f.P, "x_blink")
     up_line += (lo_line + math.radians(1) - up_line) * blink
@@ -334,6 +351,24 @@ def lid_mesh(f, side, segs=20, rows=6):
                     fc = tuple(reversed(fc))
                 faces.append(fc)
                 mats.append("pupil" if which == "up" and j == 0 else "skin")
+    # upper lashes: a dark fringe from the lash line, sweeping out and up, longest at the outer
+    # corner (a soft wing), which frames the eye at any distance
+    lash = er * 0.36 * (1 - 0.5 * f.c) * (1 - blink * 0.6)
+    lb = len(verts)
+    for k in range(segs + 1):
+        u = k / segs
+        root = verts[k * (rows + 1)]  # upper lid, lash line
+        out = (root - c).normalized()
+        sweep = (out * 0.55 + Vector((0, -0.25, 1.0))).normalized()
+        sweep.x += side * 0.5 * u * u
+        ln = lash * (0.35 + 0.65 * max(0.0, math.sin(math.pi * min(0.97, 0.15 + u * 0.82))) ** 0.5) * (0.6 + 0.6 * u)
+        verts.append(root + out * er * 0.01)
+        verts.append(root + sweep.normalized() * ln)
+    for k in range(segs):
+        a = lb + 2 * k
+        fc = (a, a + 2, a + 3, a + 1)
+        faces.append(fc if side > 0 else tuple(reversed(fc)))
+        mats.append("lash")
     return verts, faces, mats
 
 
@@ -363,11 +398,11 @@ def lips_mesh(f, nu=22, nv=6):
             ax = abs(x)
             mz = f.mouth_at(ax)
             if which == "up":
-                h = 0.03 * lf * (1 - (ax / mw) ** 2) ** 0.8
+                h = 0.03 * lf * max(0.0, 1 - (ax / mw) ** 2) ** 0.8
                 h += 0.004 * math.exp(-((ax - 0.022) / 0.012) ** 2) - 0.004 * math.exp(-(ax / 0.009) ** 2)
                 z0, z1 = mz + 0.001, mz + 0.001 + max(h, 0.0)
             else:
-                h = 0.038 * lf * (1 - (ax / mw) ** 2) ** 0.6
+                h = 0.038 * lf * max(0.0, 1 - (ax / mw) ** 2) ** 0.6
                 z0, z1 = mz - 0.001 - max(h, 0.0), mz - 0.001
             for j in range(nv + 1):
                 verts.append(on_skin(x, z0 + (z1 - z0) * j / nv, 0.0012, lower=which == "lo"))

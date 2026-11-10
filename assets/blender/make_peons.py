@@ -73,6 +73,9 @@ PALETTE = {
     # fixed colours (sRGB)
     "eye_white": (0.95, 0.95, 0.93, 1),
     "pupil": (0.06, 0.05, 0.07, 1),
+    "eye_shade": (0.7, 0.66, 0.66, 1),  # the white under the upper lid's shadow
+    "glint": (1, 1, 1, 1),  # emissive catchlight
+    "lash": (0.08, 0.06, 0.06, 1),
     "skin.lips": (0.86, 0.6, 0.6, 1),  # multiplies the skin tint
     "mouth": (0.3, 0.09, 0.1, 1),
     "teeth": (0.94, 0.93, 0.88, 1),
@@ -91,7 +94,10 @@ def reset():
         m.use_nodes = True
         bsdf = m.node_tree.nodes.get("Principled BSDF")
         bsdf.inputs["Base Color"].default_value = col
-        bsdf.inputs["Roughness"].default_value = 0.3 if name in ("eye_white", "iris", "pupil") else 0.6 if name == "skin.lips" else 0.75
+        bsdf.inputs["Roughness"].default_value = 0.3 if name in ("eye_white", "eye_shade", "iris", "pupil") else 0.6 if name == "skin.lips" else 0.75
+        if name == "glint":
+            bsdf.inputs["Emission Color"].default_value = (1, 1, 1, 1)
+            bsdf.inputs["Emission Strength"].default_value = 1.0
 
 
 def link(obj):

@@ -36,16 +36,20 @@ pub mod region {
     pub const KNEE: u32 = 8;
     pub const SHIN: u32 = 9;
     pub const FOOT: u32 = 10;
+    /// The top of the torso beside a tank top's straps, out to the armhole.
+    pub const YOKE: u32 = 11;
+    /// The tops of the shoulders a top's straps (or a tee's shoulders) cover above the neckline.
+    pub const STRAP: u32 = 12;
 }
 
 /// Skin regions a garment covers (matches `GARMENTS` in `assets/blender/peon_body.py`).
 fn covers(garment: &str) -> &'static [u32] {
     use region::*;
     match garment {
-        "top_tee" => &[CHEST, BELLY, SHOULDER],
-        "top_long" => &[CHEST, BELLY, SHOULDER, UPPER_ARM, FOREARM],
-        "top_tank" => &[CHEST, BELLY],
-        "top_dress" => &[CHEST, BELLY, PELVIS],
+        "top_tee" => &[CHEST, STRAP, YOKE, BELLY, SHOULDER],
+        "top_long" => &[CHEST, STRAP, YOKE, BELLY, SHOULDER, UPPER_ARM, FOREARM],
+        "top_tank" => &[CHEST, STRAP, BELLY],
+        "top_dress" => &[CHEST, STRAP, BELLY, PELVIS],
         "bottom_trousers" => &[PELVIS, THIGH, KNEE, SHIN],
         "bottom_shorts" => &[PELVIS, THIGH],
         "bottom_skirt" => &[PELVIS],
@@ -699,7 +703,7 @@ mod tests {
             for s in [slot::SKIN, slot::HAIR, slot::SHIRT, slot::PANTS, slot::SHOES, slot::IRIS] {
                 assert!(all().any(|v| v.slot & 0xff == s), "{name}: slot {s}");
             }
-            for r in 1..=region::FOOT {
+            for r in 1..=region::STRAP {
                 assert!(body.data.vertices.iter().any(|v| (v.slot >> 8) & 255 == r), "{name}: skin region {r}");
             }
             for (id, _) in sim::genetics::HAIR_STYLES.iter().filter(|(id, _)| *id != "bald") {
