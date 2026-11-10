@@ -4,6 +4,9 @@ description = "Life-sim simulation: pure logic on hearth_ecs, deterministic and 
 version.workspace = true
 edition.workspace = true
 
+[features]
+profiling = []
+
 [dependencies]
 hearth_ecs.workspace = true
 glam.workspace = true

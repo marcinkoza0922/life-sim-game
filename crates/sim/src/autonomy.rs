@@ -10,7 +10,7 @@ use crate::lot::Lot;
 use crate::nav::{NavField, NavNode};
 use crate::objects::ObjectInstance;
 use crate::rng::SimRng;
-use crate::social::{accept_chance, social_allowed};
+use crate::social::{accept_chance_with, social_allowed, social_allowed_with};
 use crate::time::{Clock, FreeWill, Settings};
 
 /// How badly a need value wants raising (0 at full, ~3.4 at empty).
@@ -184,6 +184,12 @@ pub struct Candidate {
 
 /// Every option the peon could pick autonomously, scored and sorted (best first).
 pub fn candidates(world: &World, e: Entity, data: &GameData) -> Vec<Candidate> {
+    candidates_with_navigation(world, e, data).0
+}
+
+fn candidates_with_navigation(world: &World, e: Entity, data: &GameData) -> (Vec<Candidate>, NavField) {
+    #[cfg(feature = "profiling")]
+    let _span = crate::profiling::Span::new(1);
     let clock = *world.res::<Clock>();
     let funds = world.res::<Household>().funds;
     let needs = world.get::<Needs>(e).unwrap().clone();
@@ -291,6 +297,15 @@ pub fn candidates(world: &World, e: Entity, data: &GameData) -> Vec<Candidate> {
         }
     }
 
+    // This lookup is valid only during the read-only scoring pass.
+    let commitments = crate::romance::Commitments::new(world);
+    // Only score socials that have an eligible target; reuse initiator-only work
+    // across subsequent targets without paying for unused options in small homes.
+    let mut social_scores: Vec<_> = data.socials.iter().map(|sd| {
+        let eligible = sd.autonomous && sd.initiator_ok(stage)
+            && sd.requires_trait.as_ref().is_none_or(|t| pers.has(t));
+        (eligible, None)
+    }).collect();
     // other peons
     for (te, _tage, ttf, tneeds, taq, tpeon) in world
         .query_filtered::<(Entity, &Age, &Transform, &Needs, &ActionQueue, &Peon), (hearth_ecs::Without<Dead>, hearth_ecs::Without<AtWork>, hearth_ecs::Without<Offlot>)>()
@@ -311,10 +326,20 @@ pub fn candidates(world: &World, e: Entity, data: &GameData) -> Vec<Candidate> {
         let asleep = taq.current.as_ref().is_some_and(|c| is_sleeping(world, data, c));
         let Some(dist) = adjacent_distance(&lot, &field, ttf) else { continue };
         for (si, sd) in data.socials.iter().enumerate() {
-            if !sd.autonomous || (asleep && !sd.care) || social_allowed(world, sd, e, te).is_err() {
+            let (eligible, score) = &mut social_scores[si];
+            if !*eligible || (asleep && !sd.care) || social_allowed_with(world, sd, e, te, Some(&commitments)).is_err() {
                 continue;
             }
-            let mut helps = Vec::new();
+            let (base, helps, multiplier) = score.get_or_insert_with(|| {
+                let mut helps = Vec::new();
+                let base = if sd.care { 0.0 } else {
+                    for (n, r) in &sd.rates {
+                        if *r * sd.minutes as f32 / 60.0 > 5.0 { helps.push(*n); }
+                    }
+                    score_gains(&needs, sd.rates.iter().map(|(n, r)| (*n, (r * sd.minutes as f32 / 60.0).clamp(-100.0, 100.0))))
+                };
+                (base, helps, tag_multiplier(data, &pers, &sd.tags))
+            });
             let mut s = if sd.care {
                 // empathy: driven by the target's needs
                 let g: f32 = sd
@@ -327,18 +352,12 @@ pub fn candidates(world: &World, e: Entity, data: &GameData) -> Vec<Candidate> {
                     .sum();
                 g * (0.6 + pers.axes.nice as f32 * 0.06)
             } else {
-                let gains = sd.rates.iter().map(|(n, r)| (*n, (r * sd.minutes as f32 / 60.0).clamp(-100.0, 100.0)));
-                for (n, r) in sd.rates.iter() {
-                    if *r * sd.minutes as f32 / 60.0 > 5.0 {
-                        helps.push(*n);
-                    }
-                }
-                score_gains(&needs, gains)
+                *base
             };
-            s *= tag_multiplier(data, &pers, &sd.tags);
+            s *= *multiplier;
             // the spoken-for mostly keep their eyes to themselves, especially in front of their partner
             if sd.romantic
-                && let Some(p) = crate::romance::committed_to(world, e)
+                && let Some(p) = commitments.get(e)
                 && p != te
             {
                 s *= if pers.has("romantic") { 0.25 } else { 0.08 };
@@ -350,16 +369,16 @@ pub fn candidates(world: &World, e: Entity, data: &GameData) -> Vec<Candidate> {
                 s *= (1.0 - mood / 100.0).clamp(0.2, 2.0) * 0.6;
             }
             // expected value of acceptance
-            s *= 0.4 + 0.6 * accept_chance(world, sd, e, te);
+            s *= 0.4 + 0.6 * accept_chance_with(world, sd, e, te, Some(&commitments));
             s /= 1.0 + dist / 25.0;
             let label = format!("{} {}", sd.name, tpeon.first);
-            s *= boredom(&label, &helps);
+            s *= boredom(&label, helps);
             if s > 0.01 {
                 out.push(Candidate {
                     kind: ActionKind::Social { target: te, social: si },
                     label,
                     score: s,
-                    helps,
+                    helps: helps.clone(),
                 });
             }
         }
@@ -371,7 +390,7 @@ pub fn candidates(world: &World, e: Entity, data: &GameData) -> Vec<Candidate> {
         _ => (0, 0),
     };
     out.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.label.cmp(&b.label)).then_with(|| key(&a.kind).cmp(&key(&b.kind))));
-    out
+    (out, field)
 }
 
 pub(crate) fn is_sleeping(world: &World, data: &GameData, c: &CurrentAction) -> bool {
@@ -406,19 +425,24 @@ fn adjacent_distance(lot: &Lot, field: &NavField, target: &Transform) -> Option<
 
 /// Picks what to do next. Records the top options on the [`Brain`] for debugging.
 pub fn choose(world: &World, e: Entity, data: &GameData) -> Option<(ActionKind, String)> {
+    choose_with_navigation(world, e, data).0
+}
+
+pub(crate) fn choose_with_navigation(world: &World, e: Entity, data: &GameData) -> (Option<(ActionKind, String)>, Option<NavField>) {
     let fw = world
         .get::<Brain>(e)
         .and_then(|b| b.free_will)
         .unwrap_or_else(|| world.res::<Settings>().free_will);
     if fw == FreeWill::Off {
-        return None;
+        return (None, None);
     }
     let needs = world.get::<Needs>(e).unwrap().clone();
     let (lowest, lowest_v) = needs.most_urgent();
     if fw == FreeWill::Low && needs.lowest_core().1 >= 35.0 {
-        return None;
+        return (None, None);
     }
-    let mut cands = candidates(world, e, data);
+    let (mut cands, field) = candidates_with_navigation(world, e, data);
+    let reusable = field.is_complete().then_some(field);
     if fw == FreeWill::Low {
         cands.retain(|c| c.helps.iter().any(|n| needs.get(*n) < 40.0));
     }
@@ -427,7 +451,7 @@ pub fn choose(world: &World, e: Entity, data: &GameData) -> Option<(ActionKind, 
         b.last_think_tick = world.res::<Clock>().tick;
     }
     if cands.is_empty() {
-        return None;
+        return (None, None);
     }
     // When a core need is critical, prefer something that actually helps it.
     let critical = lowest_v < 15.0;
@@ -437,7 +461,7 @@ pub fn choose(world: &World, e: Entity, data: &GameData) -> Option<(ActionKind, 
             if let Some(mut b) = world.get_mut::<Brain>(e) {
                 b.unfixable = None;
             }
-            return Some((c.kind.clone(), c.label.clone()));
+            return (Some((c.kind.clone(), c.label.clone())), reusable);
         }
         // nothing reachable helps; don't let the critical-need interrupt thrash every action
         unfixable = Some(lowest);
@@ -448,7 +472,7 @@ pub fn choose(world: &World, e: Entity, data: &GameData) -> Option<(ActionKind, 
     let top: Vec<&Candidate> = cands.iter().take(3).filter(|c| c.score >= cands[0].score * 0.5).collect();
     let weights: Vec<f32> = top.iter().map(|c| c.score * c.score).collect();
     let pick = world.res_mut::<SimRng>().weighted(&weights).unwrap_or(0);
-    Some((top[pick].kind.clone(), top[pick].label.clone()))
+    (Some((top[pick].kind.clone(), top[pick].label.clone())), reusable)
 }
 
 /// Options for the player's pie menu, including unavailable ones with the reason.

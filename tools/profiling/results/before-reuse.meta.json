@@ -1,0 +1,10 @@
+{
+  "revision": "648b30a3cc63f7ac84827b201312381c4c285c77",
+  "dirty": true,
+  "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "platform": "Linux-7.3.1-202.nobara.fc44.x86_64-x86_64-with-glibc2.43",
+  "started_utc": "2026-11-10T05:22:02.597662+00:00",
+  "repeats": 3,
+  "iterations": 1440,
+  "benchmark_cpu": 8
+}

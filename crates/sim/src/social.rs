@@ -118,6 +118,10 @@ pub fn is_family(world: &World, a: Entity, b: Entity) -> bool {
 
 /// Can `a` start `def` with `b` at all (ignoring randomness)?
 pub fn social_allowed(world: &World, def: &SocialDef, a: Entity, b: Entity) -> Result<(), &'static str> {
+    social_allowed_with(world, def, a, b, None)
+}
+
+pub(crate) fn social_allowed_with(world: &World, def: &SocialDef, a: Entity, b: Entity, commitments: Option<&crate::romance::Commitments<'_>>) -> Result<(), &'static str> {
     let (Some(aa), Some(ab)) = (world.get::<Age>(a), world.get::<Age>(b)) else { return Err("unavailable") };
     if !def.initiator_ok(aa.stage) {
         return Err("too young or too old");
@@ -139,23 +143,31 @@ pub fn social_allowed(world: &World, def: &SocialDef, a: Entity, b: Entity) -> R
     if def.romantic && (is_family(world, a, b) || !aa.stage.is_adult() || !ab.stage.is_adult()) {
         return Err("absolutely not");
     }
-    social_pair_ok(world, def, a, b)
+    social_pair_ok_with(world, def, a, b, commitments)
 }
 
 /// The pair-specific gates (sexes, where they stand with each other). When these fail the social
 /// isn't offered at all, rather than shown greyed out.
 pub fn social_pair_ok(world: &World, def: &SocialDef, a: Entity, b: Entity) -> Result<(), &'static str> {
+    social_pair_ok_with(world, def, a, b, None)
+}
+
+fn social_pair_ok_with(world: &World, def: &SocialDef, a: Entity, b: Entity, commitments: Option<&crate::romance::Commitments<'_>>) -> Result<(), &'static str> {
     if def.opposite_sex && !crate::romance::opposite_sex(world, a, b) {
         return Err("only for a woman and a man");
     }
     if let Some(req) = def.requires {
-        crate::romance::rel_req_ok(world, req, a, b)?;
+        crate::romance::rel_req_ok_with(world, req, a, b, commitments)?;
     }
     Ok(())
 }
 
 /// Probability the target goes along with it.
 pub fn accept_chance(world: &World, def: &SocialDef, a: Entity, b: Entity) -> f32 {
+    accept_chance_with(world, def, a, b, None)
+}
+
+pub(crate) fn accept_chance_with(world: &World, def: &SocialDef, a: Entity, b: Entity, commitments: Option<&crate::romance::Commitments<'_>>) -> f32 {
     if def.care {
         return def.accept;
     }
@@ -182,9 +194,57 @@ pub fn accept_chance(world: &World, def: &SocialDef, a: Entity, b: Entity) -> f3
             p -= 0.2;
         }
     }
-    if def.id == "ask_move_in" && crate::romance::committed_to(world, b).is_some_and(|c| c != a) {
+    if def.id == "ask_move_in" && commitments.map_or_else(|| crate::romance::committed_to(world, b), |c| c.get(b)).is_some_and(|c| c != a) {
         // they'd be leaving someone
         p -= 0.5;
     }
     p.clamp(0.05, 0.98)
+}
+
+#[cfg(test)]
+mod cached_tests {
+    use super::*;
+
+    #[test]
+    fn decision_lookup_preserves_social_gates_and_acceptance() {
+        let mut sim = crate::starter::starter_sim(7);
+        sim.populate_neighborhood();
+        let peons = sim.world.query::<Entity>().iter().filter(|&e| sim.world.has::<Age>(e)).collect::<Vec<_>>();
+        let data = sim.world.res::<crate::sim::Data>().0.clone();
+        for phase in 0..2 {
+            if phase == 1 {
+                // Multiple commitments, a dead partner, and an absent generation.
+                let mut rels = sim.world.res_mut::<Relationships>();
+                for (i, &a) in peons.iter().enumerate() {
+                    for (j, &b) in peons.iter().enumerate().skip(i + 1) {
+                        let r = rels.get_mut(a, b);
+                        r.friendship = ((i * 13 + j * 7) % 201) as f32 - 100.0;
+                        r.romance = ((i * 7 + j * 11) % 101) as f32;
+                        r.partners = (i + j) % 5 == 0;
+                        r.engaged = (i + j) % 7 == 0;
+                        r.married = (i + j) % 11 == 0;
+                    }
+                }
+                rels.get_mut(peons[0], Entity::PLACEHOLDER).partners = true;
+                drop(rels);
+                sim.world.insert_one(peons[1], crate::components::Dead { cause: "test".into(), tick: 0 });
+            }
+            let lookup = crate::romance::Commitments::new(&sim.world);
+            for &a in &peons {
+                // Compare to the original allocating, sorted implementation.
+                let mut expected = sim.world.res::<Relationships>().of(a).into_iter()
+                    .filter(|(e, r)| (r.partners || r.engaged || r.married) && sim.world.contains(*e) && !sim.world.has::<crate::components::Dead>(*e))
+                    .map(|(e, _)| e).collect::<Vec<_>>();
+                expected.sort();
+                assert_eq!(crate::romance::committed_to(&sim.world, a), expected.first().copied());
+                assert_eq!(lookup.get(a), expected.first().copied());
+                for &b in &peons {
+                    for def in &data.socials {
+                        assert_eq!(social_allowed_with(&sim.world, def, a, b, Some(&lookup)), social_allowed(&sim.world, def, a, b));
+                        assert_eq!(accept_chance_with(&sim.world, def, a, b, Some(&lookup)).to_bits(), accept_chance(&sim.world, def, a, b).to_bits());
+                    }
+                }
+            }
+        }
+    }
 }

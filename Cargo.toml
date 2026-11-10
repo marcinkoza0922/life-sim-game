@@ -34,3 +34,8 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+
+# Optimized profiling builds retain symbols for perf/flamegraphs.
+[profile.profiling]
+inherits = "release"
+debug = 1
