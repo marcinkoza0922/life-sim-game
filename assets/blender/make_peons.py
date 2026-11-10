@@ -44,7 +44,7 @@ import bpy
 from mathutils import Euler, Matrix, Quaternion, Vector
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from peon_body import BODY_SLIDERS, Hems, add_body_keys, cut_regions, make_body, make_clothes, transfer_keys, weight_body  # noqa: E402
+from peon_body import BODY_SLIDERS, GARMENTS, Hems, add_body_keys, cut_regions, make_body, make_clothes, transfer_keys, weight_body  # noqa: E402
 from peon_extremities import add_extremities, add_stubs, copy_weights, paint_body, paint_head, shoe_last, smooth_seams  # noqa: E402
 from peon_hair import FACIAL_HAIR, hair_meshes  # noqa: E402
 from peon_head import EXPRESSIONS, FACE_SLIDERS, Face, build_head  # noqa: E402
@@ -1002,6 +1002,15 @@ def preview(rig, body, clothes, hair, path):
     keys = dict(kv.split("=") for kv in os.environ.get("PEON_KEYS", "").split(",") if kv)
     for o in clothes + hair:
         o.hide_render = o.name not in show and o.name != "head"
+    # like the game, drop the skin a shown garment covers
+    covered = set().union(*(GARMENTS[n][1] for n in show if n in GARMENTS))
+    bm = bmesh.new()
+    bm.from_mesh(body.data)
+    mats = body.data.materials
+    hide = [f for f in bm.faces if mats[f.material_index].name.startswith("skin.r") and int(mats[f.material_index].name[6:]) in covered]
+    bmesh.ops.delete(bm, geom=hide, context="FACES")
+    bm.to_mesh(body.data)
+    bm.free()
     for o in [body] + clothes + hair:
         if o.data.shape_keys:
             for kb in o.data.shape_keys.key_blocks[1:]:

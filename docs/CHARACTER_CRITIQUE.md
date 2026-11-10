@@ -146,7 +146,17 @@ If we fix only a few things, these do the most for the "looks wrong" reaction, r
   hips, flatter seat), leaving the inner thighs alone (`body_key_offset` in `peon_body.py`). Sexes
   roll frames nearer the ends (men 0.65–1, women −1 to −0.65, with a fuller chest;
   `sexed_shape` in `genetics.rs`), so every adult reads as one or the other before the sliders.
-- Still open: looser clothes and drape, hair and facial hair.
+- **Looser clothes and drape (done):** garments stand off the skin by a per-region ease (snug at
+  the chest and shoulders, looser over the belly, sleeves and lower legs; `EASE`), flare toward
+  free-hanging hems (sleeves, shirt and leg hems; `HEM_FLARE`), and are draped for every shape
+  key: the shell is smoothed along its normals but never sinks below skin + ease, so cloth bridges
+  hollows (under the bust, behind the knee, between belly rolls) instead of following them
+  (`drape_shell` in `peon_body.py`). Trousers now hang as straight legs and tees fall from the
+  chest. The garment copy also welds the body's unwelded seams so the drape crosses them. Still
+  rough: on heavy builds, sleeves keep the arm's convex muscle lumps, and faint shading lines
+  remain where the region cuts leave thin rows. The Blender preview now hides covered skin like
+  the game does.
+- Still open: hair and facial hair; the square neckline with small notches at the strap corners.
 
 Hair shells and facial hair come after these. They're noticeable, but players forgive stylised
 hair much more readily than dead eyes or torn clothing.

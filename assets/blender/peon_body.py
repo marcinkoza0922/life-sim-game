@@ -458,9 +458,21 @@ def add_body_keys(body, d, smooth=8):
 # clothing
 
 
-def garment(body, name, mat, regions, thick, d):
-    """A copy of the body's faces in `regions`, pushed out along the normals (every shape key
-    along the basis normal), recoloured with the garment's palette material."""
+# extra room per region as a fraction of H, on top of a garment's thickness: cloth stands off the
+# belly, the sleeves and the lower legs but sits close at the chest, shoulders and waistband
+EASE = {R_CHEST: 0.001, R_STRAP: 0.0, R_YOKE: 0.0005, R_SHOULDER: 0.0015, R_BELLY: 0.005, R_UPPER_ARM: 0.004,
+        R_FOREARM: 0.005, R_PELVIS: 0.002, R_THIGH: 0.004, R_KNEE: 0.006, R_SHIN: 0.008}
+# open edges that hang free (sleeve, shirt and leg hems) flare out by this much, fading over HEM_FADE;
+# necklines and waistbands (edges of the other regions) stay snug
+HEM_FLARE = {R_UPPER_ARM: 0.006, R_FOREARM: 0.004, R_SHOULDER: 0.006, R_BELLY: 0.005, R_THIGH: 0.006, R_SHIN: 0.006}
+HEM_FADE = 0.06
+DRAPE_STEPS = 160  # normal-only smoothing passes: how far cloth bridges hollows (under the bust, calves, rolls)
+
+
+def garment(body, name, mat, regions, thick, d, drape=True):
+    """A copy of the body's faces in `regions`, pushed out along the normals by the thickness plus
+    some ease, then draped (see `drape`) for every shape key, recoloured with the garment's palette
+    material."""
     select_only(body)
     bpy.ops.object.duplicate()
     g = bpy.context.view_layer.objects.active
@@ -471,24 +483,109 @@ def garment(body, name, mat, regions, thick, d):
     bm = bmesh.new()
     bm.from_mesh(me)
     bmesh.ops.delete(bm, geom=[f for f in bm.faces if f.material_index not in keep], context="FACES")
+    # the body has unwelded seams; cloth is one sheet, so weld them (else they show as ridges)
+    bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=3e-4 * d.H)
     bm.to_mesh(me)
     bm.free()
     normals = [v.normal.copy() for v in me.vertices]
-    off = thick * d.H
+    region = [int(m.name[6:]) for m in me.materials]
+    ease = garment_ease(me, region, thick, d) if drape else [thick * d.H] * len(me.vertices)
+    turned = [e + thick * d.H * 1.2 for e in ease]
     for kb in me.shape_keys.key_blocks:
-        for i, n in enumerate(normals):
-            kb.data[i].co = kb.data[i].co + n * off
-    for i, n in enumerate(normals):
-        me.vertices[i].co = me.vertices[i].co + n * off
-    turn_hems(me, normals, off)
+        co = [kb.data[i].co + n * e for i, (n, e) in enumerate(zip(normals, ease))]
+        if drape:
+            co = drape_shell(me, [v.co for v in kb.data], co, normals, ease)
+        for i, c in enumerate(co):
+            kb.data[i].co = c
+    for v, b in zip(me.vertices, me.shape_keys.key_blocks[0].data):
+        v.co = b.co
+    turn_hems(me, normals, turned)
     me.materials.clear()
     me.materials.append(bpy.data.materials[mat])
     return g
 
 
+def neighbours(me):
+    adj = [set() for _ in me.vertices]
+    for e in me.edges:
+        a, b = e.vertices
+        adj[a].add(b)
+        adj[b].add(a)
+    return [list(a) for a in adj]
+
+
+def garment_ease(me, region, thick, d):
+    """Per-vertex stand-off from the skin: thickness, the region's ease, and a flare that grows
+    towards free-hanging hems, smoothed so region seams don't step."""
+    n = len(me.vertices)
+    adj = neighbours(me)
+    acc, cnt = [0.0] * n, [0] * n
+    hem_flare = [0.0] * n
+    for p in me.polygons:
+        r = region[p.material_index]
+        for i in p.vertices:
+            acc[i] += EASE.get(r, 0.0)
+            cnt[i] += 1
+    edge_faces = {}
+    for p in me.polygons:
+        for k in p.edge_keys:
+            edge_faces.setdefault(k, []).append(region[p.material_index])
+    for (a, b), rs in edge_faces.items():
+        if len(rs) == 1:
+            f = HEM_FLARE.get(rs[0], 0.0)
+            hem_flare[a] = max(hem_flare[a], f)
+            hem_flare[b] = max(hem_flare[b], f)
+    # spread the flare inwards by distance along the surface (Dijkstra-ish relaxation)
+    dist = [0.0 if f > 0 else math.inf for f in hem_flare]
+    src = list(hem_flare)
+    fade = HEM_FADE * d.H
+    todo = [i for i in range(n) if hem_flare[i] > 0]
+    while todo:
+        nxt = []
+        for i in todo:
+            for j in adj[i]:
+                dd = dist[i] + (me.vertices[i].co - me.vertices[j].co).length
+                if dd < dist[j] and dd < fade:
+                    dist[j], src[j] = dd, src[i]
+                    nxt.append(j)
+        todo = nxt
+    e = [acc[i] / max(cnt[i], 1) for i in range(n)]
+    for _ in range(40):
+        e = [0.5 * e[i] + 0.5 * sum(e[j] for j in adj[i]) / max(len(adj[i]), 1) for i in range(n)]
+    out = []
+    for i in range(n):
+        flare = src[i] * (1 - dist[i] / fade) ** 2 if dist[i] < fade else 0.0
+        out.append((thick + e[i] + flare) * d.H)
+    return out
+
+
+def drape_shell(me, skin, co, normals, ease):
+    """Cloth bridges hollows instead of following them: smooth the shell along the normals only
+    (so hems and vertex spacing stay put), never letting it sink below skin + ease."""
+    import numpy as np
+
+    n = len(me.vertices)
+    ev = np.array([e.vertices[:] for e in me.edges], dtype=np.int64).reshape(-1, 2)
+    deg = np.bincount(ev.ravel(), minlength=n).astype(np.float64)
+    deg[deg == 0] = 1
+    S = np.array([tuple(c) for c in skin])
+    N = np.array([tuple(c) for c in normals])
+    lo = np.array(ease)
+    off = np.maximum(np.einsum("ij,ij->i", np.array([tuple(c) for c in co]) - S, N), lo)
+    for _ in range(DRAPE_STEPS):
+        P = S + N * off[:, None]
+        acc = np.zeros_like(P)
+        np.add.at(acc, ev[:, 0], P[ev[:, 1]])
+        np.add.at(acc, ev[:, 1], P[ev[:, 0]])
+        mid = acc / deg[:, None]
+        off = np.maximum(off + 0.5 * np.einsum("ij,ij->i", mid - P, N), lo)
+    return [Vector(p) for p in S + N * off[:, None]]
+
+
 def turn_hems(me, normals, off):
     """Folds every open edge of a garment shell back into the body (a turned hem), so no gap
-    between cloth and skin shows along necklines, sleeves and hems."""
+    between cloth and skin shows along necklines, sleeves and hems. `off` is each vertex's
+    stand-off from the skin."""
     bm = bmesh.new()
     bm.from_mesh(me)
     bm.verts.ensure_lookup_table()
@@ -497,7 +594,7 @@ def turn_hems(me, normals, off):
         bm.free()
         return
     # each new vertex sits on its source: match them by position
-    old = {tuple(round(c, 7) for c in v.co): normals[v.index] for e in rim for v in e.verts}
+    old = {tuple(round(c, 7) for c in v.co): normals[v.index] * off[v.index] for e in rim for v in e.verts}
     res = bmesh.ops.extrude_edge_only(bm, edges=rim)
     new = [g for g in res["geom"] if isinstance(g, bmesh.types.BMVert)]
     layers = list(bm.verts.layers.shape.values())
@@ -505,7 +602,7 @@ def turn_hems(me, normals, off):
         n = old.get(tuple(round(c, 7) for c in v.co))
         if n is None:
             continue
-        push = -n * off * 2.2
+        push = -n * 1.0
         v.co += push
         for L in layers:
             v[L] = v[L] + push
@@ -595,7 +692,7 @@ def make_clothes(body, rig, d, hems, sources=None):
     from the smooth foot the detailed one replaced), skinned and keyed like the body."""
     out = []
     for name, (mat, regions, thick) in GARMENTS.items():
-        g = garment((sources or {}).get(name, body), name, mat, regions, thick, d)
+        g = garment((sources or {}).get(name, body), name, mat, regions, thick, d, drape=name != "shoes")
         if name in SKIRTS:
             s = skirt(body, name + "_skirt", mat, hems, d, SKIRTS[name], rig)
             transfer_keys(s, body)
