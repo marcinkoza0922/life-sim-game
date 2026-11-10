@@ -123,11 +123,23 @@ highlights are softer while the dark adult face remains readable. These are samp
 extreme slider combinations and continuous expression transitions still need visual coverage.
 Clothing boundaries, scalp hair and hand contact remain open.
 
+## Follow-up: strap and hem boundaries
+
+Tank-top and dress straps used to stop at a horizontal collar plane on top of the shoulder,
+which rises about 1.5 cm above it, and the strap/armhole cuts skipped faces nearest the arm and
+neck bones there, so straps ended in notched tabs. Straps now run on over the shoulder to the
+back, and those cuts take everything inboard of the armhole plane (`cut_regions`/`region_of` in
+`peon_body.py`). Before each region cut, a vertex just beside the plane is slid onto it, so the
+cut leaves no sliver row: the faint shading lines at the chest/belly seam and across trouser legs
+are gone. `PEON_ZOOM=chest` gives a shoulder close-up in the Blender preview. Verified on
+tank, tee, dress and long-sleeve tops (heavy 0.6) and in `simctl lineup`. Still open: sleeves
+follow the arm's muscle lumps, the square neckline is plain, and there is no seam/cuff detail.
+
 ## Next priorities and acceptance checks
 
 1. **Facial hair and hair silhouette:** remove the rectangular disguise effect; preserve an
    appealing face in front, three-quarter and profile views.
-2. **Garment boundaries and volume:** clean straps/armholes/hems; make sleeves and trousers
+2. **Garment volume:** (strap/hem boundaries done, see above) make sleeves and trousers
    hang as fabric across builds and bent poses, without padded lobes or skin exposure artifacts.
 3. **Skin finish and face integration:** softer highlights across tones, subtle colour zones,
    lids that sit around the eye and lips/teeth that belong to the face.

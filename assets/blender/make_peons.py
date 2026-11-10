@@ -4,7 +4,7 @@ Run headless from the repo root (about three minutes for all six):
 
     blender -b --factory-startup -P assets/blender/make_peons.py [-- adult teen ...]
 
-Set PEON_PREVIEW=out.png (with PEON_SHOW=mesh,names and PEON_KEYS=key=value,...) to render a
+Set PEON_PREVIEW=out.png (with PEON_SHOW=mesh,names, PEON_KEYS=key=value,... and PEON_ZOOM=head|chest|hand|foot) to render a
 dressed body front and three-quarter in Blender instead of exporting.
 
 Every stage file holds the same skeleton (bone names) and these skinned meshes:
@@ -1036,7 +1036,8 @@ def preview(rig, body, clothes, hair, path):
     lo.rotation_euler = (math.radians(50), 0, math.radians(-30))
     H = rig.dimensions.z
     zoom_on = os.environ.get("PEON_ZOOM", "")
-    zoom = zoom_on == "head"
+    zoom = zoom_on in ("head", "chest")
+    zoom_z, zoom_scale = (0.78, 0.36) if zoom_on == "chest" else (0.9, 0.3)
     if zoom_on in ("hand", "foot"):
         # close-up of the left hand / foot: front, side, back and from below
         sh, el, wr, tip = arm_points(Dims(STAGES[os.environ.get("PEON_STAGE", "adult")]), 1)
@@ -1058,10 +1059,10 @@ def preview(rig, body, clothes, hair, path):
     for yaw, label in ((0, "front"), (40, "side")):
         cd = bpy.data.cameras.new("c")
         cd.type = "ORTHO"
-        cd.ortho_scale = H * (0.3 if zoom else 1.1)
+        cd.ortho_scale = H * (zoom_scale if zoom else 1.1)
         co = link(bpy.data.objects.new("c", cd))
         a = math.radians(yaw)
-        co.location = (math.sin(a) * 5, -math.cos(a) * 5, H * (0.9 if zoom else 0.5))
+        co.location = (math.sin(a) * 5, -math.cos(a) * 5, H * (zoom_z if zoom else 0.5))
         co.rotation_euler = (math.radians(90), 0, a)
         sc.camera = co
         sc.render.resolution_x, sc.render.resolution_y = 500, 700 if not zoom else 500
@@ -1133,4 +1134,5 @@ def main():
         build_stage(stage, params)
 
 
-main()
+if __name__ == "__main__":
+    main()

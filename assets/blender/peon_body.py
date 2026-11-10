@@ -276,14 +276,19 @@ def region_of(c, segs, hems, n=None):
             return R_KNEE
         return R_THIGH
     if (c - Vector((0, 0, hems.neckline))).dot(hems.neck_normal) > 0 or bn in ("neck", "head"):
+        if hems.chest < c.z and hems.strap_in < abs(c.x) < hems.strap_x and bn != "head":
+            return R_STRAP  # straps run on over the top of the shoulder, which rises above the collar
         if hems.chest < c.z < hems.collar and abs(c.x) > hems.strap_in:
-            return R_STRAP if abs(c.x) < hems.strap_x else R_YOKE
+            return R_YOKE
         return 0
     if c.z < hems.belt:
         return R_PELVIS
     if c.z < hems.chest:
         return R_BELLY
     return R_YOKE if abs(c.x) > hems.strap_x and (c - hems.armhole(sfx)[0]).dot(hems.armhole(sfx)[1]) > 0 else R_CHEST
+
+
+SNAP = 0.3  # crossing-edge fraction within which a vertex is slid onto a cut plane
 
 
 def cut_regions(body, rig, hems):
@@ -296,8 +301,25 @@ def cut_regions(body, rig, hems):
 
     def cut(pred, co, no):
         faces = [f for f in bm.faces if pred(f.calc_center_median())]
-        geom = list({e for f in faces for e in f.edges}) + faces + list({v for f in faces for v in f.verts})
-        bmesh.ops.bisect_plane(bm, geom=geom, plane_co=co, plane_no=no)
+        edges = list({e for f in faces for e in f.edges})
+        # a vertex just beside the plane would leave a sliver row that shades as a line along the
+        # hem: slide it along its crossing edge onto the plane first, so the cut passes through it
+        co, no = Vector(co), Vector(no).normalized()
+        moved = set()
+        for e in edges:
+            a, b = e.verts
+            da, db = (a.co - co).dot(no), (b.co - co).dot(no)
+            if da * db >= 0 or a in moved or b in moved:
+                continue
+            t = da / (da - db)
+            if t < SNAP:
+                a.co = a.co.lerp(b.co, t)
+                moved.add(a)
+            elif t > 1 - SNAP:
+                b.co = b.co.lerp(a.co, 1 - t)
+                moved.add(b)
+        geom = edges + faces + list({v for f in faces for v in f.verts})
+        bmesh.ops.bisect_plane(bm, geom=geom, plane_co=co, plane_no=no, dist=1e-6)
 
     is_arm = lambda c: nearest_bone(c, segs)[0].startswith(("upper_arm", "forearm", "hand"))
     in_hand = lambda c: any((c - w[0]).dot(w[1]) > 0 and (c - w[0]).length < hems.hand_reach for w in (a["wrist"] for a in hems.arms.values()))
@@ -311,9 +333,13 @@ def cut_regions(body, rig, hems):
     for sfx, arm in hems.arms.items():
         mine = lambda c, sfx=sfx: side_of(c) == sfx
         cut(lambda c, m=mine: m(c) and c.z > hems.belt - 0.02 and not is_leg(c), *arm["shoulder"])
+        # the top of the shoulder lies nearest the arm and neck bones, so the strap and armhole cuts
+        # take everything inboard of the armhole plane (else their edges step where they cross it)
+        co, no = arm["shoulder"]
+        trunk = lambda c, m=mine, co=co, no=no: m(c) and c.z > hems.chest - 0.02 and (c - co).dot(no) < 0.01 and nearest_bone(c, segs)[0] != "head"
         for x in (hems.strap_x, hems.strap_in):
-            cut(lambda c, m=mine: m(c) and c.z > hems.chest - 0.02 and torso(c), (side_x(sfx) * x, 0, 0), (side_x(sfx), 0, 0))
-        cut(lambda c, m=mine: m(c) and c.z > hems.chest - 0.02 and torso(c) and abs(c.x) > hems.strap_x - 0.01, *hems.armhole(sfx))
+            cut(trunk, (side_x(sfx) * x, 0, 0), (side_x(sfx), 0, 0))
+        cut(lambda c, t=trunk: t(c) and abs(c.x) > hems.strap_x - 0.01, *hems.armhole(sfx))
         for k in ("sleeve", "elbow", "wrist"):
             cut(lambda c, m=mine: m(c) and is_arm(c), *arm[k])
         for k in ("shorts", "knee"):
