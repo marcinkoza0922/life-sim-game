@@ -22,6 +22,7 @@ pub mod slot {
     pub const PANTS: u32 = 4;
     pub const SHOES: u32 = 5;
     pub const IRIS: u32 = 6;
+    pub const LIPS: u32 = 7;
 }
 
 /// Skin regions the body's faces are tagged with (`skin.rN` materials), hidden under clothes.
@@ -58,9 +59,28 @@ fn covers(garment: &str) -> &'static [u32] {
     }
 }
 
+/// Lip colour (sRGB) for a skin tone. On light skin the lips are a darker, rosier skin; darkening
+/// alone would lose them on deep tones, so those shift towards a berry-mauve with a lift in red
+/// instead, which reads by hue against the brown.
+pub fn lip_tint(skin: [f32; 3]) -> [f32; 3] {
+    let luma = 0.2126 * skin[0] + 0.7152 * skin[1] + 0.0722 * skin[2];
+    let t = ((0.62 - luma) / (0.62 - 0.25)).clamp(0.0, 1.0);
+    let deep = t * t * (3.0 - 2.0 * t);
+    let light = [0.86, 0.6, 0.6];
+    let (mul, add) = ([0.78, 0.55, 0.62], [0.13, 0.04, 0.07]);
+    std::array::from_fn(|i| {
+        let l = skin[i] * light[i];
+        let d = skin[i] * mul[i] + add[i];
+        l + (d - l) * deep
+    })
+}
+
 /// Palette slot of a material name, plus its skin region in bits 8.. (`skin.r3`: skin, region 3;
-/// `skin.lips`: skin tint, always drawn).
+/// `skin.lips`: the lip colour, always drawn).
 fn slot_of(material: &str) -> u32 {
+    if material == "skin.lips" {
+        return slot::LIPS;
+    }
     let (base, sub) = material.split_once('.').unwrap_or((material, ""));
     let slot = match base {
         "skin" => slot::SKIN,
@@ -281,6 +301,7 @@ impl PeonArt {
         palette[slot::PANTS as usize] = rgb(app.pants);
         palette[slot::SHOES as usize] = rgb(app.shoes);
         palette[slot::IRIS as usize] = rgb(app.eyes);
+        palette[slot::LIPS as usize] = rgb(lip_tint(app.skin));
         let outfit = outfit(stage, app);
         let hide = outfit.iter().flat_map(|g| covers(g)).fold(0u32, |m, r| m | 1 << r);
         let face = anim.face;
@@ -700,7 +721,7 @@ mod tests {
                 assert!(head.morph(id).is_some(), "{name}: head morph {id}");
             }
             let all = || m.meshes.iter().flat_map(|m| m.data.vertices.iter());
-            for s in [slot::SKIN, slot::HAIR, slot::SHIRT, slot::PANTS, slot::SHOES, slot::IRIS] {
+            for s in [slot::SKIN, slot::HAIR, slot::SHIRT, slot::PANTS, slot::SHOES, slot::IRIS, slot::LIPS] {
                 assert!(all().any(|v| v.slot & 0xff == s), "{name}: slot {s}");
             }
             for r in 1..=region::STRAP {
@@ -780,7 +801,7 @@ mod tests {
     #[test]
     fn material_names_map_to_slots_and_regions() {
         assert_eq!(slot_of("skin"), slot::SKIN);
-        assert_eq!(slot_of("skin.lips"), slot::SKIN);
+        assert_eq!(slot_of("skin.lips"), slot::LIPS);
         assert_eq!(slot_of("skin.r7"), slot::SKIN | 7 << 8);
         assert_eq!(slot_of("shirt"), slot::SHIRT);
         assert_eq!(slot_of("eye_white"), 0);

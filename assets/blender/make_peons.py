@@ -31,7 +31,7 @@ drink, drowsy, kick_back, and idle_sad as crying), built on their sitting base. 
 to the pose clip for any clip a body lacks.
 
 Materials are named after the palette slot the game tints them with (skin, hair, shirt, pants,
-shoes, iris; `skin.lips` and `skin.rN` tint with skin); `eye_white` and `pupil` keep their own colour.
+shoes, iris; `skin.rN` tints with skin, `skin.lips` with a lip colour the game derives from it); `eye_white` and `pupil` keep their own colour.
 Blender faces -Y, so the exported model faces glTF +Z, which is the game's forward.
 """
 
@@ -76,7 +76,7 @@ PALETTE = {
     "eye_shade": (0.7, 0.66, 0.66, 1),  # the white under the upper lid's shadow
     "glint": (1, 1, 1, 1),  # emissive catchlight
     "lash": (0.08, 0.06, 0.06, 1),
-    "skin.lips": (0.86, 0.6, 0.6, 1),  # multiplies the skin tint
+    "skin.lips": (1, 1, 1, 1),  # tinted by the game from the skin tone (`lip_tint` in peons.rs)
     "mouth": (0.3, 0.09, 0.1, 1),
     "teeth": (0.94, 0.93, 0.88, 1),
 }
@@ -1013,7 +1013,7 @@ def preview(rig, body, clothes, hair, path):
         if base in tints and m.node_tree:
             col = [c**2.2 for c in tints[base]]
             if m.name == "skin.lips":
-                col = [a * b for a, b in zip(col, (0.86**2.2, 0.6**2.2, 0.6**2.2))]
+                col = [a * b for a, b in zip(col, (0.86**2.2, 0.6**2.2, 0.6**2.2))]  # light-skin lip_tint
             m.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (*col, 1)
     sc = bpy.context.scene
     sc.render.engine = "BLENDER_EEVEE"
