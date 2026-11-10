@@ -274,6 +274,7 @@ pub fn run_actions(world: &mut World) {
 }
 
 fn step(world: &mut World, e: Entity, data: &GameData, tick: u64) {
+    let mut navigation = None;
     // pick something to do
     let has_current = world.get::<ActionQueue>(e).unwrap().current.is_some();
     if !has_current {
@@ -285,7 +286,8 @@ fn step(world: &mut World, e: Entity, data: &GameData, tick: u64) {
                 if !due {
                     None
                 } else {
-                    let choice = autonomy::choose(world, e, data);
+                    let (choice, field) = autonomy::choose_with_navigation(world, e, data);
+                    navigation = field;
                     let mut brain = world.get_mut::<Brain>(e).unwrap();
                     brain.next_think = tick + 5;
                     drop(brain);
@@ -351,7 +353,7 @@ fn step(world: &mut World, e: Entity, data: &GameData, tick: u64) {
     }
 
     let result = match cur.phase.clone() {
-        Phase::Start => match begin(world, e, data, &mut cur) {
+        Phase::Start => match begin(world, e, data, &mut cur, navigation.as_ref()) {
             Ok(()) => StepResult::Continue,
             Err(why) => StepResult::Failed(why),
         },
@@ -610,21 +612,23 @@ fn path_to(world: &World, e: Entity, goal: NavNode) -> Option<Vec<Vec3>> {
     Some(wp)
 }
 
-fn begin(world: &World, e: Entity, data: &GameData, cur: &mut CurrentAction) -> Result<(), String> {
+fn begin(world: &World, e: Entity, data: &GameData, cur: &mut CurrentAction, navigation: Option<&NavField>) -> Result<(), String> {
     match cur.action.kind.clone() {
         ActionKind::Object { obj, interaction } => {
             let stage = world.get::<Age>(e).unwrap().stage;
             let pers = world.get::<Personality>(e).unwrap().clone();
             let funds = world.res::<Household>().funds;
             let tf = *world.get::<Transform>(e).unwrap();
-            let field = NavField::flood(&world.res::<Lot>(), NavNode::new(tf.level(), tf.tile()), 400.0);
+            let navigation = navigation.filter(|f| f.is_complete() && f.start == NavNode::new(tf.level(), tf.tile()));
+            let owned = navigation.is_none().then(|| NavField::flood(&world.res::<Lot>(), NavNode::new(tf.level(), tf.tile()), 400.0));
+            let field = navigation.or(owned.as_ref()).unwrap();
             let seat = {
                 let inst = world.get::<ObjectInstance>(obj).ok_or("it's gone")?;
                 let def = data.object(inst.def);
                 let inter = &def.interactions[interaction];
                 interaction_check(data, inter, &inst, stage, &pers, funds)?;
                 autonomy::not_a_guest_bed(world, e, inter, stage)?;
-                inter.seat.as_ref().and_then(|sd| autonomy::nearest_seat(world, data, e, obj, &inst, sd, &field))
+                inter.seat.as_ref().and_then(|sd| autonomy::nearest_seat(world, data, e, obj, &inst, sd, field))
             };
             if let Some((seat, slot, node)) = seat {
                 let nodes = field.path_to(node).unwrap();
@@ -666,7 +670,7 @@ fn begin(world: &World, e: Entity, data: &GameData, cur: &mut CurrentAction) -> 
             if !world.contains(target) || is_away(world, target) || world.has::<Dead>(target) {
                 return Err("they're not around".into());
             }
-            let path = path_next_to(world, e, target).ok_or("can't reach them")?;
+            let path = path_next_to_with_navigation(world, e, target, navigation).ok_or("can't reach them")?;
             cur.phase = Phase::Walking { path, idx: 0, slot: None, retries: 0, blocked: 0 };
             Ok(())
         }
@@ -716,10 +720,16 @@ pub fn exit_tile(lot: &Lot) -> IVec2 {
 }
 
 fn path_next_to(world: &World, e: Entity, target: Entity) -> Option<Vec<Vec3>> {
+    path_next_to_with_navigation(world, e, target, None)
+}
+
+fn path_next_to_with_navigation(world: &World, e: Entity, target: Entity, navigation: Option<&NavField>) -> Option<Vec<Vec3>> {
     let tf = *world.get::<Transform>(e)?;
     let ttf = *world.get::<Transform>(target)?;
     let lot = world.res::<Lot>();
-    let field = NavField::flood(&lot, NavNode::new(tf.level(), tf.tile()), 400.0);
+    let navigation = navigation.filter(|f| f.is_complete() && f.start == NavNode::new(tf.level(), tf.tile()));
+    let owned = navigation.is_none().then(|| NavField::flood(&lot, NavNode::new(tf.level(), tf.tile()), 400.0));
+    let field = navigation.or(owned.as_ref()).unwrap();
     let tl = ttf.level();
     let tt = ttf.tile();
     let mut best: Option<(f32, NavNode)> = None;
@@ -1131,4 +1141,29 @@ fn finish(world: &World, e: Entity, data: &GameData, cur: &CurrentAction, comple
         _ => {}
     }
     cleanup(world, e, cur);
+}
+
+#[cfg(test)]
+mod navigation_reuse_tests {
+    use super::*;
+
+    #[test]
+    fn social_route_reuses_complete_fields_and_falls_back_for_partial_ones() {
+        let sim = crate::starter::starter_sim(1);
+        let peons = sim.living_peons();
+        let (e, target) = (peons[0], peons[1]);
+        *sim.world.res_mut::<Lot>() = Lot::new(256, 2);
+        sim.world.get_mut::<Transform>(e).unwrap().pos = Vec3::new(0.5, 0.0, 0.5);
+        sim.world.get_mut::<Transform>(target).unwrap().pos = Vec3::new(240.5, 0.0, 0.5);
+        let start = NavNode::new(0, IVec2::ZERO);
+        let partial = NavField::flood(&sim.world.res::<Lot>(), start, 200.0);
+        assert!(!partial.is_complete());
+        let complete = NavField::flood(&sim.world.res::<Lot>(), start, 400.0);
+        assert!(complete.is_complete());
+        let different_start = NavField::flood(&sim.world.res::<Lot>(), NavNode::new(0, IVec2::new(1, 0)), 400.0);
+        let expected = path_next_to(&sim.world, e, target).expect("reachable beyond scoring budget");
+        for field in [&partial, &complete, &different_start] {
+            assert_eq!(path_next_to_with_navigation(&sim.world, e, target, Some(field)).unwrap(), expected);
+        }
+    }
 }

@@ -34,16 +34,39 @@ fn alive(world: &World, e: Entity) -> bool {
 
 /// Whoever (alive) `e` is partnered with, engaged to or married to.
 pub fn committed_to(world: &World, e: Entity) -> Option<Entity> {
-    let mut v: Vec<Entity> = world
-        .res::<Relationships>()
-        .of(e)
-        .into_iter()
-        .filter(|(_, r)| r.partners || r.engaged || r.married)
-        .map(|(o, _)| o)
-        .filter(|&o| alive(world, o))
-        .collect();
-    v.sort();
-    v.first().copied()
+    world.res::<Relationships>().map.iter().filter_map(|(&(x, y), r)| {
+        if !(r.partners || r.engaged || r.married) { return None; }
+        let other = if x == e { y } else if y == e { x } else { return None };
+        alive(world, other).then_some(other)
+    }).min()
+}
+
+/// Immutable partner lookup for one read-only autonomy decision. No cache survives
+/// a world mutation; malformed multiple partnerships still choose the lowest entity.
+pub(crate) struct Commitments<'a> {
+    world: &'a World,
+    partners: std::cell::OnceCell<std::collections::BTreeMap<Entity, Entity>>,
+}
+
+impl<'a> Commitments<'a> {
+    pub(crate) fn new(world: &'a World) -> Self {
+        Self { world, partners: std::cell::OnceCell::new() }
+    }
+
+    pub(crate) fn get(&self, e: Entity) -> Option<Entity> {
+        self.partners.get_or_init(|| {
+            let mut partners = std::collections::BTreeMap::<Entity, Entity>::new();
+            for (&(a, b), r) in &self.world.res::<Relationships>().map {
+                if !(r.partners || r.engaged || r.married) { continue; }
+                for (actor, partner) in [(a, b), (b, a)] {
+                    if alive(self.world, partner) {
+                        partners.entry(actor).and_modify(|p| *p = (*p).min(partner)).or_insert(partner);
+                    }
+                }
+            }
+            partners
+        }).get(&e).copied()
+    }
 }
 
 /// When `e`'s own wedding is planned for, if it is.
@@ -62,9 +85,14 @@ pub fn opposite_sex(world: &World, a: Entity, b: Entity) -> bool {
 
 /// Does the pair stand where `req` needs them to?
 pub fn rel_req_ok(world: &World, req: RelReq, a: Entity, b: Entity) -> Result<(), &'static str> {
+    rel_req_ok_with(world, req, a, b, None)
+}
+
+pub(crate) fn rel_req_ok_with(world: &World, req: RelReq, a: Entity, b: Entity, commitments: Option<&Commitments<'_>>) -> Result<(), &'static str> {
+    let partner = |e| commitments.map_or_else(|| committed_to(world, e), |c| c.get(e));
     let r = world.res::<Relationships>().get(a, b);
     let ok = match req {
-        RelReq::Unattached => committed_to(world, a).is_none() && committed_to(world, b).is_none(),
+        RelReq::Unattached => partner(a).is_none() && partner(b).is_none(),
         RelReq::Engaged => r.engaged && r.wedding_at.is_none(),
         RelReq::Betrothed => r.engaged,
         RelReq::Together => r.partners || r.engaged || r.married,

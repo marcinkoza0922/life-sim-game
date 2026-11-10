@@ -161,10 +161,18 @@ pub fn draw(ui: &mut egui::Ui, g: &mut Game, cx: &DebugCtx) {
             ui.label("Lighting (GPU cost)");
             let before = g.graphics;
             ui.checkbox(&mut g.graphics.ambient_occlusion, "Ambient occlusion");
+            ui.add_enabled_ui(g.graphics.ambient_occlusion, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("AO quality");
+                    for quality in hearth_render::AoQuality::ALL {
+                        ui.selectable_value(&mut g.graphics.ao_quality, quality, quality.label());
+                    }
+                });
+            });
             ui.checkbox(&mut g.graphics.indirect_light, "Indirect light / color bounce (costly)");
             ui.checkbox(&mut g.graphics.shadows, "Sun shadows");
             ui.add_enabled(g.graphics.shadows, egui::Checkbox::new(&mut g.graphics.soft_shadows, "Soft shadow filtering"));
-            ui.small("Indirect lighting uses nearby geometry bounds; complex models may show approximate occlusion.");
+            ui.small("Indirect light uses High AO quality. Nearby geometry bounds approximate complex models.");
             if before != g.graphics { g.graphics.save(); }
             ui.separator();
             ui.label("Cheats");

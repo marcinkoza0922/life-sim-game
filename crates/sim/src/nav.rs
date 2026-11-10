@@ -1,6 +1,8 @@
 //! Tile-grid navigation across levels. A single Dijkstra flood from the peon gives distances to
 //! every reachable tile (used to score all candidate objects at once) and paths via predecessors.
 
+mod traversal;
+
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
@@ -29,6 +31,7 @@ pub struct NavField {
     dist: Vec<f32>,
     prev: Vec<u32>,
     pub start: NavNode,
+    complete: bool,
 }
 
 const NONE: u32 = u32::MAX;
@@ -73,6 +76,8 @@ impl NavField {
 
     /// Like [`NavField::flood`], treating `avoid` tiles as blocked (e.g. someone standing there).
     pub fn flood_avoiding(lot: &Lot, start: NavNode, max_dist: f32, avoid: &[NavNode]) -> NavField {
+        #[cfg(feature = "profiling")]
+        let _span = crate::profiling::Span::new(0);
         let levels = (MAX_LEVEL - MIN_LEVEL + 1) as usize;
         let n = (lot.width * lot.depth) as usize * levels;
         let mut f = NavField {
@@ -81,13 +86,17 @@ impl NavField {
             dist: vec![f32::INFINITY; n],
             prev: vec![NONE; n],
             start,
+            complete: true,
         };
         let Some(si) = f.idx(start) else { return f };
+        let mut traversal = traversal::Traversal::new(lot);
         f.dist[si] = 0.0;
         let mut heap = BinaryHeap::new();
         heap.push(Item(0.0, si as u32));
         while let Some(Item(d, i)) = heap.pop() {
-            if d > f.dist[i as usize] || d > max_dist {
+            if d > f.dist[i as usize] { continue; }
+            if d > max_dist {
+                f.complete = false;
                 continue;
             }
             let cur = f.node(i as usize);
@@ -107,7 +116,7 @@ impl NavField {
                         continue;
                     }
                     let nt = cur.tile + IVec2::new(dx, dz);
-                    if lot.can_step(cur.level, cur.tile, nt) && !avoid.contains(&NavNode::new(cur.level, nt)) {
+                    if traversal.can_step(cur.level, cur.tile, nt) && !avoid.contains(&NavNode::new(cur.level, nt)) {
                         let cost = if dx != 0 && dz != 0 { std::f32::consts::SQRT_2 } else { 1.0 };
                         relax(&mut f, NavNode::new(cur.level, nt), cost);
                     }
@@ -125,6 +134,11 @@ impl NavField {
         }
         f
     }
+
+    /// Whether the distance budget left no reachable frontier unexplored. Only
+    /// complete fields can substitute for a larger budget on the same graph and
+    /// with the same avoidance set.
+    pub(crate) fn is_complete(&self) -> bool { self.complete }
 
     pub fn distance(&self, n: NavNode) -> Option<f32> {
         self.idx(n).map(|i| self.dist[i]).filter(|d| d.is_finite())
@@ -229,4 +243,96 @@ mod tests {
         assert!(w.iter().any(|v| v.y > 0.5 && v.y < 2.5), "stair waypoints climb gradually");
         assert_eq!(w.last().unwrap().y, LEVEL_HEIGHT);
     }
+    // Frozen pre-optimization search: compare complete distances and predecessor
+    // trees, including tie-breaking, truncated floods, blocked starts and avoidance.
+    fn reference_flood(lot: &Lot, start: NavNode, max_dist: f32, avoid: &[NavNode]) -> NavField {
+        let levels = (MAX_LEVEL - MIN_LEVEL + 1) as usize;
+        let n = (lot.width * lot.depth) as usize * levels;
+        let mut f = NavField {
+            width: lot.width,
+            depth: lot.depth,
+            dist: vec![f32::INFINITY; n],
+            prev: vec![NONE; n],
+            start,
+            complete: true,
+        };
+        let Some(si) = f.idx(start) else { return f };
+        f.dist[si] = 0.0;
+        let mut heap = BinaryHeap::new();
+        heap.push(Item(0.0, si as u32));
+        while let Some(Item(d, i)) = heap.pop() {
+            if d > f.dist[i as usize] || d > max_dist {
+                continue;
+            }
+            let cur = f.node(i as usize);
+            let mut relax = |f: &mut NavField, next: NavNode, cost: f32| {
+                if let Some(j) = f.idx(next) {
+                    let nd = d + cost;
+                    if nd < f.dist[j] {
+                        f.dist[j] = nd;
+                        f.prev[j] = i;
+                        heap.push(Item(nd, j as u32));
+                    }
+                }
+            };
+            for dx in -1..=1 {
+                for dz in -1..=1 {
+                    if dx == 0 && dz == 0 {
+                        continue;
+                    }
+                    let nt = cur.tile + IVec2::new(dx, dz);
+                    if lot.can_step(cur.level, cur.tile, nt) && !avoid.contains(&NavNode::new(cur.level, nt)) {
+                        let cost = if dx != 0 && dz != 0 { std::f32::consts::SQRT_2 } else { 1.0 };
+                        relax(&mut f, NavNode::new(cur.level, nt), cost);
+                    }
+                }
+            }
+            for s in &lot.stairs {
+                let cost = STAIR_LEN as f32 * 1.3 + 1.0;
+                if cur.level == s.level && cur.tile == s.bottom_access() && lot.walkable(s.level + 1, s.top_access()) {
+                    relax(&mut f, NavNode::new(s.level + 1, s.top_access()), cost);
+                }
+                if cur.level == s.level + 1 && cur.tile == s.top_access() && lot.walkable(s.level, s.bottom_access()) {
+                    relax(&mut f, NavNode::new(s.level, s.bottom_access()), cost);
+                }
+            }
+        }
+        f
+    }
+
+    #[test]
+    fn cached_traversal_preserves_fields_and_paths() {
+        let sim = crate::starter::starter_sim(1);
+        let lot = sim.world.res::<Lot>();
+        let avoid = [NavNode::new(0, IVec2::new(16, 22))];
+        for start in [
+            NavNode::new(0, IVec2::new(16, 22)),
+            NavNode::new(0, IVec2::new(0, 0)),
+            NavNode::new(1, IVec2::new(20, 12)),
+            NavNode::new(-1, IVec2::new(10, 16)),
+            NavNode::new(0, IVec2::new(-1, 0)),
+        ] {
+            for max_dist in [-1.0, 0.0, 6.0, 200.0] {
+                let expected = reference_flood(&lot, start, max_dist, &avoid);
+                let actual = NavField::flood_avoiding(&lot, start, max_dist, &avoid);
+                assert_eq!(actual.dist, expected.dist);
+                assert_eq!(actual.prev, expected.prev);
+            }
+        }
+    }
+
+    #[test]
+    fn only_exhausted_frontiers_are_reusable() {
+        let lot = Lot::new(32, 32);
+        let start = NavNode::new(0, IVec2::ZERO);
+        assert!(!NavField::flood(&lot, start, -1.0).is_complete());
+        assert!(!NavField::flood(&lot, start, 0.0).is_complete());
+        assert!(!NavField::flood(&lot, start, 6.0).is_complete());
+        let complete = NavField::flood(&lot, start, 200.0);
+        let larger = NavField::flood(&lot, start, 400.0);
+        assert!(complete.is_complete());
+        assert_eq!(complete.dist, larger.dist);
+        assert_eq!(complete.prev, larger.prev);
+    }
+
 }
