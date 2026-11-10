@@ -135,12 +135,24 @@ are gone. `PEON_ZOOM=chest` gives a shoulder close-up in the Blender preview. Ve
 tank, tee, dress and long-sleeve tops (heavy 0.6) and in `simctl lineup`. Still open: sleeves
 follow the arm's muscle lumps, the square neckline is plain, and there is no seam/cuff detail.
 
+## Follow-up: sleeves and trouser legs hang as tubes
+
+The normal-only drape bridged hollows but could only push cloth outward from each point, so sleeves
+kept the deltoid, biceps and elbow lumps and trousers ballooned into thigh and knee lobes.
+Sleeves and legs (shoulder, upper arm, forearm, thigh, knee, shin regions) are now re-shaped
+around their bone chain per shape key (`hang_tubes` in `peon_body.py`): each vertex takes the
+radius of the widest bulge nearby, tapering by `TUBE_SLOPE` along the limb and `TUBE_TURN` around
+it, through a soft maximum so no crease forms where the peak switches. It fades in over
+`TUBE_ROOT` from the shoulder/hip. Checked with a heavy (0.8) long-sleeve + trousers Blender
+preview and `simctl lineup` standing and sitting. Fits are slightly looser overall. Still open:
+the square neckline, seam/cuff/waistband detail, and a faint elbow line on long sleeves.
+
 ## Next priorities and acceptance checks
 
 1. **Facial hair and hair silhouette:** remove the rectangular disguise effect; preserve an
    appealing face in front, three-quarter and profile views.
-2. **Garment volume:** (strap/hem boundaries done, see above) make sleeves and trousers
-   hang as fabric across builds and bent poses, without padded lobes or skin exposure artifacts.
+2. **Garment detail:** (boundaries and tube volume done, see above) necklines, cuffs, seams and
+   waistbands; recheck slim builds and extreme slider combinations.
 3. **Skin finish and face integration:** softer highlights across tones, subtle colour zones,
    lids that sit around the eye and lips/teeth that belong to the face.
 4. **Hand contact and expression polish:** readable, non-intersecting contact poses; assess

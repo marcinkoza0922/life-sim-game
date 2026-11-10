@@ -495,7 +495,7 @@ HEM_FADE = 0.06
 DRAPE_STEPS = 160  # normal-only smoothing passes: how far cloth bridges hollows (under the bust, calves, rolls)
 
 
-def garment(body, name, mat, regions, thick, d, drape=True):
+def garment(body, name, mat, regions, thick, d, drape=True, rig=None):
     """A copy of the body's faces in `regions`, pushed out along the normals by the thickness plus
     some ease, then draped (see `drape`) for every shape key, recoloured with the garment's palette
     material."""
@@ -521,6 +521,8 @@ def garment(body, name, mat, regions, thick, d, drape=True):
         co = [kb.data[i].co + n * e for i, (n, e) in enumerate(zip(normals, ease))]
         if drape:
             co = drape_shell(me, [v.co for v in kb.data], co, normals, ease)
+            if rig is not None:
+                co = hang_tubes(me, region, rig, co, d)
         for i, c in enumerate(co):
             kb.data[i].co = c
     for v, b in zip(me.vertices, me.shape_keys.key_blocks[0].data):
@@ -606,6 +608,83 @@ def drape_shell(me, skin, co, normals, ease):
         mid = acc / deg[:, None]
         off = np.maximum(off + 0.5 * np.einsum("ij,ij->i", mid - P, N), lo)
     return [Vector(p) for p in S + N * off[:, None]]
+
+
+# sleeves and trouser legs hang as tubes: around the limb's bone chain, cloth keeps the radius of the
+# widest bulge nearby, tapering by TUBE_SLOPE per unit of length (and TUBE_TURN per unit of arc), so
+# it bridges the gaps between muscles and joints instead of wrapping each one
+TUBE_REGIONS = {R_SHOULDER: "arm", R_UPPER_ARM: "arm", R_FOREARM: "arm", R_THIGH: "leg", R_KNEE: "leg", R_SHIN: "leg"}
+TUBE_SLOPE = 0.12
+TUBE_TURN = 0.5
+TUBE_ROOT = 0.03  # fraction of H over which the effect fades in from the shoulder / hip
+
+
+def hang_tubes(me, region, rig, co, d):
+    import numpy as np
+
+    vreg = {}
+    for p in me.polygons:
+        r = TUBE_REGIONS.get(region[p.material_index])
+        if r:
+            for i in p.vertices:
+                vreg[i] = r
+    bones = rig.data.bones
+    push = {}
+    for sfx in ("L", "R"):
+        chains = {
+            "arm": [bones[f"upper_arm.{sfx}"].head_local, bones[f"forearm.{sfx}"].head_local, bones[f"forearm.{sfx}"].tail_local],
+            "leg": [bones[f"thigh.{sfx}"].head_local, bones[f"shin.{sfx}"].head_local, bones[f"shin.{sfx}"].tail_local],
+        }
+        for limb, pts in chains.items():
+            idx = [i for i, r in vreg.items() if r == limb and (co[i].x > 0) == (sfx == "L")]
+            if not idx:
+                continue
+            P = np.array([tuple(co[i]) for i in idx])
+            A = [np.array(tuple(p)) for p in pts]
+            # closest point on the two-segment chain, arc-length parameter and a frame per vertex
+            best = np.full(len(idx), np.inf)
+            T = np.zeros(len(idx))
+            C = np.zeros_like(P)
+            D = np.zeros_like(P)
+            base = 0.0
+            for a, b in zip(A, A[1:]):
+                ab = b - a
+                L = np.linalg.norm(ab)
+                u = np.clip((P - a) @ ab / (L * L), 0, 1)
+                q = a + u[:, None] * ab
+                dd = np.linalg.norm(P - q, axis=1)
+                m = dd < best
+                best[m], T[m], C[m], D[m] = dd[m], base + u[m] * L, q[m], ab / L
+                base += L
+            R = P - C
+            # radial part only (clamped ends of the chain would otherwise tilt the tube)
+            R -= D * np.einsum("ij,ij->i", R, D)[:, None]
+            r = np.linalg.norm(R, axis=1)
+            ref = np.array((0.0, -1.0, 0.0))
+            e1 = ref - D * (D @ ref)[:, None]
+            e1 /= np.linalg.norm(e1, axis=1)[:, None]
+            e2 = np.cross(D, e1)
+            th = np.arctan2(np.einsum("ij,ij->i", R, e2), np.einsum("ij,ij->i", R, e1))
+            rb = r.mean()
+            env = r.copy()
+            tau = 0.0015 * d.H  # a soft maximum, so the envelope has no creases where its peak switches
+            for s in range(0, len(idx), 1024):
+                dt = np.abs(T[s : s + 1024, None] - T[None, :])
+                da = np.abs(th[s : s + 1024, None] - th[None, :])
+                da = np.minimum(da, 2 * np.pi - da)
+                x = (r[None, :] - TUBE_SLOPE * dt - TUBE_TURN * rb * da) / tau
+                m = x.max(axis=1)
+                env[s : s + 1024] = tau * (m + np.log(np.exp(x - m[:, None]).sum(axis=1)))
+            w = np.clip(T / (TUBE_ROOT * d.H), 0, 1)
+            w = w * w * (3 - 2 * w)
+            nr = r + w * (np.maximum(env, r) - r)
+            dirs = R / np.maximum(r, 1e-9)[:, None]
+            for k, i in enumerate(idx):
+                push[i] = (Vector(dirs[k]), float(nr[k] - r[k]))
+    out = [c.copy() for c in co]
+    for i, (dv, a) in push.items():
+        out[i] = co[i] + dv * a
+    return out
 
 
 def turn_hems(me, normals, off):
@@ -718,7 +797,7 @@ def make_clothes(body, rig, d, hems, sources=None):
     from the smooth foot the detailed one replaced), skinned and keyed like the body."""
     out = []
     for name, (mat, regions, thick) in GARMENTS.items():
-        g = garment((sources or {}).get(name, body), name, mat, regions, thick, d, drape=name != "shoes")
+        g = garment((sources or {}).get(name, body), name, mat, regions, thick, d, drape=name != "shoes", rig=rig if name != "shoes" else None)
         if name in SKIRTS:
             s = skirt(body, name + "_skirt", mat, hems, d, SKIRTS[name], rig)
             transfer_keys(s, body)
