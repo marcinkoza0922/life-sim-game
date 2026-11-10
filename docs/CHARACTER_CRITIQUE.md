@@ -182,11 +182,24 @@ bun, undercut, receding, full beard) and in a `simctl lineup` close-up. Still op
 remains at the front ends of long hair, the curtain's lower edge is a straight cut, and curly
 and afro keep their old bump patterns.
 
+## Follow-up: coiled curly and afro hair
+
+Curly and afro still used a product of sines: an even egg-crate of bumps on a smooth cap, with a
+plain cut hairline, and the afro jutted out over the forehead like a brim. Both now use `curls`
+in `peon_hair.py`: a cellular pattern over jittered Fibonacci-sphere centres (`curl_centres`),
+where the gap between the nearest and second-nearest centre gives each coil a rounded dome and a
+sharp crease where two meet. A large and a fine layer are mixed, deep enough to lump the
+silhouette. The same large coils push the hairline field, so the edge is a row of coil fronts.
+The afro's volume tapers over its first 0.16 head units from the hairline, so it rounds off over
+the brow instead of overhanging. Checked in Blender head previews (front and three-quarter) and a
+`simctl lineup` close-up of the curly teen. Still open: the coils are limited by the head mesh's
+resolution (slightly faceted up close), and long hair's fin and straight lower edge.
+
 ## Next priorities and acceptance checks
 
 1. **Facial hair and hair silhouette:** (moustache, beard and hairline outlines done, see above)
-   (stubble as a skin-shaded shadow done) (clumped locks and hairline tips done) curly/afro
-   breakup, long-hair ends; preserve an appealing
+   (stubble as a skin-shaded shadow done) (clumped locks and hairline tips done) (curly/afro
+   coils done) long-hair ends; preserve an appealing
    face in front, three-quarter and profile views.
 2. **Garment detail:** (boundaries and tube volume done, see above) necklines, cuffs, seams and
    waistbands; recheck slim builds and extreme slider combinations.

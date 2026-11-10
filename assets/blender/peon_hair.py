@@ -191,6 +191,38 @@ def locks(b, count=16, whorl=WHORL, wave=0.18, seed=0.0, fine=0.3):
     return (1.0 - fade) * 0.7 + fade * ((1.0 - fine) * big + fine * small)
 
 
+def curl_centres(count, seed=0.0):
+    """`count` points spread evenly over the unit sphere (a Fibonacci spiral), each nudged off
+    the spiral by a hash so the curls don't line up in rows."""
+    out = []
+    golden = math.pi * (3.0 - math.sqrt(5.0))
+    for i in range(count):
+        h1 = math.sin(i * 12.9898 + seed * 78.233) * 43758.5453
+        h2 = math.sin(i * 39.3468 + seed * 11.135) * 24634.6345
+        j1, j2 = h1 - math.floor(h1) - 0.5, h2 - math.floor(h2) - 0.5
+        z = 1.0 - 2.0 * (i + 0.5 + 0.6 * j1) / count
+        r = math.sqrt(max(0.0, 1.0 - z * z))
+        a = golden * i + 1.2 * j2 * golden
+        out.append(Vector((r * math.cos(a), r * math.sin(a), z)))
+    return out
+
+
+def curls(b, centres, size):
+    """Coiled-hair pattern at a scalp point: 1 on top of each curl, 0 in the creases between
+    them. Cellular: the gap between the nearest and second-nearest curl centre (angle on the
+    sphere, over `size`) gives a rounded dome per curl with a sharp crease where two meet."""
+    p = b.normalized()
+    d1 = d2 = 9.0
+    for c in centres:
+        d = 1.0 - p.dot(c)  # cheap, monotonic in angle
+        if d < d1:
+            d1, d2 = d, d1
+        elif d < d2:
+            d2 = d
+    gap = math.sqrt(2.0 * d2) - math.sqrt(2.0 * d1)  # ~ angular distance to the crease
+    return math.sqrt(min(1.0, gap / size))
+
+
 def merge(*parts):
     verts, faces = [], []
     for v, f in parts:
@@ -283,16 +315,31 @@ def hair_meshes(f, ref=None):
     out["long"] = long_hair(0.27, 62, lambda b: 0.042 + clumps(b, 0.02, 14) * smoothstep(-0.6, 0.1, b.z), curtain(0.95, 0.2))
     out["bob"] = long_hair(0.17, 68, lambda b: 0.052 + clumps(b, 0.02, 14) * smoothstep(-0.6, 0.1, b.z), curtain(0.42, 0.25))
 
-    def curly(b, n):
-        bumps = 0.018 * (math.sin(b.x * 60) * math.sin(b.y * 57) * math.sin(b.z * 63))
-        return crown(b, 0.11, 0.06) + bumps
-    out["curly"] = shell_above(curly, front=0.27)
+    # curly and afro: rounded coils with creases between them, big enough to lump the silhouette;
+    # the hairline follows the curls too, so the edge is a row of coil fronts, not a cut line
+    curl_c = curl_centres(150, seed=1.0)
+    curl_f = curl_centres(420, seed=2.0)
+    coil = lambda b: 0.75 * curls(b, curl_c, 0.12) + 0.25 * curls(b, curl_f, 0.07)
+    coil_edge = lambda q: 0.03 * (curls(q, curl_c, 0.12) - 0.55)
+    curly_line = lambda q: q.z - hairline(azimuth(q), front=0.27) + coil_edge(q)
+    out["curly"] = shell_above(lambda b, n: crown(b, 0.1, 0.05) + 0.04 * (coil(b) - 0.5), field=curly_line)
     out["undercut"] = shell_above(lambda b, n: 0.006 + 0.075 * math.exp(-((b.x / 0.13) ** 4)) * smoothstep(0.05, 0.25, b.z) + clumps(b, 0.03, 12) * smoothstep(0.05, 0.25, b.z))
     # receding: a horseshoe around the back and sides, the crown and forehead bare
     def receding(q):
         return min(q.z - hairline(azimuth(q), front=0.9, temple=0.9, ear=0.05), 0.3 - q.z, (azimuth(q) - 70) * 0.006)
     out["receding"] = shell_above(lambda b, n: 0.024 + clumps(b, 0.014, 18), field=receding, tips=0.015, count=18)
-    out["afro"] = shell_above(front=0.27, thick=lambda b, n: crown(b, 0.24, 0.14) * (1 - 0.25 * smoothstep(-0.1, -0.4, b.y)) + 0.01 * math.sin(b.x * 70) * math.sin(b.z * 70))
+    afro_c = curl_centres(70, seed=3.0)
+    afro_f = curl_centres(300, seed=4.0)
+    afro_coil = lambda b: 0.7 * curls(b, afro_c, 0.18) + 0.3 * curls(b, afro_f, 0.08)
+    afro_line = lambda q: q.z - hairline(azimuth(q), front=0.27) + 0.03 * (curls(q, afro_c, 0.18) - 0.55)
+
+    def afro(b, n):
+        # rounds off over the forehead and temples instead of jutting out as a cap brim
+        front = 0.35 + 0.65 * smoothstep(0.0, 0.16, afro_line(b))
+        volume = crown(b, 0.24, 0.14) * (1 - 0.25 * smoothstep(-0.1, -0.4, b.y))
+        return volume * front + 0.075 * (afro_coil(b) - 0.5)
+
+    out["afro"] = shell_above(afro, field=afro_line)
 
     # facial hair: regions of the lower face
     mw, mz = fr.mouth_w, fr.mouth_z
