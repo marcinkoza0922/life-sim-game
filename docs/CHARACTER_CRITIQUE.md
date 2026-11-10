@@ -131,8 +131,15 @@ If we fix only a few things, these do the most for the "looks wrong" reaction, r
   elder 0.17 → 0.19, teen 0.185 → 0.205, child 0.225 → 0.24 in `make_peons.STAGES`), eyes are
   about 10% larger (`eye_r` in `peon_head.py`), and the neck is slimmer (`peon_body.py`). The
   bigger head takes its height from the torso, so the neck is shorter as well.
-- Still open: looser clothes and drape, male/female base shapes, skin variation on darker
-  tones, idle life, hair and facial hair.
+- **Skin on darker tones (done):** skin gets a stronger, tighter specular sheen the darker its
+  albedo (`skin_depth` in `hearth_render/src/shader.wgsl`), plus a soft sky reflection at grazing
+  angles, so cheekbones, nose and brow read on deep tones instead of merging into one shape.
+  Every head also gets subtle socket shading, deeper over the lid crease (`paint_head` in
+  `peon_extremities.py`).
+- **Idle life (already in place):** breathing, blinks, weight shift and glances live in `life`
+  and `expression` in `peons.rs`.
+- Still open: looser clothes and drape, male/female base shapes, hair and facial hair, and lips
+  that read on deep skin tones (the lip tint only darkens the skin).
 
 Hair shells and facial hair come after these. They're noticeable, but players forgive stylised
 hair much more readily than dead eyes or torn clothing.

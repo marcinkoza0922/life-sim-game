@@ -611,6 +611,15 @@ def paint_head(head, hh, centre, ears):
 
     nose = Vector((0, -0.53, -0.17))
     cheeks = [Vector((sx * 0.21, -0.37, -0.2)) for sx in (1, -1)]
+    # eye sockets (seen from the front: x, z), shading the lid crease above more than below
+    sockets = [(sx * 0.172, 0.01) for sx in (1, -1)]
+    me = head.data
+    skin = set()
+    for poly in me.polygons:
+        if poly.material_index < len(head.material_slots):
+            name = head.material_slots[poly.material_index].name
+            if name.startswith("skin") and name != "skin.lips":
+                skin.update(poly.vertices)
 
     def tone_of(i, p, n):
         q = local(p)
@@ -618,7 +627,13 @@ def paint_head(head, hh, centre, ears):
         red += 0.3 * blob(q, nose, 0.12)
         red += sum(0.3 * blob(q, c, 0.14) for c in cheeks)
         red = min(red, 1.0)
-        return (1.0 - 0.02 * red, 1.0 - 0.1 * red, 1.0 - 0.1 * red, 0.0)
+        shade = 0.0
+        if i in skin and q.y < -0.2:
+            for sx, sz in sockets:
+                dx, dz = (q.x - sx) / 0.15, (q.z - sz) / (0.12 if q.z > sz else 0.08)
+                shade = max(shade, smooth01(1.0 - (dx * dx + dz * dz) ** 0.5))
+        shade *= 0.16
+        return (1.0 - 0.02 * red - shade * 0.9, 1.0 - 0.1 * red - shade, 1.0 - 0.1 * red - shade * 0.85, 0.0)
 
     def thin_of(i, p, n):
         return 1.0 if i in ears else 0.1 + 0.3 * blob(local(p), nose, 0.1)

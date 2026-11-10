@@ -249,7 +249,15 @@ fn shade(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, albedo: vec3<f32>, rough: f32
 // Skin: diffuse wrapped further per channel (red light scatters deepest under the skin, so the
 // terminator goes soft and warm), shadows bleeding red at their edges, and light shining through
 // thin flesh (ears, fingers) from behind. Specular stays the plain GGX lobe.
-fn shade_skin(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, albedo: vec3<f32>, rough: f32, sh: f32, thin: f32) -> vec3<f32> {
+// Darker skin shows a stronger, tighter sheen (as it does in life), which is what lets its forms
+// read when the diffuse light alone can't: 0 for pale skin, 1 for the deepest tones.
+fn skin_depth(albedo: vec3<f32>) -> f32 {
+    return smoothstep(0.3, 0.03, dot(albedo, vec3<f32>(0.2126, 0.7152, 0.0722)));
+}
+
+fn shade_skin(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, albedo: vec3<f32>, rough_in: f32, sh: f32, thin: f32) -> vec3<f32> {
+    let dark = skin_depth(albedo);
+    let rough = rough_in * (1.0 - 0.3 * dark);
     let h = normalize(v + l);
     let nl_raw = dot(n, l);
     let nl = max(nl_raw, 0.0);
@@ -261,7 +269,7 @@ fn shade_skin(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, albedo: vec3<f32>, rough
     let k = (rough + 1.0) * (rough + 1.0) / 8.0;
     let gv = nv / (nv * (1.0 - k) + k);
     let gl = nl / (nl * (1.0 - k) + k);
-    let spec = ggx(n, h, rough) * gv * gl * f / max(4.0 * nv * nl, 0.001) * nl;
+    let spec = ggx(n, h, rough) * gv * gl * f / max(4.0 * nv * nl, 0.001) * nl * (1.0 + 1.2 * dark);
     let back = pow(clamp(dot(v, -normalize(l + n * 0.35)), 0.0, 1.0), 3.0);
     let trans = back * (0.06 + 0.6 * thin) * vec3<f32>(1.0, 0.32, 0.18) * sqrt(max(albedo, vec3<f32>(0.0)));
     return (albedo / PI * diff * (1.0 - f) + trans) * shc + spec * sh;
@@ -348,6 +356,12 @@ fn fs_main(i: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
     // hemispheric ambient
     let hemi = mix(g.ground_color.rgb, g.sky_color.rgb, n.y * 0.5 + 0.5);
     color += hemi * albedo * (1.0 - metal * 0.6) * ao;
+    if (is_skin) {
+        // the sky glancing off skin outlines the cheeks, nose and brow, more so on darker skin
+        let up = max(n.y * 0.5 + 0.5, 0.0);
+        let fr = pow(1.0 - max(dot(n, v), 0.0), 3.0);
+        color += g.sky_color.rgb * up * (0.03 + 0.25 * fr) * (0.25 + skin_depth(albedo)) * 0.35 * ao;
+    }
     // point lights
     let count = i32(g.counts.x);
     for (var k = 0; k < count; k++) {
