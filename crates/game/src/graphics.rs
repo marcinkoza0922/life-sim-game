@@ -1,11 +1,12 @@
 //! Persistent graphics preferences, independent of simulation saves and audio preferences.
-use hearth_render::LightingOptions;
+use hearth_render::{AoQuality, LightingOptions};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GraphicsSettings {
     pub ambient_occlusion: bool,
+    pub ao_quality: AoQuality,
     pub indirect_light: bool,
     pub shadows: bool,
     pub soft_shadows: bool,
@@ -14,7 +15,7 @@ pub struct GraphicsSettings {
 impl Default for GraphicsSettings {
     fn default() -> Self {
         let o = LightingOptions::default();
-        Self { ambient_occlusion: o.ambient_occlusion, indirect_light: o.indirect_light, shadows: o.shadows, soft_shadows: o.soft_shadows }
+        Self { ao_quality: o.ao_quality, ambient_occlusion: o.ambient_occlusion, indirect_light: o.indirect_light, shadows: o.shadows, soft_shadows: o.soft_shadows }
     }
 }
 
@@ -32,7 +33,7 @@ impl GraphicsSettings {
     }
 
     pub fn lighting(self) -> LightingOptions {
-        LightingOptions { ambient_occlusion: self.ambient_occlusion, indirect_light: self.indirect_light, shadows: self.shadows, soft_shadows: self.soft_shadows }
+        LightingOptions { ao_quality: self.ao_quality, ambient_occlusion: self.ambient_occlusion, indirect_light: self.indirect_light, shadows: self.shadows, soft_shadows: self.soft_shadows }
     }
 }
 
@@ -41,11 +42,12 @@ mod tests {
     use super::*;
     #[test]
     fn preferences_round_trip_and_missing_fields_default() {
-        let settings = GraphicsSettings { indirect_light: true, shadows: false, ..Default::default() };
+        let settings = GraphicsSettings { ao_quality: AoQuality::Low, indirect_light: true, shadows: false, ..Default::default() };
         let restored: GraphicsSettings = ron::from_str(&ron::to_string(&settings).unwrap()).unwrap();
         assert_eq!(restored, settings);
         let old: GraphicsSettings = ron::from_str("(shadows:false)").unwrap();
         assert!(!old.shadows);
+        assert_eq!(old.ao_quality, AoQuality::Medium);
         assert_eq!(old.ambient_occlusion, GraphicsSettings::default().ambient_occlusion);
     }
 }

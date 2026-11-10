@@ -22,6 +22,9 @@ struct Globals {
     points: array<PointLight, 16>,
     effects: vec4<f32>, // AO, diffuse bounce, sun shadows, soft filtering
     occluders: array<Occluder, 128>,
+    grid_min: vec4<f32>, // xyz minimum, w AO ray count
+    grid_inv_cell: vec4<f32>,
+    occluder_cells: array<vec4<u32>, 2048>,
 };
 
 @group(0) @binding(0) var<uniform> g: Globals;
@@ -260,12 +263,21 @@ fn triplanar(p: vec3<f32>, n: vec3<f32>, layer: u32) -> Surface {
 // samples work off-screen too. Proxies deliberately trade geometric accuracy for bounded cost.
 fn indirect(world: vec3<f32>, n: vec3<f32>) -> vec4<f32> {
     if (g.effects.x < 0.5 && g.effects.y < 0.5) { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }
+    // A point lookup gives all proxies within ray reach. Expanded box bounds
+    // include the normal offset, so one lookup serves every hemisphere ray.
+    let cell = vec3<i32>(floor((world - g.grid_min.xyz) * g.grid_inv_cell.xyz));
+    if (any(cell < vec3<i32>(0)) || any(cell >= vec3<i32>(16, 8, 16))) {
+        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    }
+    let candidates = g.occluder_cells[u32(cell.x + 16 * (cell.y + 8 * cell.z))];
+    if (all(candidates == vec4<u32>(0u))) { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }
+    let bounce_enabled = g.effects.y > 0.5;
     let helper = select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), abs(n.y) > 0.9);
     let tangent = normalize(cross(helper, n));
     let bitangent = cross(n, tangent);
     var visibility = 0.0;
     var bounce = vec3<f32>(0.0);
-    let samples = select(4u, 8u, g.effects.y > 0.5);
+    let samples = select(u32(g.grid_min.w), 8u, bounce_enabled);
     for (var ray = 0u; ray < samples; ray++) {
         let radius = sqrt((f32(ray) + 0.5) / f32(samples));
         let angle = f32(ray) * 2.39996323;
@@ -274,30 +286,38 @@ fn indirect(world: vec3<f32>, n: vec3<f32>) -> vec4<f32> {
         var nearest = 3.0;
         var hit = -1;
         var hit_normal = n;
-        for (var k = 0; k < i32(g.counts.w); k++) {
-            let sphere = g.occluders[k].sphere;
-            let delta = sphere.xyz - origin;
-            let along = clamp(dot(delta, dir), 0.0, nearest);
-            if (dot(delta - dir * along, delta - dir * along) > sphere.w * sphere.w) { continue; }
-            let m = g.occluders[k].world_to_box;
-            let ro = (m * vec4<f32>(origin, 1.0)).xyz;
-            let rd = (m * vec4<f32>(dir, 0.0)).xyz;
-            // An origin inside a proxy is not an occlusion hit (also avoids self-shadowing).
-            if (all(abs(ro) < vec3<f32>(0.501))) { continue; }
-            let safe_rd = select(vec3<f32>(1e-6), rd, abs(rd) > vec3<f32>(1e-6));
-            let a = (-vec3<f32>(0.5) - ro) / safe_rd;
-            let b = (vec3<f32>(0.5) - ro) / safe_rd;
-            let entry = min(a, b);
-            let exit = max(a, b);
-            let near = max(entry.x, max(entry.y, entry.z));
-            let far = min(exit.x, min(exit.y, exit.z));
-            if (near > 0.015 && near < nearest && far >= near) {
-                nearest = near;
-                hit = k;
-                var axis = vec3<f32>(0.0, 0.0, -sign(rd.z));
-                if (entry.x >= entry.y && entry.x >= entry.z) { axis = vec3<f32>(-sign(rd.x), 0.0, 0.0); }
-                else if (entry.y >= entry.z) { axis = vec3<f32>(0.0, -sign(rd.y), 0.0); }
-                hit_normal = normalize(transpose(mat3x3<f32>(m[0].xyz, m[1].xyz, m[2].xyz)) * axis);
+        for (var word = 0u; word < 4u; word++) {
+            var remaining = candidates[word];
+            while (remaining != 0u) {
+                let bit = firstTrailingBit(remaining);
+                remaining &= remaining - 1u;
+                let k = i32(word * 32u + bit);
+                let sphere = g.occluders[k].sphere;
+                let delta = sphere.xyz - origin;
+                let along = clamp(dot(delta, dir), 0.0, nearest);
+                if (dot(delta - dir * along, delta - dir * along) > sphere.w * sphere.w) { continue; }
+                let m = g.occluders[k].world_to_box;
+                let ro = (m * vec4<f32>(origin, 1.0)).xyz;
+                let rd = (m * vec4<f32>(dir, 0.0)).xyz;
+                // An origin inside a proxy is not an occlusion hit (also avoids self-shadowing).
+                if (all(abs(ro) < vec3<f32>(0.501))) { continue; }
+                let safe_rd = select(vec3<f32>(1e-6), rd, abs(rd) > vec3<f32>(1e-6));
+                let a = (-vec3<f32>(0.5) - ro) / safe_rd;
+                let b = (vec3<f32>(0.5) - ro) / safe_rd;
+                let entry = min(a, b);
+                let exit = max(a, b);
+                let near = max(entry.x, max(entry.y, entry.z));
+                let far = min(exit.x, min(exit.y, exit.z));
+                if (near > 0.015 && near < nearest && far >= near) {
+                    nearest = near;
+                    if (bounce_enabled) {
+                        hit = k;
+                        var axis = vec3<f32>(0.0, 0.0, -sign(rd.z));
+                        if (entry.x >= entry.y && entry.x >= entry.z) { axis = vec3<f32>(-sign(rd.x), 0.0, 0.0); }
+                        else if (entry.y >= entry.z) { axis = vec3<f32>(0.0, -sign(rd.y), 0.0); }
+                        hit_normal = normalize(transpose(mat3x3<f32>(m[0].xyz, m[1].xyz, m[2].xyz)) * axis);
+                    }
+                }
             }
         }
         let weight = 1.0 - smoothstep(0.0, 3.0, nearest);
