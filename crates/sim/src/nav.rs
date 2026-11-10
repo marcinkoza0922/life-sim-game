@@ -73,6 +73,8 @@ impl NavField {
 
     /// Like [`NavField::flood`], treating `avoid` tiles as blocked (e.g. someone standing there).
     pub fn flood_avoiding(lot: &Lot, start: NavNode, max_dist: f32, avoid: &[NavNode]) -> NavField {
+        #[cfg(feature = "profiling")]
+        let _span = crate::profiling::Span::new(0);
         let levels = (MAX_LEVEL - MIN_LEVEL + 1) as usize;
         let n = (lot.width * lot.depth) as usize * levels;
         let mut f = NavField {

@@ -184,6 +184,8 @@ pub struct Candidate {
 
 /// Every option the peon could pick autonomously, scored and sorted (best first).
 pub fn candidates(world: &World, e: Entity, data: &GameData) -> Vec<Candidate> {
+    #[cfg(feature = "profiling")]
+    let _span = crate::profiling::Span::new(1);
     let clock = *world.res::<Clock>();
     let funds = world.res::<Household>().funds;
     let needs = world.get::<Needs>(e).unwrap().clone();

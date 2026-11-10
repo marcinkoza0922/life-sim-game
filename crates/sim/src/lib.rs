@@ -16,6 +16,8 @@ pub mod nav;
 pub mod needs;
 pub mod neighborhood;
 pub mod objects;
+#[cfg(feature = "profiling")]
+pub mod profiling;
 pub mod rng;
 pub mod romance;
 pub mod save;
