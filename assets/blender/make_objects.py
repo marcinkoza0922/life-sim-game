@@ -870,6 +870,91 @@ def wedding_cake():
         sphere(0.012, (0.535 + dx, y + 0.095, 0.45), mat("skin", (0.9, 0.75, 0.6), 0.6))
 
 
+# Coordinated walnut / sage entryway collection.
+def entry_palette():
+    return (mat("wood", (0.48, 0.29, 0.18)),
+            mat("sage", (0.48, 0.61, 0.48), 0.7),
+            mat("brass", (0.77, 0.59, 0.29), 0.3, 0.8),
+            mat("fabric", (0.88, 0.83, 0.7), 0.95))
+
+
+def cabinet_feet(width, wood):
+    for x in (0.16, width - 0.16):
+        for z in (0.2, 0.7):
+            cyl(0.035, 0.22, (x, 0.11, z), wood, verts=12)
+
+
+def sideboard():
+    wood, sage, brass, cream = entry_palette()
+    cabinet_feet(2, wood)
+    box((1.86, 0.58, 0.64), (1, 0.5, 0.44), wood, 0.025)
+    box((1.94, 0.05, 0.72), (1, 0.815, 0.44), wood, 0.02)
+    for x in (0.39, 0.99, 1.59):
+        box((0.57, 0.51, 0.035), (x, 0.51, 0.777), sage, 0.012)
+        cyl(0.018, 0.035, (x + 0.17, 0.55, 0.81), brass, axis="z", verts=12)
+    # Small ceramic vase and a stack of linen-bound books.
+    cyl(0.095, 0.19, (0.32, 0.935, 0.42), cream)
+    cyl(0.05, 0.09, (0.32, 1.065, 0.42), cream)
+    for i, m in enumerate((sage, cream, wood)):
+        box((0.36 - i * 0.025, 0.045, 0.27), (1.53, 0.865 + i * 0.045, 0.45), m, 0.005)
+
+
+def coffee_table():
+    wood, sage, brass, cream = entry_palette()
+    for x in (0.18, 1.82):
+        for z in (0.2, 0.8):
+            cyl(0.035, 0.42, (x, 0.21, z), wood, verts=12)
+    box((1.85, 0.04, 0.72), (1, 0.19, 0.5), sage, 0.015)
+    box((1.96, 0.065, 0.9), (1, 0.455, 0.5), wood, 0.03, 3)
+    box((0.34, 0.035, 0.25), (0.62, 0.505, 0.48), sage, 0.006)
+    box((0.29, 0.025, 0.22), (0.64, 0.535, 0.48), cream, 0.004)
+    cyl(0.12, 0.018, (1.4, 0.497, 0.5), brass)
+    cyl(0.065, 0.09, (1.4, 0.55, 0.5), cream)
+    cyl(0.052, 0.004, (1.4, 0.597, 0.5), mat("tea", (0.25, 0.12, 0.05)))
+
+
+def shoe_bench():
+    wood, sage, brass, cream = entry_palette()
+    cabinet_feet(2, wood)
+    box((1.85, 0.04, 0.66), (1, 0.18, 0.45), wood)
+    for x in (0.1, 1, 1.9):
+        box((0.045, 0.28, 0.66), (x, 0.34, 0.45), wood)
+    box((1.94, 0.05, 0.72), (1, 0.49, 0.45), wood, 0.02)
+    for x in (0.54, 1.46):
+        box((0.86, 0.12, 0.66), (x, 0.575, 0.45), sage, 0.045, 4)
+    for x in (0.35, 0.58, 1.3, 1.53):
+        sphere(0.1, (x, 0.255, 0.53), cream, (0.8, 0.6, 1.6))
+        box((0.16, 0.025, 0.31), (x, 0.205, 0.53), wood, 0.01)
+
+
+def coat_rack():
+    wood, sage, brass, cream = entry_palette()
+    cyl(0.29, 0.05, (0.5, 0.025, 0.5), wood, verts=32)
+    cyl(0.045, 1.68, (0.5, 0.88, 0.5), wood, verts=16)
+    sphere(0.065, (0.5, 1.76, 0.5), brass)
+    for x, z in ((0.24, 0.5), (0.76, 0.5), (0.5, 0.24), (0.5, 0.76)):
+        box((abs(x - 0.5) + 0.04, 0.035, abs(z - 0.5) + 0.04),
+            ((x + 0.5) / 2, 1.49, (z + 0.5) / 2), brass)
+        cyl(0.02, 0.12, (x, 1.54, z), brass, verts=12)
+        sphere(0.035, (x, 1.61, z), wood)
+    # A draped scarf with contrasting hem.
+    box((0.17, 0.63, 0.045), (0.74, 1.22, 0.52), sage, 0.018)
+    box((0.17, 0.035, 0.05), (0.74, 0.94, 0.52), cream, 0.005)
+
+
+def console_radio():
+    wood, sage, brass, cream = entry_palette()
+    cabinet_feet(1, wood)
+    box((0.86, 0.63, 0.58), (0.5, 0.535, 0.44), wood, 0.04, 3)
+    box((0.73, 0.44, 0.025), (0.5, 0.5, 0.744), cream, 0.018)
+    for i in range(13):
+        box((0.012, 0.37, 0.012), (0.17 + i * 0.038, 0.5, 0.763), wood, 0.002)
+    box((0.13, 0.07, 0.02), (0.78, 0.61, 0.767), sage, 0.005)
+    for y in (0.4, 0.51):
+        cyl(0.035, 0.03, (0.78, y, 0.78), brass, axis="z", verts=16)
+    box((0.84, 0.03, 0.56), (0.5, 0.865, 0.44), wood, 0.015)
+
+
 BUILDERS = {
     f.__name__: f
     for f in (
@@ -877,7 +962,7 @@ BUILDERS = {
         armchair, tv_basic, bookshelf, computer_desk, shower_basic, bathtub_basic, crib, floor_lamp,
         plant_potted, painting, trash_can, mirror, toy_box, exercise_bike,
         chess_table, rug, end_table, kids_desk, tombstone, treadmill, weight_bench, espresso_bar, vending_machine,
-        wedding_cake,
+        wedding_cake, sideboard, coffee_table, shoe_bench, coat_rack, console_radio,
     )
 }
 
