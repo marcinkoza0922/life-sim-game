@@ -1,5 +1,7 @@
 # First navigation optimization
 
+See [navigation reuse and social scoring](REUSE.md) for the next optimization pass.
+
 Commit `30d91d4` on `profiling-stress` adds a search-local traversal cache.
 It is rebuilt for every flood, so public lot edits, door changes, object moves,
 terrain edits and save/restore need no new invalidation mechanism.
