@@ -62,11 +62,14 @@ crates/
                  dump event logs / stats as JSON, render screenshots offscreen.
 assets/
   data/          RON content: objects, traits, quirks, careers, needs, names, materials
-  models/        peon_<stage>.glb rigged bodies (generated; embedded in the game binary)
+  models/        peon_<stage>.glb rigged bodies: body, head, garments, hair and facial hair meshes
+                 with face/body shape keys (generated; embedded in the game binary)
     objects/     <object id>.glb static furniture models (generated; embedded by game/build.rs)
   textures/      <material id>/{albedo,normal,orm}.png tiling maps (embedded by game/build.rs)
   materialcraft/ materials.py: generates the .sbs packages and textures/ maps headlessly
-  blender/       make_peons.py: builds the bodies, rig, hair and clips headlessly;
+  blender/       make_peons.py: builds the bodies, rig, hair and clips headlessly (with
+                 peon_body.py, peon_head.py, peon_hair.py: body, face, hair and clothes geometry;
+                 peon_extremities.py: detailed hands/feet welded on, skin tone/thinness colours);
                  make_objects.py: builds the object models
   vectorcraft/   make_icons.py: UI icon SVGs (icons/, sheet.svg) rasterised by vectorcraft-cli
   ui/icons/      <name>.png 128 px UI icons (generated; embedded by game/src/icons.rs)
@@ -133,11 +136,14 @@ in the game crate covers debug UI needs.)
   emission; a material named after a texture id, e.g. `wood` or `wood.leg`, is also textured with
   the colour as a tint) instead of its RON parts, which still define picking. Dirt, broken and
   placement tints apply the same way. `simctl render --greybox` draws the parts instead.
-- **Skinned meshes:** `hearth_render::model` loads binary glTF (skeleton, skinned meshes, up to two
-  position morph targets, T/R/S animation clips). Clips are sampled on the CPU; skinning matrices
-  for every pose go into one storage buffer per frame, alongside an 8-entry colour palette per draw
-  that vertex material slots index (skin, hair, shirt, pants, shoes). Skinned draws are instanced
-  by mesh and cast shadows like static ones.
+- **Skinned meshes:** `hearth_render::model` loads binary glTF (skeleton, skinned meshes, up to 32
+  position morph targets, T/R/S animation clips). Morph deltas are stored sparsely (only the
+  vertices a target moves) in one storage buffer shared by every mesh. Clips are sampled on the CPU;
+  skinning matrices for every pose go into one storage buffer per frame, alongside each draw's
+  8-entry colour palette (indexed by the vertex material slot: skin, hair, shirt, pants, shoes,
+  iris) and morph weights. A vertex's slot also carries a skin region (`skin.rN` materials), and a
+  draw's hide mask collapses the regions its clothes cover so skin never pokes through. Skinned
+  draws are instanced by mesh and cast shadows like static ones.
 - **Capture:** render any frame to an offscreen texture and read it back to PNG. Used by
   `simctl render`, by `--screenshot` in the game, and by visual regression checks.
 - Dollhouse specifics (in `game`, using instance flags): wall cutaway (walls facing the
@@ -290,8 +296,12 @@ Per ordered pair: `friendship` (−100..100) and `romance` (0..100). Labels deri
 Insult, Flirt, Hug, Propose…) have acceptance chances from mood, traits and relationship.
 Family links: parents, children, spouse. Pregnancy (romantic YA/Adult pairs) or adoption.
 
-**Genetics:** appearance is a gene vector (morph weights, skin/hair/eye colors). Child =
-per-gene random parent pick + small mutation. 1–2 traits may be inherited.
+**Genetics:** appearance is a gene vector (skin/hair/eye colours, height, build, and 25 face and
+body shape sliders that drive morph targets). Child = colours from a parent or blended, shape
+sliders between the parents' + noise, frame and chest by the child's own sex, small mutation.
+1–2 traits may be inherited. Clothes (top, bottom, shoes) and grooming (hair style, facial hair)
+are chosen, not inherited; the household creator edits all of it on Basics, Face, Body, Hair and
+Outfit tabs, framing the person being edited.
 
 ### 4.8 Careers
 
@@ -458,6 +468,15 @@ Added since:
   head, `slim`/`heavy` shape keys from per-bone normal offsets, clips idle/walk/sit/lie/use/dance/exercise).
   `game::peons` maps `Posture` to a clip, `Appearance` to palette/morphs/hair/height; ghosts reuse it
   translucent. `simctl lineup --pose P` renders every stage side by side for review.
+- **Skin:** hands (jointed fingers, knuckles, nails) and feet (toes, arch, heel) are finer metaball
+  meshes welded onto the body up the forearm/shin after the clothes are made from the smooth body
+  (shoes come from a separate smooth `shoe_last`). Bodies and heads carry per-vertex skin variation
+  (`COLOR_0` rgb multiplier: redder knuckles/knees/elbows/cheeks/ears; `COLOR_1` green: mix towards a
+  pale tone for palms, soles, nails; red: flesh thinness). The draw's `SkinSurface` makes the skin
+  slot shade as skin: per-channel wrapped diffuse and red-bleeding shadow edges (subsurface
+  scattering), back-light transmission scaled by thinness, and the `skin` material (pores,
+  microrelief; `assets/materialcraft/materials.py`) box-projected in bind space so it sticks to the
+  body.
 - **Clip cross-fades:** `peons::Animator` (owned by the game, keyed by entity, pruned when a peon isn't
   drawn) keeps each peon's clip phase; on a clip change it fades from the last drawn pose over
   `BLEND_SECS` (0.3 s, smoothstep) and eases the root offset/yaw with it, since the sim snaps a peon onto

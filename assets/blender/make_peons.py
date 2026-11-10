@@ -1,21 +1,41 @@
-"""Generates the rigged peon base meshes, one glTF per life stage, into assets/models/.
+"""Generates the rigged peon models, one glTF per life stage, into assets/models/.
 
-Run headless from the repo root:
+Run headless from the repo root (about three minutes for all six):
 
-    blender -b --factory-startup -P assets/blender/make_peons.py
+    blender -b --factory-startup -P assets/blender/make_peons.py [-- adult teen ...]
 
-Every stage file holds the same skeleton (bone names), a body mesh with `slim`/`heavy` shape keys,
-four hair meshes (`hair0`..`hair3`, rigid on the head bone), and the animation clips the game maps
-poses to: idle, walk, sit, lie, use, dance, exercise; walking bodies (toddler and up) also get the
-interaction clips the data names (`anim:` and `seat: (anim:)` in objects.ron, socials.ron) — standing,
-seated (origin on the seat, like `sit`), on the floor and lying (like `lie`) — and demeanor variants
-(idle_sad, walk_sad, idle_proud, walk_proud, idle_nervous). Infants get their own versions of the
-clips they can play (sleep, play_floor, laugh, drink, drowsy, kick_back, and idle_sad as crying),
-built on their sitting base. The game falls back to the pose clip for any clip a body lacks.
+Set PEON_PREVIEW=out.png (with PEON_SHOW=mesh,names, PEON_KEYS=key=value,... and PEON_ZOOM=head|chest|hand|foot) to render a
+dressed body front and three-quarter in Blender instead of exporting.
+
+Set PEON_BASE=mpfb to build the body and head from MPFB2 (MakeHuman) instead of the metaball body and
+parametric head (peon_mpfb.py; install the pinned MPFB with `python3 assets/blender/install_mpfb.py`; no --factory-startup).
+
+Every stage file holds the same skeleton (bone names) and these skinned meshes:
+- `body`: a metaball body (peon_body.py) with detailed hands and feet welded on
+  (peon_extremities.py), its faces tagged `skin.rN` by the skin region N a garment can cover, with
+  shape keys `slim`/`heavy` (build) and the body sliders (peon_body.BODY_SLIDERS), and the skin
+  colour attributes `tone`/`thin` (COLOR_0/COLOR_1; the head has them too);
+- `head`: skull, face, eyes, lids, lips, ears and brows (peon_head.py), rigid on the head bone,
+  with a shape key per face slider (peon_head.FACE_SLIDERS);
+- garments `top_*`, `bottom_*`, `shoes` (peon_body.GARMENTS): copies of the body's region faces
+  pushed out, so they share its skinning and body keys;
+- hair styles `hair.<id>` and facial hair `facial.<id>` (peon_hair.py), shells over the head with
+  the face keys.
+The slider and style ids match the catalogues in crates/sim/src/genetics.rs. Every slider's key is
+made by building the geometry with that slider at 1 and subtracting, so the game blends them
+linearly (weights -1..1). Keys that move nothing are dropped (glTF stores targets densely).
+
+Plus the animation clips the game maps poses to: idle, walk, sit, lie, use, dance, exercise; walking
+bodies (toddler and up) also get the interaction clips the data names (`anim:` and `seat: (anim:)`
+in objects.ron, socials.ron) — standing, seated (origin on the seat, like `sit`), on the floor and
+lying (like `lie`) — and demeanor variants (idle_sad, walk_sad, idle_proud, walk_proud,
+idle_nervous). Infants get their own versions of the clips they can play (sleep, play_floor, laugh,
+drink, drowsy, kick_back, and idle_sad as crying), built on their sitting base. The game falls back
+to the pose clip for any clip a body lacks.
 
 Materials are named after the palette slot the game tints them with (skin, hair, shirt, pants,
-shoes, iris); `eye_white`, `pupil` and `mouth` keep their own colour. Blender faces -Y, so the exported
-model faces glTF +Z, which is the game's forward.
+shoes, iris; `skin.rN` tints with skin, `skin.lips` with a lip colour the game derives from it); `eye_white` and `pupil` keep their own colour.
+Blender faces -Y, so the exported model faces glTF +Z, which is the game's forward.
 """
 
 import math
@@ -26,6 +46,12 @@ import bmesh
 import bpy
 from mathutils import Euler, Matrix, Quaternion, Vector
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from peon_body import BODY_SLIDERS, GARMENTS, Hems, add_body_keys, cut_regions, make_body, make_clothes, transfer_keys, weight_body  # noqa: E402
+from peon_extremities import add_extremities, add_stubs, copy_weights, paint_body, paint_head, set_skin_colors, shoe_last, smooth_seams  # noqa: E402
+from peon_hair import FACIAL_HAIR, hair_meshes  # noqa: E402
+from peon_head import EXPRESSIONS, FACE_SLIDERS, Face, build_head  # noqa: E402
+
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "models")
 FPS = 30
 
@@ -33,10 +59,10 @@ FPS = 30
 STAGES = {
     "infant": dict(H=0.55, head=0.36, legs=0.27, width=0.36, depth=0.25, limb=0.10, foot=0.13),
     "toddler": dict(H=0.85, head=0.30, legs=0.32, width=0.29, depth=0.18, limb=0.08, foot=0.13),
-    "child": dict(H=1.25, head=0.235, legs=0.45, width=0.235, depth=0.135, limb=0.064, foot=0.13),
-    "teen": dict(H=1.60, head=0.195, legs=0.47, width=0.225, depth=0.125, limb=0.058, foot=0.135),
-    "adult": dict(H=1.75, head=0.18, legs=0.47, width=0.23, depth=0.125, limb=0.058, foot=0.135),
-    "elder": dict(H=1.68, head=0.18, legs=0.46, width=0.235, depth=0.13, limb=0.058, foot=0.135, hunch=True),
+    "child": dict(H=1.25, head=0.24, legs=0.46, width=0.235, depth=0.135, limb=0.064, foot=0.13),
+    "teen": dict(H=1.60, head=0.205, legs=0.49, width=0.225, depth=0.125, limb=0.058, foot=0.135),
+    "adult": dict(H=1.75, head=0.19, legs=0.5, width=0.23, depth=0.125, limb=0.058, foot=0.135),
+    "elder": dict(H=1.68, head=0.19, legs=0.48, width=0.235, depth=0.13, limb=0.058, foot=0.135, hunch=True),
 }
 
 PALETTE = {
@@ -50,23 +76,35 @@ PALETTE = {
     # fixed colours (sRGB)
     "eye_white": (0.95, 0.95, 0.93, 1),
     "pupil": (0.06, 0.05, 0.07, 1),
-    "mouth": (0.55, 0.22, 0.24, 1),
+    "eye_shade": (0.7, 0.66, 0.66, 1),  # the white under the upper lid's shadow
+    "glint": (1, 1, 1, 1),  # emissive catchlight
+    "lash": (0.08, 0.06, 0.06, 1),
+    "skin.lips": (1, 1, 1, 1),  # tinted by the game from the skin tone (`lip_tint` in peons.rs)
+    "mouth": (0.3, 0.09, 0.1, 1),
+    "teeth": (0.94, 0.93, 0.88, 1),
 }
 
 ARM_SPREAD = math.radians(32)  # A-pose: upper arms angle out from vertical by this much
 
 
 def reset():
-    bpy.ops.wm.read_factory_settings(use_empty=True)
+    if os.environ.get("PEON_BASE") == "mpfb":
+        bpy.ops.wm.read_homefile(use_empty=True)  # factory settings would unload the MPFB extension
+    else:
+        bpy.ops.wm.read_factory_settings(use_empty=True)
     bpy.context.scene.render.fps = FPS
     for name, srgb in PALETTE.items():
         col = tuple(c**2.2 for c in srgb[:3]) + (srgb[3],)  # glTF base colours are linear
         m = bpy.data.materials.new(name)
+        m.use_fake_user = True  # MPFB purges orphan data while it builds
         m.diffuse_color = col
         m.use_nodes = True
         bsdf = m.node_tree.nodes.get("Principled BSDF")
         bsdf.inputs["Base Color"].default_value = col
-        bsdf.inputs["Roughness"].default_value = 0.4 if name in ("eye_white", "iris", "pupil") else 0.75
+        bsdf.inputs["Roughness"].default_value = 0.3 if name in ("eye_white", "eye_shade", "iris", "pupil") else 0.6 if name == "skin.lips" else 0.75
+        if name == "glint":
+            bsdf.inputs["Emission Color"].default_value = (1, 1, 1, 1)
+            bsdf.inputs["Emission Strength"].default_value = 1.0
 
 
 def link(obj):
@@ -96,29 +134,54 @@ class Dims:
         self.limb = H * p["limb"]
         self.foot_len = H * p["foot"]
         self.hunch = p.get("hunch", False)
-        self.hip_x = self.width * 0.22
+        self.hip_x = self.width * 0.2
         self.ankle_z = H * 0.045
         self.knee_z = self.ankle_z + (self.legs - self.ankle_z) * 0.5
-        self.shoulder_z = self.legs + self.torso * 0.86
+        self.shoulder_z = self.legs + self.torso * 0.92
         self.shoulder_x = self.width * 0.5 - self.limb * 0.2
         self.arm_len = self.torso * 0.92
         self.neck_z = self.legs + self.torso
         self.head_c = H - self.head_h * 0.5
-        self.thigh_r = self.limb * 0.62
+        self.thigh_r = self.limb * 0.72
         self.arm_r = self.limb * 0.45
+        self.joints = None
+
+    @classmethod
+    def from_mpfb(cls, p, j):
+        """Dims for an MPFB body: the stage's widths, but every height and joint measured on it."""
+        d = cls(p)
+        d.joints = j
+        sh, el, wr, tip = j[("arm", 1)]
+        hip, knee, ankle, toe = j[("leg", 1)]
+        d.legs = hip.z
+        d.neck_z = j["neck"].z
+        d.torso = d.neck_z - d.legs
+        d.head_h = (j["head_top"].z - j["chin"].z) / 0.8  # head_frame: chin to crown is 0.8 head_h
+        d.hip_x = hip.x
+        d.knee_z, d.ankle_z = knee.z, ankle.z
+        d.shoulder_z, d.shoulder_x = sh.z, sh.x
+        d.arm_len = (wr - sh).length
+        d.foot_len = (toe - ankle).length / 0.85
+        d.width = 2 * (sh.x + d.limb * 0.2)
+        d.neck_y = j["neck"].y
+        return d
 
 
 def arm_points(d, side):
     """Shoulder, elbow, wrist, fingertip for side = +1 (left, +X) or -1."""
+    if d.joints:
+        return tuple(v.copy() for v in d.joints[("arm", side)])
     dirv = Vector((side * math.sin(ARM_SPREAD), 0, -math.cos(ARM_SPREAD)))
     sh = Vector((side * d.shoulder_x, 0, d.shoulder_z))
     el = sh + dirv * d.arm_len * 0.5
     wr = sh + dirv * d.arm_len
-    tip = wr + dirv * d.H * 0.085
+    tip = wr + dirv * d.H * 0.095
     return sh, el, wr, tip
 
 
 def leg_points(d, side):
+    if d.joints:
+        return tuple(v.copy() for v in d.joints[("leg", side)])
     hip = Vector((side * d.hip_x, 0, d.legs))
     knee = Vector((side * d.hip_x, -d.limb * 0.05, d.knee_z))
     ankle = Vector((side * d.hip_x, 0, d.ankle_z))
@@ -142,12 +205,17 @@ def make_armature(d):
             b.use_connect = connect
         return b
 
-    z0 = d.legs
-    bone("hips", (0, 0, z0), (0, 0, z0 + d.torso * 0.3))
-    bone("spine", (0, 0, z0 + d.torso * 0.3), (0, 0, z0 + d.torso * 0.62), "hips", True)
-    bone("chest", (0, 0, z0 + d.torso * 0.62), (0, 0, d.neck_z), "spine", True)
-    bone("neck", (0, 0, d.neck_z), (0, 0, d.neck_z + d.head_h * 0.22), "chest", True)
-    bone("head", (0, 0, d.neck_z + d.head_h * 0.22), (0, 0, d.H), "neck", True)
+    if d.joints:
+        j = d.joints
+        spine = [Vector((0, j[k].y, j[k].z)) for k in ("hips", "spine", "chest", "neck", "head", "head_top")]
+    else:
+        z0 = d.legs
+        zs = [z0, z0 + d.torso * 0.3, z0 + d.torso * 0.62, d.neck_z, d.neck_z + d.head_h * 0.22, d.H]
+        spine = [Vector((0, 0, z)) for z in zs]
+    parent = None
+    for name, a, b in zip(("hips", "spine", "chest", "neck", "head"), spine, spine[1:]):
+        bone(name, a, b, parent, parent is not None)
+        parent = name
     for side, sfx in ((1, "L"), (-1, "R")):
         sh, el, wr, tip = arm_points(d, side)
         bone(f"upper_arm.{sfx}", sh, el, "chest")
@@ -164,288 +232,134 @@ def make_armature(d):
 
 
 # ------------------------------------------------------------------------------------------------
-# body
+# body, head, hair, clothes (geometry lives in peon_body.py, peon_head.py and peon_hair.py)
 
 
-def make_body_skin(d):
-    """Skin-modifier body: one connected quad mesh from a stick figure."""
-    verts, radii, edges = [], [], []
-
-    def v(p, rx, ry=None):
-        verts.append(tuple(p))
-        radii.append((rx, ry if ry is not None else rx))
-        return len(verts) - 1
-
-    w, dp = d.width, d.depth
-    pelvis = v((0, 0, d.legs + d.torso * 0.02), w * 0.40, dp * 0.44)
-    waist = v((0, 0, d.legs + d.torso * 0.38), w * 0.34, dp * 0.38)
-    chest = v((0, 0, d.legs + d.torso * 0.72), w * 0.43, dp * 0.5)
-    neck0 = v((0, 0, d.neck_z - d.torso * 0.02), d.limb * 0.55)
-    neck1 = v((0, 0, d.neck_z + d.head_h * 0.3), d.limb * 0.48)
-    edges += [(pelvis, waist), (waist, chest), (chest, neck0), (neck0, neck1)]
-    for side in (1, -1):
-        sh, el, wr, tip = arm_points(d, side)
-        s = v(sh, d.arm_r * 1.25)
-        e = v(el, d.arm_r * 0.95)
-        wv = v(wr, d.arm_r * 0.75)
-        hand = v(wr.lerp(tip, 0.55), d.arm_r * 0.95, d.arm_r * 0.6)
-        t = v(tip, d.arm_r * 0.55, d.arm_r * 0.4)
-        edges += [(chest, s), (s, e), (e, wv), (wv, hand), (hand, t)]
-        hip, knee, ankle, toe = leg_points(d, side)
-        h = v(hip, d.thigh_r * 1.15)
-        k = v(knee, d.thigh_r * 0.78)
-        a = v(ankle, d.thigh_r * 0.58)
-        ball = v(ankle.lerp(toe, 0.55) * Vector((1, 1, 0)) + Vector((0, 0, d.ankle_z * 0.5)), d.thigh_r * 0.55, d.thigh_r * 0.42)
-        t = v(toe * Vector((1, 1, 0)) + Vector((0, 0, d.ankle_z * 0.42)), d.thigh_r * 0.45, d.thigh_r * 0.36)
-        edges += [(pelvis, h), (h, k), (k, a), (a, ball), (ball, t)]
-
-    me = bpy.data.meshes.new("body")
-    me.from_pydata(verts, edges, [])
-    obj = link(bpy.data.objects.new("body", me))
-    select_only(obj)
-    mod = obj.modifiers.new("skin", "SKIN")
-    mod.use_smooth_shade = True
-    mod.branch_smoothing = 0.6
-    for i, (rx, ry) in enumerate(radii):
-        sv = me.skin_vertices[0].data[i]
-        sv.radius = (rx, ry)
-        sv.use_root = i == pelvis
-    sub = obj.modifiers.new("sub", "SUBSURF")
-    sub.levels = 2
-    sub.render_levels = 2
-    bpy.ops.object.modifier_apply(modifier="skin")
-    bpy.ops.object.modifier_apply(modifier="sub")
-    bpy.ops.object.shade_smooth()
-    return obj
+# how child-like the face is per stage (big cranium, small face, soft features)
+CHILDISH = {"infant": 1.0, "toddler": 1.0, "child": 0.8, "teen": 0.3, "adult": 0.0, "elder": 0.0}
 
 
-def segment_dist(p, a, b):
-    ab = b - a
-    t = max(0.0, min(1.0, (p - a).dot(ab) / max(ab.length_squared, 1e-9)))
-    return (p - (a + ab * t)).length, t
+# the head's shape keys: the face sliders, then the expressions
+FACE_KEYS = [k for k, _ in FACE_SLIDERS] + EXPRESSIONS
 
 
-def bone_segments(rig):
-    return {b.name: (b.head_local.copy(), b.tail_local.copy()) for b in rig.data.bones}
+def head_frame(d):
+    """Head height (chin to crown) and its centre at eye level, in model units."""
+    hh = d.head_h * 0.8
+    if d.joints:
+        return hh, Vector((0, d.joints["head"].y - d.H * 0.012, d.joints["head_top"].z - 0.49 * hh))
+    return hh, Vector((0, -d.H * 0.008, d.H - 0.49 * hh))
 
 
-def nearest_bone(p, segs, names=None):
-    best, bt, bn = 1e9, 0.0, None
-    for n, (a, b) in segs.items():
-        if names and n not in names:
-            continue
-        dd, t = segment_dist(p, a, b)
-        if dd < best:
-            best, bt, bn = dd, t, n
-    return bn, bt
-
-
-def assign_body_materials(body, rig, d):
-    """Clothing by region. Edge loops are cut exactly at the belt, sleeve and shoe lines first, so
-    the colour boundaries are straight instead of following the subdivided faces."""
-    me = body.data
-    for name in ("skin", "shirt", "pants", "shoes"):
-        me.materials.append(bpy.data.materials[name])
-    idx = {m.name: i for i, m in enumerate(me.materials)}
-    segs = bone_segments(rig)
-    belt = d.legs + d.torso * 0.16
-    shoe_top = d.ankle_z + d.H * 0.035
-    sleeves = {}
-    for side, sfx in ((1, "L"), (-1, "R")):
-        sh, el, _, _ = arm_points(d, side)
-        sleeves[sfx] = (sh.lerp(el, 0.75), (el - sh).normalized())
-
+def orient_outward(me, ref):
+    """Makes every connected piece face away from `ref` (the head centre): the game culls back
+    faces, so inward-wound parts would render hollow."""
     bm = bmesh.new()
     bm.from_mesh(me)
-
-    def region(f):
-        bn, _ = nearest_bone(f.calc_center_median(), segs)
-        return bn
-
-    def cut(pred, co, no):
-        faces = [f for f in bm.faces if pred(region(f))]
-        geom = list({e for f in faces for e in f.edges}) + faces + list({v for f in faces for v in f.verts})
-        bmesh.ops.bisect_plane(bm, geom=geom, plane_co=co, plane_no=no)
-
-    is_arm = lambda bn: bn.startswith(("upper_arm", "forearm", "hand"))
-    cut(lambda bn: not is_arm(bn) and bn not in ("head", "neck"), (0, 0, belt), (0, 0, 1))
-    cut(lambda bn: bn.startswith(("shin", "foot")), (0, 0, shoe_top), (0, 0, 1))
-    for sfx, (co, no) in sleeves.items():
-        cut(lambda bn, sfx=sfx: bn in (f"upper_arm.{sfx}", f"forearm.{sfx}"), co, no)
-
-    for f in bm.faces:
-        c = f.calc_center_median()
-        bn = region(f)
-        if is_arm(bn):
-            co, no = sleeves[bn[-1]]
-            m = "shirt" if bn.startswith("upper_arm") and (c - co).dot(no) < 0 else "skin"
-        elif bn in ("head", "neck"):
-            m = "skin"
-        elif c.z < shoe_top:
-            m = "shoes"
-        elif c.z < belt:
-            m = "pants"
-        else:
-            m = "shirt"
-        f.material_index = idx[m]
-        f.smooth = True
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    seen = set()
+    for f0 in bm.faces:
+        if f0.index in seen:
+            continue
+        island, stack = [], [f0]
+        seen.add(f0.index)
+        while stack:
+            f = stack.pop()
+            island.append(f)
+            for e in f.edges:
+                for g in e.link_faces:
+                    if g.index not in seen:
+                        seen.add(g.index)
+                        stack.append(g)
+        out = sum(f.calc_area() * f.normal.dot(f.calc_center_median() - ref) for f in island)
+        if out < 0:
+            bmesh.ops.reverse_faces(bm, faces=island)
     bm.to_mesh(me)
     bm.free()
 
 
-def weight_body(body, rig):
-    """Bone-heat automatic weights; any vertex left unweighted gets its nearest bone."""
-    select_only(rig)
-    body.select_set(True)
-    bpy.context.view_layer.objects.active = rig
-    bpy.ops.object.parent_set(type="ARMATURE_AUTO")
-    segs = bone_segments(rig)
-    groups = {g.index: g.name for g in body.vertex_groups}
-    missing = 0
-    for vtx in body.data.vertices:
-        if sum(g.weight for g in vtx.groups if g.group in groups) < 1e-4:
-            bn, _ = nearest_bone(vtx.co, segs)
-            body.vertex_groups[bn].add([vtx.index], 1.0, "REPLACE")
-            missing += 1
-    if missing:
-        print(f"  {missing} vertices had no heat weights; used nearest bone")
-
-
-def vertex_bone_weights(body):
-    names = {g.index: g.name for g in body.vertex_groups}
-    out = []
-    for vtx in body.data.vertices:
-        ws = {names[g.group]: g.weight for g in vtx.groups if g.weight > 0}
-        tot = sum(ws.values()) or 1.0
-        out.append({k: w / tot for k, w in ws.items()})
-    return out
-
-
-# body-shape offsets along the normal, in fractions of H, per bone: (slim, heavy)
-BUILD = {
-    "hips": (-0.010, 0.032),
-    "spine": (-0.014, 0.045),
-    "chest": (-0.010, 0.030),
-    "neck": (-0.004, 0.012),
-    "upper_arm": (-0.006, 0.016),
-    "forearm": (-0.004, 0.010),
-    "hand": (-0.001, 0.004),
-    "thigh": (-0.009, 0.026),
-    "shin": (-0.004, 0.012),
-    "foot": (0.0, 0.002),
-    "head": (0.0, 0.0),
-}
-
-
-def add_build_keys(body, d):
-    weights = vertex_bone_weights(body)
-    body.shape_key_add(name="Basis")
-    me = body.data
-    for key_i, key_name in ((0, "slim"), (1, "heavy")):
-        sk = body.shape_key_add(name=key_name, from_mix=False)
-        for vtx, ws in zip(me.vertices, weights):
-            off = 0.0
-            for bn, w in ws.items():
-                off += w * BUILD[bn.split(".")[0]][key_i]
-            n = vtx.normal
-            if key_i == 1 and ws.get("spine", 0) + ws.get("hips", 0) > 0.3 and n.y < 0:
-                off += d.H * 0.02 * (-n.y) * (ws.get("spine", 0) + ws.get("hips", 0) * 0.5)  # belly
-            sk.data[vtx.index].co = vtx.co + n * off * d.H
-
-
-# ------------------------------------------------------------------------------------------------
-# head, face, hair (rigid on the head bone)
-
-
-def uv_sphere(name, center, radii, mat, segs=24, rings=14):
-    bm = bmesh.new()
-    bmesh.ops.create_uvsphere(bm, u_segments=segs, v_segments=rings, radius=1.0)
-    for vert in bm.verts:
-        vert.co = Vector((vert.co.x * radii[0], vert.co.y * radii[1], vert.co.z * radii[2])) + Vector(center)
+def mesh_object(name, verts, faces, mats, ref=None):
     me = bpy.data.meshes.new(name)
-    bm.to_mesh(me)
-    bm.free()
-    for p in me.polygons:
-        p.use_smooth = True
-    me.materials.append(bpy.data.materials[mat])
+    me.from_pydata([tuple(v) for v in verts], [], faces)
+    if ref is not None:
+        orient_outward(me, Vector(ref))
+    order = []
+    for m in mats:
+        if m not in order:
+            order.append(m)
+    for m in order:
+        me.materials.append(bpy.data.materials[m])
+    for poly, m in zip(me.polygons, mats):
+        poly.material_index = order.index(m)
+        poly.use_smooth = True
     return link(bpy.data.objects.new(name, me))
 
 
-def make_head_parts(d):
-    hh = d.head_h
-    c = Vector((0, 0, d.head_c))
-    parts = [uv_sphere("head", c, (hh * 0.43, hh * 0.46, hh * 0.5), "skin", 32, 20)]
-    for side in (1, -1):
-        eye = c + Vector((side * hh * 0.17, -hh * 0.385, hh * 0.06))
-        parts.append(uv_sphere("eye", eye, (hh * 0.085, hh * 0.05, hh * 0.1), "eye_white", 16, 10))
-        iris = eye + Vector((0, -hh * 0.04, -hh * 0.005))
-        parts.append(uv_sphere("iris", iris, (hh * 0.042, hh * 0.022, hh * 0.05), "iris", 12, 8))
-        parts.append(uv_sphere("pupil", iris + Vector((0, -hh * 0.014, 0)), (hh * 0.02, hh * 0.011, hh * 0.024), "pupil", 10, 6))
-        parts.append(uv_sphere("ear", c + Vector((side * hh * 0.42, hh * 0.02, 0)), (hh * 0.06, hh * 0.1, hh * 0.13), "skin", 12, 8))
-    parts.append(uv_sphere("nose", c + Vector((0, -hh * 0.45, -hh * 0.06)), (hh * 0.06, hh * 0.07, hh * 0.08), "skin", 12, 8))
-    parts.append(uv_sphere("mouth", c + Vector((0, -hh * 0.405, -hh * 0.22)), (hh * 0.12, hh * 0.03, hh * 0.025), "mouth", 12, 8))
-    return parts
+def add_param_keys(obj, variants, eps=1e-5):
+    """variants: [(key name, [model-space verts])] with obj's topology. Keys that move no vertex
+    more than eps are left out (glTF stores every target densely)."""
+    if obj.data.shape_keys is None:
+        obj.shape_key_add(name="Basis")
+    for name, verts in variants:
+        if all((Vector(v) - b.co).length < eps for v, b in zip(verts, obj.data.vertices)):
+            continue
+        sk = obj.shape_key_add(name=name, from_mix=False)
+        for i, v in enumerate(verts):
+            sk.data[i].co = v
 
 
-def hair_cap(name, d, scale, cut_front_z, cut_back_z):
-    """A shell over the skull; faces below the cut lines (front: brow, back: nape) removed."""
-    hh = d.head_h
-    c = Vector((0, 0, d.head_c))
-    obj = uv_sphere(name, c, (hh * 0.43 * scale, hh * 0.46 * scale, hh * 0.5 * scale), "hair", 32, 20)
-    bm = bmesh.new()
-    bm.from_mesh(obj.data)
-    kill = []
-    for f in bm.faces:
-        fc = f.calc_center_median() - c
-        front = -fc.y / (hh * 0.46)
-        limit = cut_front_z if front > 0.2 else cut_back_z
-        if fc.z < limit * hh:
-            kill.append(f)
-    bmesh.ops.delete(bm, geom=kill, context="FACES")
-    # thicken into a solid shell so it reads from inside the head too
-    bm.to_mesh(obj.data)
-    bm.free()
-    m = obj.modifiers.new("solid", "SOLIDIFY")
-    m.thickness = hh * 0.03
-    select_only(obj)
-    bpy.ops.object.modifier_apply(modifier="solid")
+def make_head(d, stage):
+    """The head (skull, face, eyes, lids, lips, ears, brows) as one rigid mesh with a shape key
+    per face slider."""
+    hh, c = head_frame(d)
+    ch = CHILDISH[stage]
+
+    ears = set()
+
+    def build(P):
+        verts, faces, mats = [], [], []
+        for name, v, f, m in build_head(hh, c, P, ch):
+            base = len(verts)
+            if name == "ear":
+                ears.update(range(base, base + len(v)))
+            verts += v
+            faces += [tuple(i + base for i in fc) for fc in f]
+            mats += m
+        return verts, faces, mats
+
+    verts, faces, mats = build({})
+    obj = mesh_object("head", verts, faces, mats, ref=c)
+    add_param_keys(obj, [(k, build({k: 1.0})[0]) for k in FACE_KEYS])
+    g = obj.vertex_groups.new(name="head")
+    g.add(list(range(len(verts))), 1.0, "REPLACE")
+    paint_head(obj, hh, c, ears)
     return obj
 
 
-def make_hair(d):
-    hh = d.head_h
-    c = Vector((0, 0, d.head_c))
-    styles = []
-    # 0: short crop
-    styles.append([hair_cap("hair0", d, 1.07, 0.18, -0.12)])
-    # 1: crop + top bun
-    styles.append([hair_cap("hair1", d, 1.07, 0.2, -0.05), uv_sphere("bun", c + Vector((0, hh * 0.12, hh * 0.55)), (hh * 0.2,) * 3, "hair", 16, 10)])
-    # 2: long hair falling to the shoulders
-    long_back = uv_sphere("long", c + Vector((0, hh * 0.16, -hh * 0.32)), (hh * 0.46, hh * 0.28, hh * 0.5), "hair", 20, 12)
-    styles.append([hair_cap("hair2", d, 1.08, 0.12, -0.6), long_back])
-    # 3: mostly bald with a heroic fringe at the back
-    styles.append([hair_cap("hair3", d, 1.05, 0.9, -0.2)])
-    for s in styles:
-        bm = bmesh.new()
-        # trim fringe style: keep only a horseshoe below the crown
-        if s[0].name == "hair3":
-            bm.from_mesh(s[0].data)
-            kill = [f for f in bm.faces if (f.calc_center_median() - c).z > hh * 0.22 or (f.calc_center_median() - c).y < -hh * 0.05]
-            bmesh.ops.delete(bm, geom=kill, context="FACES")
-            bm.to_mesh(s[0].data)
-        bm.free()
+def make_hair(d, stage, rig):
+    """Every hair and facial-hair style as its own mesh (`hair.<id>`, `facial.<id>`), rigid on
+    the head bone, with the face slider keys."""
+    hh, c = head_frame(d)
+    ch = CHILDISH[stage]
+    to_model = lambda vs: [c + v * hh for v in vs]
+    ref = Face({}, ch)
+    base = hair_meshes(ref)
+    variants = {k: hair_meshes(Face({k: 1.0}, ch), ref) for k in FACE_KEYS}
+    facial = {k for k, _ in FACIAL_HAIR}
     out = []
-    for s in styles:
-        select_only(*s)
-        bpy.context.view_layer.objects.active = s[0]
-        bpy.ops.object.join()
-        out.append(s[0])
+    for style, (verts, faces) in base.items():
+        name = ("facial." if style in facial else "hair.") + style
+        obj = mesh_object(name, to_model(verts), faces, ["hair"] * len(faces), ref=c)
+        add_param_keys(obj, [(k, to_model(variants[k][style][0])) for k in FACE_KEYS])
+        rigid_to_head(obj, rig)
+        out.append(obj)
     return out
 
 
-def rigid_to_head(obj, rig):
-    g = obj.vertex_groups.new(name="head")
-    g.add([v.index for v in obj.data.vertices], 1.0, "REPLACE")
+def rigid_to_head(obj, rig, group=True):
+    if group:
+        g = obj.vertex_groups.new(name="head")
+        g.add([v.index for v in obj.data.vertices], 1.0, "REPLACE")
     obj.parent = rig
     mod = obj.modifiers.new("rig", "ARMATURE")
     mod.object = rig
@@ -566,20 +480,28 @@ def make_clips(rig, d, infant):
             p.rot("hips", qz(6 * (1 if f in (8,) else -1) * k))
             p.key(f)
     else:
-        swing, knee, arm = (24, 45, 22) if not d.hunch else (16, 35, 12)
-        keys = [
-            (0, (swing, -swing), (4, 12), (-arm, arm), 0.0),
-            (8, (0, -8), (8, knee), (0, 0), 0.025),
-            (15, (-swing, swing), (12, 4), (arm, -arm), 0.0),
-            (23, (-8, 0), (knee, 8), (0, 0), 0.025),
-            (30, (swing, -swing), (4, 12), (-arm, arm), 0.0),
-        ]
-        for f, th, sh, ar, up in keys:
-            base_pose(p, arm_down=24, arm_fwd=ar, elbow=(14, 14))
-            legs(p, th, sh, foot=(-sh[0] * 0.25, -sh[1] * 0.25))
-            p.move("hips", (0, 0, H * up * 0.5 - H * 0.008))
-            p.rot("hips", qz(-th[0] * 0.15))
-            p.rot("chest", qz(th[0] * 0.25) @ (qx(-10) if d.hunch else Quaternion()))
+        # a continuous gait sampled every other frame: knee flex at heel strike, a high knee on
+        # the swing, the body lowest at contact and highest passing, arms lagging the legs with
+        # the elbow following through (the game adds the hip/shoulder twist on top)
+        swing, knee, arm = (24, 52, 20) if not d.hunch else (16, 38, 11)
+        for f in range(0, 31, 2):
+            a = 2 * math.pi * f / 30
+
+            def leg(ph):
+                th = swing * math.cos(ph)
+                sw = (ph % (2 * math.pi)) > math.pi  # swinging forward
+                kn = 6 + (knee * math.sin(ph - math.pi) ** 1.4 if sw else 12 * max(0.0, math.sin(2 * ph)))
+                return th, kn
+
+            (tl, kl), (tr, kr) = leg(a), leg(a + math.pi)
+            lag = 0.35
+            al, ar_ = -arm * math.cos(a - lag), arm * math.cos(a - lag)
+            el = (12 + 18 * max(0.0, -math.cos(a - lag - 0.3)), 12 + 18 * max(0.0, math.cos(a - lag - 0.3)))
+            base_pose(p, arm_down=23, arm_fwd=(al, ar_), elbow=el)
+            legs(p, (tl, tr), (kl, kr), foot=(-kl * 0.3 + 6 * math.cos(a), -kr * 0.3 - 6 * math.cos(a)))
+            p.move("hips", (0, 0, -H * 0.011 * math.cos(2 * a) - H * 0.01))
+            p.rot("chest", qx(-3) @ (qx(-10) if d.hunch else Quaternion()))
+            p.rot("head", qx(2 + 1.5 * math.cos(2 * a)))
             p.key(f)
     finish_action(rig, act, 30)
 
@@ -1112,26 +1034,114 @@ def make_infant_clips(rig, p):
 # ------------------------------------------------------------------------------------------------
 
 
+def preview(rig, body, clothes, hair, path):
+    """Renders a dressed body front and three-quarter (PEON_PREVIEW=out.png; PEON_SHOW=comma list of
+    mesh names to show, PEON_KEYS=key=value,... shape key values) instead of exporting."""
+    show = set(os.environ.get("PEON_SHOW", "top_tee,bottom_trousers,shoes,hair.short").split(","))
+    keys = dict(kv.split("=") for kv in os.environ.get("PEON_KEYS", "").split(",") if kv)
+    for o in clothes + hair:
+        o.hide_render = o.name not in show and o.name != "head"
+    # like the game, drop the skin a shown garment covers
+    covered = set().union(*(GARMENTS[n][1] for n in show if n in GARMENTS))
+    bm = bmesh.new()
+    bm.from_mesh(body.data)
+    mats = body.data.materials
+    hide = [f for f in bm.faces if mats[f.material_index].name.startswith("skin.r") and int(mats[f.material_index].name[6:]) in covered]
+    bmesh.ops.delete(bm, geom=hide, context="FACES")
+    bm.to_mesh(body.data)
+    bm.free()
+    for o in [body] + clothes + hair:
+        if o.data.shape_keys:
+            for kb in o.data.shape_keys.key_blocks[1:]:
+                kb.slider_min = -1
+                kb.value = float(keys.get(kb.name, 0))
+    tints = {"skin": (0.87, 0.67, 0.5), "hair": (0.3, 0.18, 0.1), "shirt": (0.3, 0.5, 0.75), "pants": (0.25, 0.25, 0.3), "shoes": (0.9, 0.9, 0.9), "iris": (0.3, 0.45, 0.6)}
+    for m in bpy.data.materials:
+        base = m.name.split(".")[0]
+        if base in tints and m.node_tree:
+            col = [c**2.2 for c in tints[base]]
+            if m.name == "skin.lips":
+                col = [a * b for a, b in zip(col, (0.86**2.2, 0.6**2.2, 0.6**2.2))]  # light-skin lip_tint
+            m.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (*col, 1)
+    sc = bpy.context.scene
+    sc.render.engine = "BLENDER_EEVEE"
+    w = bpy.data.worlds.new("w")
+    sc.world = w
+    w.use_nodes = True
+    w.node_tree.nodes["Background"].inputs[0].default_value = (0.5, 0.55, 0.6, 1)
+    ld = bpy.data.lights.new("sun", "SUN")
+    ld.energy = 3
+    lo = link(bpy.data.objects.new("sun", ld))
+    lo.rotation_euler = (math.radians(50), 0, math.radians(-30))
+    H = rig.dimensions.z
+    zoom_on = os.environ.get("PEON_ZOOM", "")
+    zoom = zoom_on in ("head", "chest")
+    zoom_z, zoom_scale = (0.78, 0.36) if zoom_on == "chest" else (0.9, 0.3)
+    if zoom_on in ("hand", "foot"):
+        # close-up of the left hand / foot: front, side, back and from below
+        sh, el, wr, tip = arm_points(Dims(STAGES[os.environ.get("PEON_STAGE", "adult")]), 1)
+        target = wr.lerp(tip, float(os.environ.get("PEON_ZOOM_AT", 0.5))) if zoom_on == "hand" else Vector((rig.data.bones["foot.L"].head_local.x, -0.05 * H, 0.04 * H))
+        for i, (yaw, pitch) in enumerate(((0, 0), (90, 0), (180, 0), (-90, 0), (30, 45))):
+            cd = bpy.data.cameras.new("c")
+            cd.type = "ORTHO"
+            cd.ortho_scale = H * float(os.environ.get("PEON_ZOOM_SCALE", 0.14 if zoom_on == "hand" else 0.17))
+            co = link(bpy.data.objects.new("c", cd))
+            a, b = math.radians(yaw), math.radians(pitch)
+            dirv = Vector((math.sin(a) * math.cos(b), -math.cos(a) * math.cos(b), math.sin(b)))
+            co.location = target + dirv * 3
+            co.rotation_euler = dirv.to_track_quat("Z", "Y").to_euler()
+            sc.camera = co
+            sc.render.resolution_x = sc.render.resolution_y = 500
+            sc.render.filepath = path.replace(".png", f"_{zoom_on}{i}.png")
+            bpy.ops.render.render(write_still=True)
+        return
+    for yaw, label in ((0, "front"), (40, "side")):
+        cd = bpy.data.cameras.new("c")
+        cd.type = "ORTHO"
+        cd.ortho_scale = H * (zoom_scale if zoom else 1.1)
+        co = link(bpy.data.objects.new("c", cd))
+        a = math.radians(yaw)
+        co.location = (math.sin(a) * 5, -math.cos(a) * 5, H * (zoom_z if zoom else 0.5))
+        co.rotation_euler = (math.radians(90), 0, a)
+        sc.camera = co
+        sc.render.resolution_x, sc.render.resolution_y = 500, 700 if not zoom else 500
+        sc.render.filepath = path.replace(".png", f"_{label}.png")
+        bpy.ops.render.render(write_still=True)
+
+
 def build_stage(stage, params):
     reset()
+    if MPFB:
+        return build_stage_mpfb(stage, params)
     d = Dims(params)
     rig = make_armature(d)
-    body = make_body_skin(d)
-    assign_body_materials(body, rig, d)
+    hems = Hems(d, arm_points, leg_points)
+    body = make_body(d, arm_points, leg_points, lambda m: add_stubs(m, d, arm_points, leg_points))
+    cut_regions(body, rig, hems)
     weight_body(body, rig)
-    add_build_keys(body, d)
-    # face parts join the body (they get the Basis position in every shape key)
-    parts = make_head_parts(d)
-    for prt in parts:
-        g = prt.vertex_groups.new(name="head")
-        g.add([v.index for v in prt.data.vertices], 1.0, "REPLACE")
-    select_only(body, *parts)
-    bpy.context.view_layer.objects.active = body
-    bpy.ops.object.join()
-    for h in make_hair(d):
-        rigid_to_head(h, rig)
+    add_body_keys(body, d)
+    last = shoe_last(d, leg_points, hems)
+    copy_weights(last, body, rig)
+    transfer_keys(last, body)
+    clothes = make_clothes(body, rig, d, hems, sources={"shoes": last})
+    bpy.data.objects.remove(last)
+    spots = add_extremities(body, rig, d, hems, arm_points, leg_points)
+    paint_body(body, d, spots, arm_points, leg_points)
+    smooth_seams([body], spots.pop("seam_src"), d, arm_points, leg_points)
+    # the head stays its own mesh: glTF stores morph targets densely, so face keys on the body
+    # (or body keys on the head) would cost a delta for every vertex
+    head = make_head(d, stage)
+    rigid_to_head(head, rig, group=False)
+    hair = make_hair(d, stage, rig)
+    if os.environ.get("PEON_PREVIEW"):
+        preview(rig, body, clothes + [head], hair, os.environ["PEON_PREVIEW"])
+        return
     make_clips(rig, d, infant=(stage == "infant"))
 
+    export_stage(stage, body)
+
+
+def export_stage(stage, body):
     os.makedirs(OUT, exist_ok=True)
     path = os.path.abspath(os.path.join(OUT, f"peon_{stage}.glb"))
     bpy.ops.object.select_all(action="SELECT")
@@ -1145,6 +1155,7 @@ def build_stage(stage, params):
         export_frame_step=1,
         export_morph=True,
         export_morph_normal=False,
+        export_try_sparse_sk=False,  # the game's loader rejects data-less (all-zero) accessors
         export_skins=True,
         export_all_influences=False,
         export_def_bones=False,
@@ -1153,8 +1164,66 @@ def build_stage(stage, params):
         export_texcoords=False,
         export_normals=True,
         export_materials="EXPORT",
+        export_vertex_color="ACTIVE",
+        export_all_vertex_colors=True,
+        export_active_vertex_color_when_no_material=True,
     )
     print(f"wrote {path}: body {len(body.data.vertices)} verts")
+
+
+MPFB = os.environ.get("PEON_BASE") == "mpfb"
+
+
+def fill_weights(obj, rig):
+    """Vertices MPFB weighted to no peon bone get their nearest bone (glTF would add a neutral one)."""
+    from peon_body import bone_segments, nearest_bone
+
+    segs = bone_segments(rig)
+    groups = {g.index for g in obj.vertex_groups if g.name in segs}
+    for v in obj.data.vertices:
+        if sum(g.weight for g in v.groups if g.group in groups) < 1e-4:
+            bn, _ = nearest_bone(v.co, segs)
+            grp = obj.vertex_groups.get(bn) or obj.vertex_groups.new(name=bn)
+            grp.add([v.index], 1.0, "REPLACE")
+
+
+def build_stage_mpfb(stage, params):
+    """build_stage on an MPFB body and head (peon_mpfb.py): the same skeleton, garments, hair,
+    keys and clips, fitted to MPFB's anatomy instead of the metaball body."""
+    import peon_mpfb
+
+    base = peon_mpfb.build(stage, params["H"], ARM_SPREAD)
+    d = Dims.from_mpfb(params, base.joints)
+    rig = make_armature(d)
+    hems = Hems(d, arm_points, leg_points)
+    hems.arm_reach = d.limb * 1.5
+    body, head = base.body, base.head
+    for obj in (body, head):
+        obj.parent = rig
+        obj.modifiers.new("rig", "ARMATURE").object = rig
+        fill_weights(obj, rig)
+    cut_regions(body, rig, hems)
+    add_body_keys(body, d)
+    last = shoe_last(d, leg_points, hems)
+    copy_weights(last, body, rig)
+    transfer_keys(last, body)
+    clothes = make_clothes(body, rig, d, hems, sources={"shoes": last})
+    bpy.data.objects.remove(last)
+    set_skin_colors(body, lambda i, p, n: (1.0, 1.0, 1.0, 0.0), lambda i, p, n: 0.1)
+    hh, c = head_frame(d)
+    paint_head(head, hh, c, base.ears)
+    if os.environ.get("PEON_DEBUG"):
+        print("RES frame", hh, tuple(c), "chin", tuple(base.joints["chin"]), "top", tuple(base.joints["head_top"]))
+    # hair is built over the parametric head, then moved onto the MPFB one
+    hair = make_hair(d, stage, rig)
+    peon_head = make_head(d, stage)
+    peon_mpfb.fit_hair(hair, head, peon_head, c)
+    bpy.data.objects.remove(peon_head)
+    if os.environ.get("PEON_PREVIEW"):
+        preview(rig, body, clothes + [head], hair, os.environ["PEON_PREVIEW"])
+        return
+    make_clips(rig, d, infant=(stage == "infant"))
+    export_stage(stage, body)
 
 
 def main():
@@ -1166,4 +1235,5 @@ def main():
         build_stage(stage, params)
 
 
-main()
+if __name__ == "__main__":
+    main()

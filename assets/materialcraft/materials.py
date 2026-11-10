@@ -412,7 +412,39 @@ def stone():
     return albedo, height, (c(1.0), rough, c(0.0)), 0.3
 
 
+def skin():
+    """Human skin detail for peons (8 cm repeat, box-projected in the body's bind space): scattered
+    pores, the criss-cross microrelief furrows and faint mottling. Near-white so the skin tint is
+    the colour; the game lights it with subsurface scattering."""
+    n = 40  # pore cells per repeat: ~2 mm apart
+    p = pos()
+    px, py = sx(p), sy(p)
+    X, Y = px * n, py * n
+    ix, iy = floor(X), floor(Y)
+    # one pore per cell, jittered in its middle half (so no neighbour lookups), varied size
+    ox = 0.25 + 0.5 * hash1(ix, iy, 211.0)
+    oy = 0.25 + 0.5 * hash1(ix, iy, 223.0)
+    dx, dy = frac(X) - ox, frac(Y) - oy
+    r = 0.09 + 0.1 * hash1(ix, iy, 227.0)
+    pore = 1.0 - sstep(0.0, r * r, dx * dx + dy * dy)
+    # microrelief: two families of shallow furrows crossing at an angle, wobbled by noise
+    wob = vnoise(px, py, 12, 12, 229.0)
+    f1 = absf(sin(math.pi * (px * 22.0 + py * 14.0 + 1.4 * wob)))
+    f2 = absf(sin(math.pi * (px * 16.0 - py * 24.0 + 1.4 * wob)))
+    furrow = 1.0 - mn(f1, f2)
+    furrow = furrow * furrow * furrow * furrow
+    mottle = vnoise(px, py, 6, 6, 233.0)
+    g = grain(px, py, 239.0)
+    height = clamp01(0.62 - 0.4 * pore - 0.12 * furrow + 0.08 * g)
+    tone = 0.95 + 0.05 * mottle - 0.04 * pore - 0.02 * furrow
+    albedo = (tone, tone * (0.985 + 0.015 * mottle), tone * (0.975 + 0.025 * mottle))
+    rough = 0.52 + 0.14 * pore + 0.08 * furrow + 0.06 * (1.0 - mottle)
+    ao = 1.0 - 0.25 * pore - 0.1 * furrow
+    return albedo, height, (ao, rough, c(0.0)), 0.32
+
+
 MATERIALS = {
+    "skin": skin,
     "wall_brick": wall_brick,
     "wall_plaster": wall_plaster,
     "wall_tile": wall_tile,

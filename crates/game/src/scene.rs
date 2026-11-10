@@ -51,6 +51,8 @@ pub struct SceneOptions {
     pub show_roofs: bool,
     /// Create-a-Household line-up: (stage, look, being edited).
     pub preview: Vec<(LifeStage, Appearance, bool)>,
+    /// Where the preview line-up stands (centre, at the floor focus height).
+    pub preview_at: Vec3,
 }
 
 impl Default for SceneOptions {
@@ -70,6 +72,7 @@ impl Default for SceneOptions {
             roof_meshes: Vec::new(),
             show_roofs: true,
             preview: Vec::new(),
+            preview_at: Vec3::ZERO,
         }
     }
 }
@@ -465,9 +468,9 @@ pub fn build(sim: &Sim, r: &Builtins, peons: Option<&PeonArt>, anims: &mut Anima
     // ---------------------------------------------------------------- creator line-up
     if !opts.preview.is_empty() {
         let n = opts.preview.len() as f32;
-        let base = opts.focus;
+        let base = opts.preview_at;
         for (i, (stage, app, editing)) in opts.preview.iter().enumerate() {
-            let p = base + Vec3::new((i as f32 - (n - 1.0) * 0.5) * 1.1, 0.25, 0.0);
+            let p = base + Vec3::new((i as f32 - (n - 1.0) * 0.5) * crate::creator::LINEUP_SPACING, 0.25, 0.0);
             let to_cam = camera.eye - p;
             let yaw = to_cam.x.atan2(to_cam.z);
             d.push(Draw::new(r.cylinder, Mat4::from_scale_rotation_translation(Vec3::new(0.9, 0.25, 0.9), Quat::IDENTITY, p - Vec3::Y * 0.125), if *editing { [0.95, 0.85, 0.4] } else { [0.7, 0.7, 0.72] }).rough(0.4));

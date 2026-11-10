@@ -63,7 +63,11 @@ struct VsOut {
     @location(7) @interpolate(flat) r0: vec3<f32>,
     @location(8) @interpolate(flat) r1: vec3<f32>,
     @location(9) @interpolate(flat) r2: vec3<f32>,
+    // skin (flag SKIN): how thin the flesh is, for light shining through
+    @location(10) thin: f32,
 };
+
+const FLAG_SKIN: u32 = 16u;
 
 // tex: layer, 1 / scale, world-space flag
 fn set_triplanar(o: ptr<function, VsOut>, m: mat4x4<f32>, pos: vec3<f32>, tex: vec4<f32>) {
@@ -108,8 +112,12 @@ fn vs_shadow(v: VsIn) -> @builtin(position) vec4<f32> {
 
 // ---------------------------------------------------------------------------------------- skinned
 
-// Joint matrices (4 vec4 columns each) and per-draw palettes, indexed by the instance's `extra`.
+// Joint matrices (4 vec4 columns each), per-draw palettes and morph weights, indexed by the
+// instance's `extra`.
 @group(1) @binding(0) var<storage, read> skin: array<vec4<f32>>;
+// Sparse morph deltas of every uploaded skinned mesh: xyz = position delta, w = target index.
+// A vertex's entries are `morphs[morph.x .. morph.x + morph.y]`.
+@group(1) @binding(1) var<storage, read> morphs: array<vec4<f32>>;
 
 struct SkIn {
     @location(0) pos: vec3<f32>,
@@ -117,16 +125,17 @@ struct SkIn {
     @location(2) color: vec4<f32>,
     @location(3) joints: vec4<u32>,
     @location(4) weights: vec4<f32>,
-    @location(5) morph0: vec3<f32>,
-    @location(6) morph1: vec3<f32>,
-    @location(7) slot: u32,
+    @location(5) morph: vec2<u32>,
+    @location(7) slot: u32,  // bits 0..8 palette slot, 8..16 skin region, 16..24 flesh thinness
+    @location(6) tone: vec4<f32>,  // rgb multiplies after `a` mixes towards PALE_SKIN
     @location(8) m0: vec4<f32>,
     @location(9) m1: vec4<f32>,
     @location(10) m2: vec4<f32>,
     @location(11) m3: vec4<f32>,
     @location(12) icolor: vec4<f32>,
     @location(13) params: vec4<f32>,
-    @location(14) extra: vec4<f32>,  // joint base, palette base, morph weights
+    @location(14) extra: vec4<f32>,  // joint base, palette base, morph weight base, hidden regions
+    @location(15) skinp: vec4<f32>,  // skin surface: palette slot (-1 none), material layer, 1 / scale
 };
 
 fn joint_mat(i: u32) -> mat4x4<f32> {
@@ -145,8 +154,24 @@ fn skinned_model(v: SkIn) -> mat4x4<f32> {
 }
 
 fn morphed(v: SkIn) -> vec3<f32> {
-    return v.pos + v.morph0 * v.extra.z + v.morph1 * v.extra.w;
+    var p = v.pos;
+    let wbase = u32(v.extra.z + 0.5);
+    for (var i = v.morph.x; i < v.morph.x + v.morph.y; i++) {
+        let e = morphs[i];
+        let k = u32(e.w + 0.5);
+        p += e.xyz * skin[wbase + k / 4u][k % 4u];
+    }
+    return p;
 }
+
+// Skin regions covered by clothes are collapsed out of the way (outside the clip volume).
+fn hidden(v: SkIn) -> bool {
+    let region = (v.slot >> 8u) & 255u;
+    return region > 0u && ((u32(v.extra.w + 0.5) >> region) & 1u) == 1u;
+}
+
+// sRGB tone palms, soles and nails lean towards (vertex tone alpha)
+const PALE_SKIN: vec3<f32> = vec3<f32>(0.93, 0.8, 0.74);
 
 @vertex
 fn vs_skinned(v: SkIn) -> VsOut {
@@ -156,17 +181,38 @@ fn vs_skinned(v: SkIn) -> VsOut {
     o.clip = g.view_proj * world;
     o.world = world.xyz;
     o.normal = normalize((m * vec4<f32>(v.normal, 0.0)).xyz);
-    let tint = skin[u32(v.extra.y + 0.5) + v.slot];
-    let c = v.color * v.icolor * tint;
+    if (hidden(v)) {
+        o.clip = vec4<f32>(0.0, 0.0, -2.0, 1.0);
+    }
+    let tint = skin[u32(v.extra.y + 0.5) + (v.slot & 255u)];
+    var c = v.color * v.icolor * tint;
+    // palms, soles and nails lean towards a pale tone whatever the skin colour
+    c = vec4<f32>(mix(c.rgb, PALE_SKIN, v.tone.a) * v.tone.rgb, c.a);
     o.color = vec4<f32>(pow(max(c.rgb, vec3<f32>(0.0)), vec3<f32>(2.2)), c.a);
     o.params = v.params;
     o.light_clip = g.light_view_proj * world;
-    set_triplanar(&o, mat4x4<f32>(vec4<f32>(1.0, 0.0, 0.0, 0.0), vec4<f32>(0.0, 1.0, 0.0, 0.0), vec4<f32>(0.0, 0.0, 1.0, 0.0), vec4<f32>(0.0, 0.0, 0.0, 1.0)), vec3<f32>(0.0), vec4<f32>(0.0, 1.0, 0.0, 0.0));
+    o.thin = f32((v.slot >> 16u) & 255u) / 255.0;
+    let is_skin = v.skinp.x >= 0.0 && (v.slot & 255u) == u32(v.skinp.x + 0.5);
+    if (is_skin) {
+        o.params.w = f32(u32(v.params.w + 0.5) | FLAG_SKIN);
+        // detail material in bind space (the rest-pose mesh), rotated along with the skinning
+        o.layer = u32(v.skinp.y + 0.5);
+        o.tex_pos = v.pos * v.skinp.z;
+        let r = mat3x3<f32>(normalize(m[0].xyz), normalize(m[1].xyz), normalize(m[2].xyz));
+        o.r0 = r[0];
+        o.r1 = r[1];
+        o.r2 = r[2];
+    } else {
+        set_triplanar(&o, mat4x4<f32>(vec4<f32>(1.0, 0.0, 0.0, 0.0), vec4<f32>(0.0, 1.0, 0.0, 0.0), vec4<f32>(0.0, 0.0, 1.0, 0.0), vec4<f32>(0.0, 0.0, 0.0, 1.0)), vec3<f32>(0.0), vec4<f32>(0.0, 1.0, 0.0, 0.0));
+    }
     return o;
 }
 
 @vertex
 fn vs_shadow_skinned(v: SkIn) -> @builtin(position) vec4<f32> {
+    if (hidden(v)) {
+        return vec4<f32>(0.0, 0.0, -2.0, 1.0);
+    }
     return g.light_view_proj * skinned_model(v) * vec4<f32>(morphed(v), 1.0);
 }
 
@@ -213,6 +259,36 @@ fn shade(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, albedo: vec3<f32>, rough: f32
     let spec = ggx(n, h, rough) * gv * gl * f / max(4.0 * nv * nl, 0.001);
     let kd = (1.0 - f) * (1.0 - metal);
     return (kd * albedo / PI + spec) * nl;
+}
+
+// Skin: diffuse wrapped further per channel (red light scatters deepest under the skin, so the
+// terminator goes soft and warm), shadows bleeding red at their edges, and light shining through
+// thin flesh (ears, fingers) from behind. Specular stays the plain GGX lobe.
+// Preserve a little extra sheen on deep tones so forms remain readable, while
+// keeping the lobe broad enough to avoid hard, vinyl-like shoulder highlights.
+// Depth is 0 for pale skin, 1 for the deepest tones.
+fn skin_depth(albedo: vec3<f32>) -> f32 {
+    return smoothstep(0.3, 0.03, dot(albedo, vec3<f32>(0.2126, 0.7152, 0.0722)));
+}
+
+fn shade_skin(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, albedo: vec3<f32>, rough_in: f32, sh: f32, thin: f32) -> vec3<f32> {
+    let dark = skin_depth(albedo);
+    let rough = max(rough_in * (1.0 - 0.08 * dark), 0.56);
+    let h = normalize(v + l);
+    let nl_raw = dot(n, l);
+    let nl = max(nl_raw, 0.0);
+    let nv = max(dot(n, v), 0.001);
+    let wrap = vec3<f32>(0.42, 0.2, 0.13);
+    let diff = max((vec3<f32>(nl_raw) + wrap) / ((1.0 + wrap) * (1.0 + wrap)), vec3<f32>(0.0));
+    let shc = pow(vec3<f32>(sh), vec3<f32>(0.55, 0.95, 1.1));
+    let f = 0.028 + 0.972 * pow(1.0 - max(dot(h, v), 0.0), 5.0);
+    let k = (rough + 1.0) * (rough + 1.0) / 8.0;
+    let gv = nv / (nv * (1.0 - k) + k);
+    let gl = nl / (nl * (1.0 - k) + k);
+    let spec = ggx(n, h, rough) * gv * gl * f / max(4.0 * nv * nl, 0.001) * nl * (1.0 + 0.45 * dark);
+    let back = pow(clamp(dot(v, -normalize(l + n * 0.35)), 0.0, 1.0), 3.0);
+    let trans = back * (0.06 + 0.6 * thin) * vec3<f32>(1.0, 0.32, 0.18) * sqrt(max(albedo, vec3<f32>(0.0)));
+    return (albedo / PI * diff * (1.0 - f) + trans) * shc + spec * sh;
 }
 
 fn aces(x: vec3<f32>) -> vec3<f32> {
@@ -361,12 +437,24 @@ fn fs_main(i: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
     if ((flags & 2u) == 0u) {
         sh = shadow_factor(i.light_clip, ndotl);
     }
-    var color = shade(n, v, l, albedo, rough, metal) * g.sun_color.rgb * g.sun_dir.w * sh;
+    let is_skin = (flags & FLAG_SKIN) != 0u;
+    var color: vec3<f32>;
+    if (is_skin) {
+        color = shade_skin(n, v, l, albedo, rough, sh, i.thin) * g.sun_color.rgb * g.sun_dir.w;
+    } else {
+        color = shade(n, v, l, albedo, rough, metal) * g.sun_color.rgb * g.sun_dir.w * sh;
+    }
     let indirect_light = indirect(i.world, n);
     // hemispheric ambient
     let hemi = mix(g.ground_color.rgb, g.sky_color.rgb, n.y * 0.5 + 0.5);
     color += hemi * albedo * (1.0 - metal * 0.6) * ao * indirect_light.a;
     color += indirect_light.rgb * albedo * (1.0 - metal) * ao;
+    if (is_skin) {
+        // the sky glancing off skin outlines the cheeks, nose and brow, more so on darker skin
+        let up = max(n.y * 0.5 + 0.5, 0.0);
+        let fr = pow(1.0 - max(dot(n, v), 0.0), 3.0);
+        color += g.sky_color.rgb * up * (0.03 + 0.25 * fr) * (0.25 + skin_depth(albedo)) * 0.35 * ao * indirect_light.a;
+    }
     // point lights
     let count = i32(g.counts.x);
     for (var k = 0; k < count; k++) {
@@ -376,7 +464,14 @@ fn fs_main(i: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
         let r = pl.pos_radius.w;
         if (dist < r) {
             let att = pow(clamp(1.0 - dist / r, 0.0, 1.0), 2.0) / (1.0 + dist * dist);
-            color += shade(n, v, d / max(dist, 0.0001), albedo, rough, metal) * pl.color_intensity.rgb * pl.color_intensity.w * att * 4.0;
+            let ld = d / max(dist, 0.0001);
+            var lit: vec3<f32>;
+            if (is_skin) {
+                lit = shade_skin(n, v, ld, albedo, rough, 1.0, i.thin);
+            } else {
+                lit = shade(n, v, ld, albedo, rough, metal);
+            }
+            color += lit * pl.color_intensity.rgb * pl.color_intensity.w * att * 4.0;
         }
     }
     color += albedo * i.params.z;

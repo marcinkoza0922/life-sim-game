@@ -275,13 +275,21 @@ impl Model {
                 let base = data.vertices.len() as u32;
                 let joints: Vec<[u16; 4]> = r.read_joints(0).map(|j| j.into_u16().collect()).unwrap_or_default();
                 let weights: Vec<[f32; 4]> = r.read_weights(0).map(|w| w.into_f32().collect()).unwrap_or_default();
+                // skin variation: COLOR_0 rgb multiplier; COLOR_1 red = thinness, green = pale mix
+                let tones: Vec<[f32; 4]> = r.read_colors(0).map(|c| c.into_rgba_f32().collect()).unwrap_or_default();
+                let detail: Vec<[f32; 4]> = r.read_colors(1).map(|c| c.into_rgba_f32().collect()).unwrap_or_default();
                 let targets: Vec<Vec<[f32; 3]>> =
                     r.read_morph_targets().take(MAX_MORPHS).map(|(p, _, _)| p.map(|p| p.collect()).unwrap_or_default()).collect();
                 for (i, (p, n)) in pos.zip(nrm).enumerate() {
-                    let mut morph = [[0.0; 3]; MAX_MORPHS];
+                    // sparse: only the targets that move this vertex
+                    let start = data.morphs.len() as u32;
                     for (k, t) in targets.iter().enumerate() {
-                        morph[k] = t.get(i).copied().unwrap_or_default();
+                        let d = t.get(i).copied().unwrap_or_default();
+                        if d.iter().any(|c| c.abs() > 1e-5) {
+                            data.morphs.push([d[0], d[1], d[2], k as f32]);
+                        }
                     }
+                    let morph = [start, data.morphs.len() as u32 - start];
                     data.vertices.push(SkinnedVertex {
                         pos: p,
                         normal: n,
@@ -289,7 +297,11 @@ impl Model {
                         joints: joints.get(i).copied().unwrap_or_default(),
                         weights: weights.get(i).copied().unwrap_or([1.0, 0.0, 0.0, 0.0]),
                         morph,
-                        slot,
+                        slot: slot | ((detail.get(i).map_or(0.0, |t| t[0].clamp(0.0, 1.0)) * 255.0).round() as u32) << 16,
+                        tone: match (tones.get(i), detail.get(i)) {
+                            (Some(t), d) => [t[0], t[1], t[2], d.map_or(0.0, |d| d[1])],
+                            _ => SkinnedVertex::NO_TONE,
+                        },
                     });
                 }
                 match r.read_indices() {
@@ -425,7 +437,7 @@ mod tests {
     fn adult() -> Model {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/models/peon_adult.glb");
         let bytes = std::fs::read(path).expect("assets/models/peon_adult.glb (run assets/blender/make_peons.py)");
-        Model::load_glb(&bytes, &|m| if m == "skin" { 1 } else { 0 }).unwrap()
+        Model::load_glb(&bytes, &|m| if m.starts_with("skin") { 1 } else { 0 }).unwrap()
     }
 
     #[test]
@@ -434,9 +446,16 @@ mod tests {
         assert_eq!(m.skeleton.joints.len(), 17);
         assert!(m.skeleton.joint("head").is_some());
         let body = m.mesh("body").expect("body mesh");
-        assert_eq!(body.morph_names, ["slim", "heavy"]);
-        assert!(body.data.vertices.iter().any(|v| v.slot == 1));
-        for n in ["hair0", "hair1", "hair2", "hair3"] {
+        assert_eq!(body.morph_names[..2], ["slim", "heavy"]);
+        assert!(body.morph("frame").is_some(), "{:?}", body.morph_names);
+        let head = m.mesh("head").expect("head mesh");
+        assert!(body.morph_names.len() <= crate::MAX_MORPHS);
+        assert!(body.data.vertices.iter().any(|v| v.slot & 0xffff == 1));
+        // sparse morphs: every vertex's range is in bounds, and the face keys move only the head
+        let jaw = head.morph("jaw").unwrap() as f32;
+        let moved = head.data.vertices.iter().filter(|v| (v.morph[0]..v.morph[0] + v.morph[1]).any(|i| head.data.morphs[i as usize][3] == jaw)).count();
+        assert!(moved > 0 && moved < head.data.vertices.len() / 2, "jaw moves {moved} vertices");
+        for n in ["hair.short", "hair.long", "facial.full_beard", "top_tee", "top_dress", "bottom_skirt", "shoes"] {
             assert!(m.mesh(n).is_some(), "{n}");
         }
         for c in ["idle", "walk", "sit", "lie", "use", "dance", "exercise"] {

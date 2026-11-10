@@ -17,7 +17,7 @@
 //!     Tours the neighborhood for D days: outings to the park, a day playing the neighbors, then
 //!     home again. Prints the street (residents, funds, values) and fails on deaths by neglect.
 //! simctl lineup [--pose stand|walk|sit|lie|use|dance|exercise] [--time T] [--yaw D] [--pitch D]
-//!               [--anim CLIP] [--prop ID] [--demeanor normal|sad|proud|nervous] [--dist M] [--target X,Z]
+//!               [--anim CLIP] [--prop ID] [--demeanor normal|sad|proud|nervous] [--dist M] [--target X,Z | X,Y,Z]
 //!               [--size WxH] [--out FILE]
 //!     Renders every life stage's rigged body side by side (slim, average and heavy builds, all
 //!     hair styles) in one pose (or interaction clip, holding a prop) at clip time T seconds.
@@ -56,6 +56,8 @@ struct RenderArgs {
     pitch: f32,
     dist: f32,
     target: Option<(f32, f32)>,
+    /// `lineup`: height of the look-at point (`--target X,Y,Z`).
+    target_y: Option<f32>,
     mode: String,
     size: (u32, u32),
     rooms: bool,
@@ -77,7 +79,7 @@ struct RenderArgs {
 
 fn parse() -> Args {
     let mut a = Args { cmd: "run".into(), days: 3, seed: 1, seeds: 8, echo: false, log: None, manual: false, trace: None,
-        render: RenderArgs { profile: 0, lighting: Default::default(), minutes: 60, hour: None, level: 0, yaw: 35.0, pitch: 45.0, dist: 30.0, target: None, mode: "cutaway".into(), size: (1600, 1000), rooms: false, greybox: false, out: "out/render.png".into(), pose: "stand".into(), time: 0.0, anim: None, prop: None, demeanor: "normal".into(), order: None, lot: None } };
+        render: RenderArgs { profile: 0, lighting: Default::default(), minutes: 60, hour: None, level: 0, yaw: 35.0, pitch: 45.0, dist: 30.0, target: None, target_y: None, mode: "cutaway".into(), size: (1600, 1000), rooms: false, greybox: false, out: "out/render.png".into(), pose: "stand".into(), time: 0.0, anim: None, prop: None, demeanor: "normal".into(), order: None, lot: None } };
     let mut it = std::env::args().skip(1);
     if let Some(c) = it.next() {
         a.cmd = c;
@@ -99,7 +101,11 @@ fn parse() -> Args {
             "--dist" => a.render.dist = it.next().unwrap().parse().unwrap(),
             "--target" => {
                 let v: Vec<f32> = it.next().unwrap().split(',').map(|x| x.parse().unwrap()).collect();
-                a.render.target = Some((v[0], v[1]));
+                // X,Z or (lineup) X,Y,Z
+                a.render.target = Some((v[0], *v.last().unwrap()));
+                if v.len() == 3 {
+                    a.render.target_y = Some(v[1]);
+                }
             }
             "--mode" => a.render.mode = it.next().unwrap(),
             "--size" => {
@@ -319,12 +325,12 @@ fn main() {
 
 fn lineup(ra: &RenderArgs) {
     use glam::{Mat4, Vec3};
-    use sim::components::{Appearance, Posture};
+    use sim::components::Posture;
     use sim::data::{LifeStage, Pose};
     let gpu = hearth_render::Gpu::headless().expect("no GPU adapter");
     let mut r = hearth_render::Renderer::new(gpu, hearth_render::wgpu::TextureFormat::Rgba8UnormSrgb);
-    let art = game::peons::PeonArt::load(&mut r).expect("peon models");
     game::materials::install(&mut r, &sim::data::GameData::embedded());
+    let art = game::peons::PeonArt::load(&mut r).expect("peon models");
     let (pose, walking) = match ra.pose.as_str() {
         "walk" => (Pose::Stand, true),
         "sit" => (Pose::Sit, false),
@@ -355,7 +361,7 @@ fn lineup(ra: &RenderArgs) {
     let n = stages.len() as f32;
     let (w, h) = ra.size;
     // --target X,Z looks at that spot (e.g. -3.6,0 for the infant at the left end of the row)
-    let target = ra.target.map_or(Vec3::new(0.0, 0.7, 0.0), |(x, z)| Vec3::new(x, 0.3, z));
+    let target = ra.target.map_or(Vec3::new(0.0, 0.7, 0.0), |(x, z)| Vec3::new(x, ra.target_y.unwrap_or(0.3), z));
     // `render`'s camera defaults (yaw 35, pitch 45, dist 30) mean "not given": frame the whole row
     let yaw = if ra.yaw == 35.0 { 0.0 } else { ra.yaw };
     let pitch = if ra.pitch == 45.0 { 12.0 } else { ra.pitch };
@@ -367,13 +373,16 @@ fn lineup(ra: &RenderArgs) {
     for (i, stage) in stages.iter().enumerate() {
         let x = (i as f32 - (n - 1.0) * 0.5) * spacing;
         let [skin, hair, shirt, pants] = looks[i % looks.len()];
-        let app = Appearance { skin, hair, shirt, pants, height: 1.0, build: [0.5, 0.2, 0.5, 0.0, 0.5, 1.0, 0.6][i], hair_style: (i % 4) as u8, eyes: sim::genetics::EYE_COLORS[i % sim::genetics::EYE_COLORS.len()] };
+        let app = lineup_look(i, skin, hair, shirt, pants);
         let y = if pose == Pose::Sit && *stage != LifeStage::Infant { 0.45 } else { 0.0 };
         if pose == Pose::Sit && *stage != LifeStage::Infant {
             frame.draws.push(hearth_render::Draw::new(r.builtins.cube, Mat4::from_scale_rotation_translation(Vec3::new(0.5, 0.45, 0.5), glam::Quat::IDENTITY, Vec3::new(x, 0.225, -0.05)), [0.55, 0.4, 0.3]));
         }
         let yaw = 0.0;
-        let drawn = art.draw((&mut frame.skinned, &mut frame.joints), Vec3::new(x, y, 0.0), yaw, *stage, &app, &posture, demeanor, &mut game::peons::AnimState::default(), ra.time, game::peons::Look::Normal);
+        // a first draw at the same time settles the eased face on its target (a repeat at dt 0 snaps)
+        let mut anim = game::peons::AnimState::default();
+        art.draw((&mut Vec::new(), &mut Vec::new()), Vec3::new(x, y, 0.0), yaw, *stage, &app, &posture, demeanor, &mut anim, ra.time, game::peons::Look::Normal);
+        let drawn = art.draw((&mut frame.skinned, &mut frame.joints), Vec3::new(x, y, 0.0), yaw, *stage, &app, &posture, demeanor, &mut anim, ra.time, game::peons::Look::Normal);
         if let Some(p) = prop
             && let Some(grip) = drawn.grip(p.hand)
         {
@@ -385,6 +394,30 @@ fn lineup(ra: &RenderArgs) {
     }
     r.save_png(&frame, w, h, std::path::Path::new(&ra.out)).expect("save png");
     println!("{} skinned draws -> {}", r.stats.skinned, ra.out);
+}
+
+/// The `lineup` look of body i: varied builds, faces, hair and outfits so one render shows most of
+/// the wardrobe (alternating feminine and masculine frames).
+fn lineup_look(i: usize, skin: [f32; 3], hair: [f32; 3], shirt: [f32; 3], pants: [f32; 3]) -> sim::components::Appearance {
+    let sex = if i.is_multiple_of(2) { sim::components::Sex::Female } else { sim::components::Sex::Male };
+    let mut rng = sim::rng::SimRng::new(i as u64 * 7 + 3);
+    let shape = sim::genetics::random_shape(&mut rng, sex);
+    let female = sex == sim::components::Sex::Female;
+    sim::components::Appearance {
+        skin,
+        hair,
+        shirt,
+        pants,
+        height: 1.0,
+        build: [0.5, 0.2, 0.5, 0.3, 0.5, 0.85, 0.6][i % 7],
+        hair_style: if female { [2, 7, 6, 1][i / 2 % 4] } else { [0, 5, 9, 3][i / 2 % 4] },
+        eyes: sim::genetics::EYE_COLORS[i % sim::genetics::EYE_COLORS.len()],
+        shape,
+        facial_hair: if female { 0 } else { [0, 4, 2, 5][i / 2 % 4] },
+        top: if female { [0, 3, 2, 1][i / 2 % 4] } else { [1, 0, 2, 0][i / 2 % 4] },
+        bottom: if female { [2, 0, 1, 0][i / 2 % 4] } else { [0, 1, 0, 0][i / 2 % 4] },
+        shoes: [[0.92, 0.92, 0.9], [0.15, 0.12, 0.1], [0.35, 0.22, 0.12]][i % 3],
+    }
 }
 
 /// One swatch per textured material: a wall section (with a floor patch in front), projected in
