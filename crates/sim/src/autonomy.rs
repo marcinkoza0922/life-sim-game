@@ -299,20 +299,9 @@ fn candidates_with_navigation(world: &World, e: Entity, data: &GameData) -> (Vec
 
     // This lookup is valid only during the read-only scoring pass.
     let commitments = crate::romance::Commitments::new(world);
-    // Initiator-only scores and trait multipliers do not change across targets.
-    let social_scores: Vec<_> = data.socials.iter().map(|sd| {
-        if !sd.autonomous || !sd.initiator_ok(stage) || sd.requires_trait.as_ref().is_some_and(|t| !pers.has(t)) {
-            return None;
-        }
-        let mut helps = Vec::new();
-        let base = if sd.care { 0.0 } else {
-            for (n, r) in &sd.rates {
-                if *r * sd.minutes as f32 / 60.0 > 5.0 { helps.push(*n); }
-            }
-            score_gains(&needs, sd.rates.iter().map(|(n, r)| (*n, (r * sd.minutes as f32 / 60.0).clamp(-100.0, 100.0))))
-        };
-        Some((base, helps, tag_multiplier(data, &pers, &sd.tags)))
-    }).collect();
+    // Only score socials that have an eligible target; reuse initiator-only work
+    // across subsequent targets without paying for unused options in small homes.
+    let mut social_scores = vec![None; data.socials.len()];
     // other peons
     for (te, _tage, ttf, tneeds, taq, tpeon) in world
         .query_filtered::<(Entity, &Age, &Transform, &Needs, &ActionQueue, &Peon), (hearth_ecs::Without<Dead>, hearth_ecs::Without<AtWork>, hearth_ecs::Without<Offlot>)>()
@@ -333,10 +322,19 @@ fn candidates_with_navigation(world: &World, e: Entity, data: &GameData) -> (Vec
         let asleep = taq.current.as_ref().is_some_and(|c| is_sleeping(world, data, c));
         let Some(dist) = adjacent_distance(&lot, &field, ttf) else { continue };
         for (si, sd) in data.socials.iter().enumerate() {
-            let Some((base, helps, multiplier)) = &social_scores[si] else { continue };
-            if (asleep && !sd.care) || social_allowed_with(world, sd, e, te, Some(&commitments)).is_err() {
+            if !sd.autonomous || (asleep && !sd.care) || social_allowed_with(world, sd, e, te, Some(&commitments)).is_err() {
                 continue;
             }
+            let (base, helps, multiplier) = social_scores[si].get_or_insert_with(|| {
+                let mut helps = Vec::new();
+                let base = if sd.care { 0.0 } else {
+                    for (n, r) in &sd.rates {
+                        if *r * sd.minutes as f32 / 60.0 > 5.0 { helps.push(*n); }
+                    }
+                    score_gains(&needs, sd.rates.iter().map(|(n, r)| (*n, (r * sd.minutes as f32 / 60.0).clamp(-100.0, 100.0))))
+                };
+                (base, helps, tag_multiplier(data, &pers, &sd.tags))
+            });
             let mut s = if sd.care {
                 // empathy: driven by the target's needs
                 let g: f32 = sd

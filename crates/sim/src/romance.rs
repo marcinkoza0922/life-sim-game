@@ -43,23 +43,30 @@ pub fn committed_to(world: &World, e: Entity) -> Option<Entity> {
 
 /// Immutable partner lookup for one read-only autonomy decision. No cache survives
 /// a world mutation; malformed multiple partnerships still choose the lowest entity.
-pub(crate) struct Commitments(std::collections::BTreeMap<Entity, Entity>);
+pub(crate) struct Commitments<'a> {
+    world: &'a World,
+    partners: std::cell::OnceCell<std::collections::BTreeMap<Entity, Entity>>,
+}
 
-impl Commitments {
-    pub(crate) fn new(world: &World) -> Self {
-        let mut partners = std::collections::BTreeMap::<Entity, Entity>::new();
-        for (&(a, b), r) in &world.res::<Relationships>().map {
-            if !(r.partners || r.engaged || r.married) { continue; }
-            for (actor, partner) in [(a, b), (b, a)] {
-                if alive(world, partner) {
-                    partners.entry(actor).and_modify(|p| *p = (*p).min(partner)).or_insert(partner);
-                }
-            }
-        }
-        Self(partners)
+impl<'a> Commitments<'a> {
+    pub(crate) fn new(world: &'a World) -> Self {
+        Self { world, partners: std::cell::OnceCell::new() }
     }
 
-    pub(crate) fn get(&self, e: Entity) -> Option<Entity> { self.0.get(&e).copied() }
+    pub(crate) fn get(&self, e: Entity) -> Option<Entity> {
+        self.partners.get_or_init(|| {
+            let mut partners = std::collections::BTreeMap::<Entity, Entity>::new();
+            for (&(a, b), r) in &self.world.res::<Relationships>().map {
+                if !(r.partners || r.engaged || r.married) { continue; }
+                for (actor, partner) in [(a, b), (b, a)] {
+                    if alive(self.world, partner) {
+                        partners.entry(actor).and_modify(|p| *p = (*p).min(partner)).or_insert(partner);
+                    }
+                }
+            }
+            partners
+        }).get(&e).copied()
+    }
 }
 
 /// When `e`'s own wedding is planned for, if it is.
@@ -81,7 +88,7 @@ pub fn rel_req_ok(world: &World, req: RelReq, a: Entity, b: Entity) -> Result<()
     rel_req_ok_with(world, req, a, b, None)
 }
 
-pub(crate) fn rel_req_ok_with(world: &World, req: RelReq, a: Entity, b: Entity, commitments: Option<&Commitments>) -> Result<(), &'static str> {
+pub(crate) fn rel_req_ok_with(world: &World, req: RelReq, a: Entity, b: Entity, commitments: Option<&Commitments<'_>>) -> Result<(), &'static str> {
     let partner = |e| commitments.map_or_else(|| committed_to(world, e), |c| c.get(e));
     let r = world.res::<Relationships>().get(a, b);
     let ok = match req {

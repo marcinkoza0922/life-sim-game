@@ -121,7 +121,7 @@ pub fn social_allowed(world: &World, def: &SocialDef, a: Entity, b: Entity) -> R
     social_allowed_with(world, def, a, b, None)
 }
 
-pub(crate) fn social_allowed_with(world: &World, def: &SocialDef, a: Entity, b: Entity, commitments: Option<&crate::romance::Commitments>) -> Result<(), &'static str> {
+pub(crate) fn social_allowed_with(world: &World, def: &SocialDef, a: Entity, b: Entity, commitments: Option<&crate::romance::Commitments<'_>>) -> Result<(), &'static str> {
     let (Some(aa), Some(ab)) = (world.get::<Age>(a), world.get::<Age>(b)) else { return Err("unavailable") };
     if !def.initiator_ok(aa.stage) {
         return Err("too young or too old");
@@ -152,7 +152,7 @@ pub fn social_pair_ok(world: &World, def: &SocialDef, a: Entity, b: Entity) -> R
     social_pair_ok_with(world, def, a, b, None)
 }
 
-fn social_pair_ok_with(world: &World, def: &SocialDef, a: Entity, b: Entity, commitments: Option<&crate::romance::Commitments>) -> Result<(), &'static str> {
+fn social_pair_ok_with(world: &World, def: &SocialDef, a: Entity, b: Entity, commitments: Option<&crate::romance::Commitments<'_>>) -> Result<(), &'static str> {
     if def.opposite_sex && !crate::romance::opposite_sex(world, a, b) {
         return Err("only for a woman and a man");
     }
@@ -167,7 +167,7 @@ pub fn accept_chance(world: &World, def: &SocialDef, a: Entity, b: Entity) -> f3
     accept_chance_with(world, def, a, b, None)
 }
 
-pub(crate) fn accept_chance_with(world: &World, def: &SocialDef, a: Entity, b: Entity, commitments: Option<&crate::romance::Commitments>) -> f32 {
+pub(crate) fn accept_chance_with(world: &World, def: &SocialDef, a: Entity, b: Entity, commitments: Option<&crate::romance::Commitments<'_>>) -> f32 {
     if def.care {
         return def.accept;
     }

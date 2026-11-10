@@ -9,6 +9,8 @@ neither the counters nor the span timers.
 ```sh
 python3 tools/profiling/run.py --out out/baseline.jsonl
 python3 tools/profiling/compare.py out/baseline.jsonl out/candidate.jsonl
+# Reports produced with state_hash can also enforce identical replay outcomes:
+python3 tools/profiling/compare.py out/before.jsonl out/after.jsonl --verify-state
 cargo nextest run -p sim --test stress --run-ignored ignored-only
 ```
 
