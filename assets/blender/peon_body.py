@@ -408,10 +408,13 @@ def body_key_offset(key, d, co, n, ws, segs):
         # masculine (+) / feminine (-): broader chest and shoulders against hips and waist
         # the game moves the shoulder and hip joints by frame (the arms and legs follow their
         # bones), so the key only reshapes the torso: broad rib cage and lats against a wide pelvis
-        out += Vector((math.copysign(1, co.x), 0, 0)) * H * 0.009 * w("chest") * g1(tz - 0.8, 0.2) * min(1.0, abs(co.x) / (d.width * 0.3))
-        out -= n * H * 0.014 * side * w("hips") * g1(tz - 0.08, 0.14)
-        out -= n * H * 0.006 * max(0.0, n.y) * w("hips", "thigh") * g1(tz - 0.02, 0.12)  # flatter seat
-        out += n * H * 0.006 * side * w("spine") * g1(tz - 0.38, 0.12)
+        # (a key is linear, so this is half the masculine-feminine difference: an hourglass at -1,
+        # a V-taper at +1)
+        out += Vector((math.copysign(1, co.x), 0, 0)) * H * 0.018 * w("chest", "spine") * g1(tz - 0.76, 0.2) * min(1.0, abs(co.x) / (d.width * 0.3))
+        outer = max(0.0, n.x * math.copysign(1, co.x))  # the hips' outside, not the inner thighs
+        out -= n * H * 0.026 * outer * w("hips", "thigh") * g1(tz - 0.06, 0.15)
+        out -= n * H * 0.013 * max(0.0, n.y) * w("hips", "thigh") * g1(tz - 0.04, 0.13)  # flatter seat
+        out += n * H * 0.012 * outer * w("spine", "hips") * g1(tz - 0.42, 0.1)  # waist
         out += n * H * 0.005 * w("neck")
         out += n * H * 0.003 * w("upper_arm", "forearm")
     elif key == "shoulders":

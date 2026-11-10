@@ -141,7 +141,12 @@ If we fix only a few things, these do the most for the "looks wrong" reaction, r
 - **Lips on deep skin (done):** lips have their own palette slot (`LIPS`), coloured by
   `lip_tint` in `peons.rs`: a darker, rosier skin on light tones, shifting to a berry-mauve on deep
   tones, so the mouth reads by hue where darkening alone vanished into the brown.
-- Still open: looser clothes and drape, male/female base shapes, hair and facial hair.
+- **Male/female base shapes (done):** the `frame` key now carries a real hourglass at −1 (waist
+  pinched at the sides, hips and seat out) and a V-taper at +1 (broad ribs and lats, narrow outer
+  hips, flatter seat), leaving the inner thighs alone (`body_key_offset` in `peon_body.py`). Sexes
+  roll frames nearer the ends (men 0.65–1, women −1 to −0.65, with a fuller chest;
+  `sexed_shape` in `genetics.rs`), so every adult reads as one or the other before the sliders.
+- Still open: looser clothes and drape, hair and facial hair.
 
 Hair shells and facial hair come after these. They're noticeable, but players forgive stylised
 hair much more readily than dead eyes or torn clothing.

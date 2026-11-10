@@ -139,8 +139,8 @@ pub fn random_shape(rng: &mut SimRng, sex: Sex) -> BTreeMap<String, f32> {
 /// Sets the sex-linked sliders: frame and chest.
 pub fn sexed_shape(rng: &mut SimRng, sex: Sex, shape: &mut BTreeMap<String, f32>) {
     let (frame, bust) = match sex {
-        Sex::Male => (rng.range_f32(0.45, 1.0), rng.range_f32(-0.4, 0.0)),
-        Sex::Female => (rng.range_f32(-1.0, -0.4), rng.range_f32(0.15, 0.9)),
+        Sex::Male => (rng.range_f32(0.65, 1.0), rng.range_f32(-0.4, 0.0)),
+        Sex::Female => (rng.range_f32(-1.0, -0.65), rng.range_f32(0.25, 0.9)),
     };
     shape.insert("frame".into(), frame);
     shape.insert("bust".into(), bust);
