@@ -252,7 +252,8 @@ def region_of(c, segs, hems, n=None):
         return 0  # the hand (fingertips can lie nearer the thigh bone than the hand's)
     co, no = arm["shoulder"]
     bn, _ = nearest_bone(c, segs)
-    is_arm = bn.startswith(("upper_arm", "forearm", "hand"))
+    # arm_reach (MPFB bodies): a full chest can lie nearer the arm bone than the chest's
+    is_arm = bn.startswith(("upper_arm", "forearm", "hand")) and segment_dist(c, *segs[bn])[0] < getattr(hems, "arm_reach", math.inf)
     is_leg = bn.startswith(("thigh", "shin", "foot"))
     past = (c - co).dot(no) > 0 and c.z > hems.belt and bn not in ("neck", "head") and not is_leg
     # the inside of the hanging arm lies within the armhole plane: it faces the body, where the

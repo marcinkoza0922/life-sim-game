@@ -1,8 +1,72 @@
 # Character critique: a Sims audience review
 
+> Direction changed on 2026-11-10: peons are now built on MPFB2 (MakeHuman) bodies. See
+> "New direction" and "Remaining tasks" below; the later sections are the metaball-era review.
+
 Reviewed 2026-11-09 at commit `8d5a620` on `character-models`, using freshly rendered,
 embedded game models. These are art-direction judgments about likely player reactions,
 not user-research findings or measurements of The Sims' proportions.
+
+## New direction (2026-11-10): MPFB2 base bodies
+
+Iterating on the hand-built metaball body and parametric head kept hitting the same wall:
+anatomy, faces and hands read as assembled soft segments, and every fix was a new piece of
+procedural geometry. Peons are now built on **MPFB2** (MakeHuman's Blender extension, CC0 base
+mesh and targets) when `make_peons.py` runs with `PEON_BASE=mpfb` (`assets/blender/peon_mpfb.py`;
+setup in its docstring). The checked-in `assets/models/peon_*.glb` are MPFB builds. What stays ours:
+the 16-bone skeleton (now placed at MPFB's measured joints), all clips, the garment system, the
+body slider keys and the hair/beard styles (built over the old head, then projected onto the MPFB
+scalp with `fit_hair`). What MPFB now provides: body and head anatomy, hands and feet, eyes and
+brows (from MakeHuman's CC0 system asset pack), bone weights (merged onto our bones), and the face
+slider keys and expressions (from MPFB face targets, mapped in `FACE_TARGETS` /
+`EXPRESSION_TARGETS`). `assets/blender/mpfb_prototype.py` renders a textured MPFB-only lineup
+for comparison.
+
+Many findings below were about the old body and head (hands, shoulders, ears, lids, skin
+segments) and should be re-judged on the MPFB models rather than fixed in the old generators.
+The metaball path still works without `PEON_BASE`, but new character work should target MPFB.
+
+**Use free assets where they help.** Before modelling or synthesising something by hand, look for
+a CC0 (or similarly permissive) asset and download it: MakeHuman's community assets (hair, clothes,
+eyebrows, skins, proxies), Quaternius and Kenney packs (Kenney's All-in-1 bundle is local at
+`~/Kenney Game Assets All-in-1 3.8.0`), Mixamo clips for animation reference or retargeting
+(check the licence), and Poly Haven/ambientCG for textures. Record the source and licence next
+to anything that ships, as `assets/audio/CREDITS.md` does for sounds.
+
+## Remaining tasks for the MPFB models
+
+Seen in `simctl lineup` (idle and walk) and Blender previews right after the switch:
+
+1. **Dresses and skirts:** the child's dress hangs like a split apron. The skirt builder
+   (`skirt` in `peon_body.py`) assumes the old legs and hems; refit it to MPFB's hips and stance.
+2. **White patch at the neck** on the child and teen: not yet identified (head/body seam, a
+   collar turn-back, or eye-white faces from the split). Inspect with `PEON_ZOOM=head`.
+3. **Sex differences:** every stage uses MPFB gender 0.5, so all bodies have slight breasts. Bake
+   an MPFB gender (and breast) delta as body keys, driven by `sexed_shape` in `genetics.rs`,
+   instead of relying on the procedural `frame`/`bust` keys alone.
+4. **Body keys from MPFB:** `slim`/`heavy` and the body sliders are still the procedural offsets
+   (`add_body_keys`). MPFB's weight, muscle and proportion macros, and its torso/hip/belly targets,
+   should give better shapes the same way the face keys do (shape with target − without).
+5. **Expressions:** MPFB ships no face poses, so the expressions are target combinations; blink and
+   mouth-open are rough (eyelids and jaw really need face bones). Check every expression and
+   blink in motion. Consider MPFB's `default` rig face bones, or download CC0 expression sets.
+6. **Face appeal and skin:** faces read stern and flat in the game shader. The `tone`/`thin` paint is
+   a constant on the body and the old frame-based `paint_head` on the head; re-author both for
+   MPFB anatomy (ears, nose, lips, knuckles). Re-check skin highlights across tones.
+7. **Hair fit:** projection onto the MPFB scalp works for scalp styles; check long-hair curtains,
+   the bun/ponytail and beards against the new jaw and neck from every side. MakeHuman's CC0 hair
+   is card-based and needs alpha textures, which the renderer can't sample yet (no UVs).
+8. **Clothing fit and variety:** recheck the tee, tank, long sleeve, trousers, shorts and shoes on
+   slim and heavy builds and bent poses. MakeHuman's CC0 clothes are an option once the renderer
+   can sample UV textures.
+9. **Infant and toddler:** MPFB's youngest age is about 1 year; check proportions and faces at
+   portrait distance, and the infant sitting base.
+10. **Clips on the new proportions:** contact poses (sit, lie, laugh hands, object use) were authored
+    on the old body; check for intersections and foot sliding.
+11. **Cost:** models are about 7.9 MB each (from 11.3 MB) with about 9.7k body vertices; profile a
+    full household, and consider MPFB's proxy meshes for crowds.
+12. **Reproducibility:** the build depends on the locally installed MPFB extension and asset pack;
+    pin their versions in `peon_mpfb.py`, or vendor the few files the build needs.
 
 ## Review verdict before the follow-up changes
 
@@ -195,7 +259,10 @@ the brow instead of overhanging. Checked in Blender head previews (front and thr
 `simctl lineup` close-up of the curly teen. Still open: the coils are limited by the head mesh's
 resolution (slightly faceted up close), and long hair's fin and straight lower edge.
 
-## Next priorities and acceptance checks
+## Next priorities and acceptance checks (metaball era)
+
+Superseded by the MPFB task list above. Items 1 and 2 still apply to the hair and garment
+generators, which the MPFB models keep; items 3 to 5 should be re-judged on the MPFB models.
 
 1. **Facial hair and hair silhouette:** (moustache, beard and hairline outlines done, see above)
    (stubble as a skin-shaded shadow done) (clumped locks and hairline tips done) (curly/afro

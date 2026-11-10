@@ -7,6 +7,9 @@ Run headless from the repo root (about three minutes for all six):
 Set PEON_PREVIEW=out.png (with PEON_SHOW=mesh,names, PEON_KEYS=key=value,... and PEON_ZOOM=head|chest|hand|foot) to render a
 dressed body front and three-quarter in Blender instead of exporting.
 
+Set PEON_BASE=mpfb to build the body and head from MPFB2 (MakeHuman) instead of the metaball body and
+parametric head (peon_mpfb.py; needs the extension and asset pack named there, and no --factory-startup).
+
 Every stage file holds the same skeleton (bone names) and these skinned meshes:
 - `body`: a metaball body (peon_body.py) with detailed hands and feet welded on
   (peon_extremities.py), its faces tagged `skin.rN` by the skin region N a garment can cover, with
@@ -45,7 +48,7 @@ from mathutils import Euler, Matrix, Quaternion, Vector
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from peon_body import BODY_SLIDERS, GARMENTS, Hems, add_body_keys, cut_regions, make_body, make_clothes, transfer_keys, weight_body  # noqa: E402
-from peon_extremities import add_extremities, add_stubs, copy_weights, paint_body, paint_head, shoe_last, smooth_seams  # noqa: E402
+from peon_extremities import add_extremities, add_stubs, copy_weights, paint_body, paint_head, set_skin_colors, shoe_last, smooth_seams  # noqa: E402
 from peon_hair import FACIAL_HAIR, hair_meshes  # noqa: E402
 from peon_head import EXPRESSIONS, FACE_SLIDERS, Face, build_head  # noqa: E402
 
@@ -85,11 +88,15 @@ ARM_SPREAD = math.radians(32)  # A-pose: upper arms angle out from vertical by t
 
 
 def reset():
-    bpy.ops.wm.read_factory_settings(use_empty=True)
+    if os.environ.get("PEON_BASE") == "mpfb":
+        bpy.ops.wm.read_homefile(use_empty=True)  # factory settings would unload the MPFB extension
+    else:
+        bpy.ops.wm.read_factory_settings(use_empty=True)
     bpy.context.scene.render.fps = FPS
     for name, srgb in PALETTE.items():
         col = tuple(c**2.2 for c in srgb[:3]) + (srgb[3],)  # glTF base colours are linear
         m = bpy.data.materials.new(name)
+        m.use_fake_user = True  # MPFB purges orphan data while it builds
         m.diffuse_color = col
         m.use_nodes = True
         bsdf = m.node_tree.nodes.get("Principled BSDF")
@@ -137,10 +144,33 @@ class Dims:
         self.head_c = H - self.head_h * 0.5
         self.thigh_r = self.limb * 0.72
         self.arm_r = self.limb * 0.45
+        self.joints = None
+
+    @classmethod
+    def from_mpfb(cls, p, j):
+        """Dims for an MPFB body: the stage's widths, but every height and joint measured on it."""
+        d = cls(p)
+        d.joints = j
+        sh, el, wr, tip = j[("arm", 1)]
+        hip, knee, ankle, toe = j[("leg", 1)]
+        d.legs = hip.z
+        d.neck_z = j["neck"].z
+        d.torso = d.neck_z - d.legs
+        d.head_h = (j["head_top"].z - j["chin"].z) / 0.8  # head_frame: chin to crown is 0.8 head_h
+        d.hip_x = hip.x
+        d.knee_z, d.ankle_z = knee.z, ankle.z
+        d.shoulder_z, d.shoulder_x = sh.z, sh.x
+        d.arm_len = (wr - sh).length
+        d.foot_len = (toe - ankle).length / 0.85
+        d.width = 2 * (sh.x + d.limb * 0.2)
+        d.neck_y = j["neck"].y
+        return d
 
 
 def arm_points(d, side):
     """Shoulder, elbow, wrist, fingertip for side = +1 (left, +X) or -1."""
+    if d.joints:
+        return tuple(v.copy() for v in d.joints[("arm", side)])
     dirv = Vector((side * math.sin(ARM_SPREAD), 0, -math.cos(ARM_SPREAD)))
     sh = Vector((side * d.shoulder_x, 0, d.shoulder_z))
     el = sh + dirv * d.arm_len * 0.5
@@ -150,6 +180,8 @@ def arm_points(d, side):
 
 
 def leg_points(d, side):
+    if d.joints:
+        return tuple(v.copy() for v in d.joints[("leg", side)])
     hip = Vector((side * d.hip_x, 0, d.legs))
     knee = Vector((side * d.hip_x, -d.limb * 0.05, d.knee_z))
     ankle = Vector((side * d.hip_x, 0, d.ankle_z))
@@ -173,12 +205,17 @@ def make_armature(d):
             b.use_connect = connect
         return b
 
-    z0 = d.legs
-    bone("hips", (0, 0, z0), (0, 0, z0 + d.torso * 0.3))
-    bone("spine", (0, 0, z0 + d.torso * 0.3), (0, 0, z0 + d.torso * 0.62), "hips", True)
-    bone("chest", (0, 0, z0 + d.torso * 0.62), (0, 0, d.neck_z), "spine", True)
-    bone("neck", (0, 0, d.neck_z), (0, 0, d.neck_z + d.head_h * 0.22), "chest", True)
-    bone("head", (0, 0, d.neck_z + d.head_h * 0.22), (0, 0, d.H), "neck", True)
+    if d.joints:
+        j = d.joints
+        spine = [Vector((0, j[k].y, j[k].z)) for k in ("hips", "spine", "chest", "neck", "head", "head_top")]
+    else:
+        z0 = d.legs
+        zs = [z0, z0 + d.torso * 0.3, z0 + d.torso * 0.62, d.neck_z, d.neck_z + d.head_h * 0.22, d.H]
+        spine = [Vector((0, 0, z)) for z in zs]
+    parent = None
+    for name, a, b in zip(("hips", "spine", "chest", "neck", "head"), spine, spine[1:]):
+        bone(name, a, b, parent, parent is not None)
+        parent = name
     for side, sfx in ((1, "L"), (-1, "R")):
         sh, el, wr, tip = arm_points(d, side)
         bone(f"upper_arm.{sfx}", sh, el, "chest")
@@ -209,6 +246,8 @@ FACE_KEYS = [k for k, _ in FACE_SLIDERS] + EXPRESSIONS
 def head_frame(d):
     """Head height (chin to crown) and its centre at eye level, in model units."""
     hh = d.head_h * 0.8
+    if d.joints:
+        return hh, Vector((0, d.joints["head"].y - d.H * 0.012, d.joints["head_top"].z - 0.49 * hh))
     return hh, Vector((0, -d.H * 0.008, d.H - 0.49 * hh))
 
 
@@ -1072,6 +1111,8 @@ def preview(rig, body, clothes, hair, path):
 
 def build_stage(stage, params):
     reset()
+    if MPFB:
+        return build_stage_mpfb(stage, params)
     d = Dims(params)
     rig = make_armature(d)
     hems = Hems(d, arm_points, leg_points)
@@ -1097,6 +1138,10 @@ def build_stage(stage, params):
         return
     make_clips(rig, d, infant=(stage == "infant"))
 
+    export_stage(stage, body)
+
+
+def export_stage(stage, body):
     os.makedirs(OUT, exist_ok=True)
     path = os.path.abspath(os.path.join(OUT, f"peon_{stage}.glb"))
     bpy.ops.object.select_all(action="SELECT")
@@ -1110,6 +1155,7 @@ def build_stage(stage, params):
         export_frame_step=1,
         export_morph=True,
         export_morph_normal=False,
+        export_try_sparse_sk=False,  # the game's loader rejects data-less (all-zero) accessors
         export_skins=True,
         export_all_influences=False,
         export_def_bones=False,
@@ -1123,6 +1169,61 @@ def build_stage(stage, params):
         export_active_vertex_color_when_no_material=True,
     )
     print(f"wrote {path}: body {len(body.data.vertices)} verts")
+
+
+MPFB = os.environ.get("PEON_BASE") == "mpfb"
+
+
+def fill_weights(obj, rig):
+    """Vertices MPFB weighted to no peon bone get their nearest bone (glTF would add a neutral one)."""
+    from peon_body import bone_segments, nearest_bone
+
+    segs = bone_segments(rig)
+    groups = {g.index for g in obj.vertex_groups if g.name in segs}
+    for v in obj.data.vertices:
+        if sum(g.weight for g in v.groups if g.group in groups) < 1e-4:
+            bn, _ = nearest_bone(v.co, segs)
+            grp = obj.vertex_groups.get(bn) or obj.vertex_groups.new(name=bn)
+            grp.add([v.index], 1.0, "REPLACE")
+
+
+def build_stage_mpfb(stage, params):
+    """build_stage on an MPFB body and head (peon_mpfb.py): the same skeleton, garments, hair,
+    keys and clips, fitted to MPFB's anatomy instead of the metaball body."""
+    import peon_mpfb
+
+    base = peon_mpfb.build(stage, params["H"], ARM_SPREAD)
+    d = Dims.from_mpfb(params, base.joints)
+    rig = make_armature(d)
+    hems = Hems(d, arm_points, leg_points)
+    hems.arm_reach = d.limb * 1.5
+    body, head = base.body, base.head
+    for obj in (body, head):
+        obj.parent = rig
+        obj.modifiers.new("rig", "ARMATURE").object = rig
+        fill_weights(obj, rig)
+    cut_regions(body, rig, hems)
+    add_body_keys(body, d)
+    last = shoe_last(d, leg_points, hems)
+    copy_weights(last, body, rig)
+    transfer_keys(last, body)
+    clothes = make_clothes(body, rig, d, hems, sources={"shoes": last})
+    bpy.data.objects.remove(last)
+    set_skin_colors(body, lambda i, p, n: (1.0, 1.0, 1.0, 0.0), lambda i, p, n: 0.1)
+    hh, c = head_frame(d)
+    paint_head(head, hh, c, base.ears)
+    if os.environ.get("PEON_DEBUG"):
+        print("RES frame", hh, tuple(c), "chin", tuple(base.joints["chin"]), "top", tuple(base.joints["head_top"]))
+    # hair is built over the parametric head, then moved onto the MPFB one
+    hair = make_hair(d, stage, rig)
+    peon_head = make_head(d, stage)
+    peon_mpfb.fit_hair(hair, head, peon_head, c)
+    bpy.data.objects.remove(peon_head)
+    if os.environ.get("PEON_PREVIEW"):
+        preview(rig, body, clothes + [head], hair, os.environ["PEON_PREVIEW"])
+        return
+    make_clips(rig, d, infant=(stage == "infant"))
+    export_stage(stage, body)
 
 
 def main():
