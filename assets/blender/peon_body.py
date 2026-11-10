@@ -72,6 +72,7 @@ class Hems:
         self.chest = torso_z(d, 0.52)
         self.belt = torso_z(d, 0.14)
         self.shoe = d.ankle_z + d.H * 0.032
+        self.hand_reach = d.H * 0.14
         self.arms = {}
         self.legs = {}
         for side, sfx in ((1, "L"), (-1, "R")):
@@ -131,11 +132,10 @@ class Meta:
         e.stiffness = MB_STIFF
 
 
-def make_body(d, arm_points, leg_points):
+def make_body(d, arm_points, leg_points, stubs=None):
     """Metaball body (organic blends at the shoulders, hips and armpits), voxel-remeshed into an
-    even quad mesh."""
-    from mathutils import Matrix
-
+    even quad mesh. The hands and feet are finer meshes welded on afterwards (peon_extremities.py);
+    `stubs(m)` adds their elements near the weld so the shapes agree there."""
     w, dp, H = d.width, d.depth, d.H
     T = d.torso
     tz = lambda f: torso_z(d, f)
@@ -165,27 +165,14 @@ def make_body(d, arm_points, leg_points):
         fa = (wr - el).normalized()
         m.cap(el, wr, ar * 0.68, (0.3, 0))
         m.ell(el.lerp(wr, 0.3), ar * 0.92, ar * 0.85, (wr - el).length * 0.32, Vector((0, 0, 1)).rotation_difference(fa))  # forearm mass
-        hd = (tip - wr).normalized()
-        # palm faces the thigh: long along the hand, wide front-to-back, thin sideways
-        frame = Matrix((hd.cross(Vector((0, 1, 0))).normalized(), Vector((0, 1, 0)), hd)).transposed().to_quaternion()
-        palm_len = H * 0.05
-        m.ell(wr + hd * palm_len * 0.55, ar * 0.42, ar * 1.0, palm_len * 0.6, frame)
-        fing = tip - hd * H * 0.004
-        k0 = wr + hd * palm_len
-        m.ell(k0.lerp(fing, 0.45), ar * 0.34, ar * 0.92, (fing - k0).length * 0.6, frame)
-        m.cap(wr + hd * H * 0.018 + Vector((0, -ar * 0.55, 0)), wr + hd * H * 0.048 + Vector((-side * ar * 0.15, -ar * 0.95, 0)), ar * 0.28)  # thumb
+        # the hand is its own finer mesh (peon_extremities.py)
         hip, knee, ankle, toe = leg_points(d, side)
         m.cap(hip, knee, tr * 0.78, (0, 0.4))
         m.ell(hip.lerp(knee, 0.3) + Vector((side * tr * 0.08, -tr * 0.05, 0)), tr * 0.95, tr * 0.95, (knee - hip).length * 0.42)  # thigh mass
         m.cap(knee, ankle, tr * 0.5, (0.4, 0))
         m.ell(knee.lerp(ankle, 0.3) + Vector((side * tr * 0.03, tr * 0.14, 0)), tr * 0.64, tr * 0.64, (knee - ankle).length * 0.27)  # calf
-        # foot: heel to toe, flat underneath
-        heel = Vector((ankle.x, ankle.y + tr * 0.25, d.ankle_z * 0.55))
-        toe_p = Vector((toe.x, toe.y, d.ankle_z * 0.4))
-        m.ell(heel.lerp(toe_p, 0.5), tr * 0.48, (toe_p - heel).length * 0.5, d.ankle_z * 0.55,
-              Vector((0, 1, 0)).rotation_difference((toe_p - heel).normalized()))
-        m.cap(ankle, heel.lerp(toe_p, 0.35), tr * 0.45)
-
+    if stubs:
+        stubs(m)
     dg = bpy.context.evaluated_depsgraph_get()
     me = bpy.data.meshes.new_from_object(m.obj.evaluated_get(dg))
     me.name = "body"
@@ -242,6 +229,9 @@ def region_of(c, segs, hems):
     """Skin region of a point on the body."""
     sfx = side_of(c)
     arm = hems.arms[sfx]
+    wco, wno = arm["wrist"]
+    if (c - wco).dot(wno) > 0 and (c - wco).length < hems.hand_reach:
+        return 0  # the hand (fingertips can lie nearer the thigh bone than the hand's)
     co, no = arm["shoulder"]
     bn, _ = nearest_bone(c, segs)
     is_arm = bn.startswith(("upper_arm", "forearm", "hand"))
@@ -287,7 +277,8 @@ def cut_regions(body, rig, hems):
         bmesh.ops.bisect_plane(bm, geom=geom, plane_co=co, plane_no=no)
 
     is_arm = lambda c: nearest_bone(c, segs)[0].startswith(("upper_arm", "forearm", "hand"))
-    is_leg = lambda c: nearest_bone(c, segs)[0].startswith(("thigh", "shin", "foot"))
+    in_hand = lambda c: any((c - w[0]).dot(w[1]) > 0 and (c - w[0]).length < hems.hand_reach for w in (a["wrist"] for a in hems.arms.values()))
+    is_leg = lambda c: nearest_bone(c, segs)[0].startswith(("thigh", "shin", "foot")) and not in_hand(c)
     torso = lambda c: not is_arm(c) and nearest_bone(c, segs)[0] not in ("head",)
     cut(torso, (0, 0, hems.neckline), hems.neck_normal)
     cut(lambda c: torso(c) and not is_leg(c), (0, 0, hems.chest), (0, 0, 1))
@@ -541,10 +532,12 @@ def skirt(body, name, mat, hems, d, hem_frac, rig):
     return obj
 
 
-def make_clothes(body, rig, d, hems):
+def make_clothes(body, rig, d, hems, sources=None):
+    """Every garment; `sources` maps a garment to another mesh to build it from (the shoes come
+    from the smooth foot the detailed one replaced), skinned and keyed like the body."""
     out = []
     for name, (mat, regions, thick) in GARMENTS.items():
-        g = garment(body, name, mat, regions, thick, d)
+        g = garment((sources or {}).get(name, body), name, mat, regions, thick, d)
         if name in SKIRTS:
             s = skirt(body, name + "_skirt", mat, hems, d, SKIRTS[name], rig)
             transfer_keys(s, body)

@@ -87,8 +87,25 @@ pub struct SkinnedVertex {
     pub weights: [f32; 4],
     /// This vertex's entries in [`SkinnedMeshData::morphs`]: first index and count.
     pub morph: [u32; 2],
-    /// Palette slot in the low byte; bits 8.. are the skin region (see [`SkinnedDraw::hide`]).
+    /// Palette slot in bits 0..8, skin region in bits 8..16 (see [`SkinnedDraw::hide`]), and in
+    /// bits 16..24 how thin the flesh is (0..255, glTF `COLOR_1` red), which scales light shining
+    /// through [`SkinSurface`] skin from behind (ears, fingers).
     pub slot: u32,
+    /// Skin variation: rgb (glTF `COLOR_0`) multiplies the tinted colour after `a` (`COLOR_1`
+    /// green) has mixed it towards a pale tone (palms, soles, nails). Identity is `[1, 1, 1, 0]`.
+    pub tone: [f32; 4],
+}
+
+impl SkinnedVertex {
+    pub const NO_TONE: [f32; 4] = [1.0, 1.0, 1.0, 0.0];
+}
+
+/// Shades the vertices of one palette slot as skin: subsurface-scattering lighting plus a tiling
+/// detail material (pores) box-projected in the mesh's bind space, so it sticks to the body.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SkinSurface {
+    pub slot: u32,
+    pub material: MaterialId,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -123,11 +140,12 @@ pub struct SkinnedDraw {
     pub metallic: f32,
     pub emissive: f32,
     pub flags: u32,
+    pub skin: Option<SkinSurface>,
 }
 
 impl SkinnedDraw {
     pub fn new(mesh: SkinnedMeshId, pose: PoseId, model: Mat4, palette: [[f32; 4]; PALETTE_SLOTS]) -> Self {
-        SkinnedDraw { mesh, pose, model, palette, morph: [0.0; MAX_MORPHS], hide: 0, color: [1.0; 4], roughness: 0.7, metallic: 0.0, emissive: 0.0, flags: 0 }
+        SkinnedDraw { mesh, pose, model, palette, morph: [0.0; MAX_MORPHS], hide: 0, color: [1.0; 4], roughness: 0.7, metallic: 0.0, emissive: 0.0, flags: 0, skin: None }
     }
 }
 
@@ -399,6 +417,8 @@ struct SkInstanceRaw {
     params: [f32; 4],
     /// joint base, palette base, morph weight base (vec4 indices into the skin buffer), hide mask
     extra: [f32; 4],
+    /// skin surface: palette slot (-1: none), material layer, 1 / texture scale
+    skin: [f32; 4],
 }
 
 struct GpuMesh {
@@ -610,12 +630,12 @@ impl Renderer {
             Some(wgpu::VertexBufferLayout {
                 array_stride: std::mem::size_of::<SkinnedVertex>() as u64,
                 step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x4, 3 => Uint16x4, 4 => Float32x4, 5 => Uint32x2, 7 => Uint32],
+                attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x4, 3 => Uint16x4, 4 => Float32x4, 5 => Uint32x2, 7 => Uint32, 6 => Float32x4],
             }),
             Some(wgpu::VertexBufferLayout {
                 array_stride: std::mem::size_of::<SkInstanceRaw>() as u64,
                 step_mode: wgpu::VertexStepMode::Instance,
-                attributes: &wgpu::vertex_attr_array![8 => Float32x4, 9 => Float32x4, 10 => Float32x4, 11 => Float32x4, 12 => Float32x4, 13 => Float32x4, 14 => Float32x4],
+                attributes: &wgpu::vertex_attr_array![8 => Float32x4, 9 => Float32x4, 10 => Float32x4, 11 => Float32x4, 12 => Float32x4, 13 => Float32x4, 14 => Float32x4, 15 => Float32x4],
             }),
         ];
         let sk_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -934,6 +954,13 @@ impl Renderer {
                 params: [d.roughness, d.metallic, d.emissive, (d.flags & 3) as f32],
                 // the hide mask fits a float exactly (regions < 24)
                 extra: [(d.pose.0 * 4) as f32, palette_base as f32, morph_base as f32, (d.hide & 0xff_ffff) as f32],
+                skin: match d.skin {
+                    Some(sk) => {
+                        let layer = if (sk.material.0 as usize) < self.material_inv_scale.len() { sk.material.0 } else { 0 };
+                        [sk.slot as f32, layer as f32, self.material_inv_scale[layer as usize], 0.0]
+                    }
+                    None => [-1.0, 0.0, 1.0, 0.0],
+                },
             });
         }
         if skin_data.is_empty() {

@@ -315,8 +315,8 @@ fn lineup(ra: &RenderArgs) {
     use sim::data::{LifeStage, Pose};
     let gpu = hearth_render::Gpu::headless().expect("no GPU adapter");
     let mut r = hearth_render::Renderer::new(gpu, hearth_render::wgpu::TextureFormat::Rgba8UnormSrgb);
-    let art = game::peons::PeonArt::load(&mut r).expect("peon models");
     game::materials::install(&mut r, &sim::data::GameData::embedded());
+    let art = game::peons::PeonArt::load(&mut r).expect("peon models");
     let (pose, walking) = match ra.pose.as_str() {
         "walk" => (Pose::Stand, true),
         "sit" => (Pose::Sit, false),

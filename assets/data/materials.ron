@@ -20,4 +20,5 @@
     (id: "fabric", scale: 0.5),
     (id: "metal", scale: 0.5),
     (id: "stone", scale: 0.6),
+    (id: "skin", scale: 0.08),  // peon skin detail (bind space), see game/src/peons.rs
 ]

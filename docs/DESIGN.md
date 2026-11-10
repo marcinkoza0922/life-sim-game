@@ -68,7 +68,8 @@ assets/
   textures/      <material id>/{albedo,normal,orm}.png tiling maps (embedded by game/build.rs)
   materialcraft/ materials.py: generates the .sbs packages and textures/ maps headlessly
   blender/       make_peons.py: builds the bodies, rig, hair and clips headlessly (with
-                 peon_body.py, peon_head.py, peon_hair.py: body, face, hair and clothes geometry);
+                 peon_body.py, peon_head.py, peon_hair.py: body, face, hair and clothes geometry;
+                 peon_extremities.py: detailed hands/feet welded on, skin tone/thinness colours);
                  make_objects.py: builds the object models
   vectorcraft/   make_icons.py: UI icon SVGs (icons/, sheet.svg) rasterised by vectorcraft-cli
   ui/icons/      <name>.png 128 px UI icons (generated; embedded by game/src/icons.rs)
@@ -467,6 +468,15 @@ Added since:
   head, `slim`/`heavy` shape keys from per-bone normal offsets, clips idle/walk/sit/lie/use/dance/exercise).
   `game::peons` maps `Posture` to a clip, `Appearance` to palette/morphs/hair/height; ghosts reuse it
   translucent. `simctl lineup --pose P` renders every stage side by side for review.
+- **Skin:** hands (jointed fingers, knuckles, nails) and feet (toes, arch, heel) are finer metaball
+  meshes welded onto the body up the forearm/shin after the clothes are made from the smooth body
+  (shoes come from a separate smooth `shoe_last`). Bodies and heads carry per-vertex skin variation
+  (`COLOR_0` rgb multiplier: redder knuckles/knees/elbows/cheeks/ears; `COLOR_1` green: mix towards a
+  pale tone for palms, soles, nails; red: flesh thinness). The draw's `SkinSurface` makes the skin
+  slot shade as skin: per-channel wrapped diffuse and red-bleeding shadow edges (subsurface
+  scattering), back-light transmission scaled by thinness, and the `skin` material (pores,
+  microrelief; `assets/materialcraft/materials.py`) box-projected in bind space so it sticks to the
+  body.
 - **Clip cross-fades:** `peons::Animator` (owned by the game, keyed by entity, pruned when a peon isn't
   drawn) keeps each peon's clip phase; on a clip change it fades from the last drawn pose over
   `BLEND_SECS` (0.3 s, smoothstep) and eases the root offset/yaw with it, since the sim snaps a peon onto

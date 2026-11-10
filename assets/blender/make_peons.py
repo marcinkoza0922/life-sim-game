@@ -8,8 +8,10 @@ Set PEON_PREVIEW=out.png (with PEON_SHOW=mesh,names and PEON_KEYS=key=value,...)
 dressed body front and three-quarter in Blender instead of exporting.
 
 Every stage file holds the same skeleton (bone names) and these skinned meshes:
-- `body`: a metaball body (peon_body.py), its faces tagged `skin.rN` by the skin region N a garment
-  can cover, with shape keys `slim`/`heavy` (build) and the body sliders (peon_body.BODY_SLIDERS);
+- `body`: a metaball body (peon_body.py) with detailed hands and feet welded on
+  (peon_extremities.py), its faces tagged `skin.rN` by the skin region N a garment can cover, with
+  shape keys `slim`/`heavy` (build) and the body sliders (peon_body.BODY_SLIDERS), and the skin
+  colour attributes `tone`/`thin` (COLOR_0/COLOR_1; the head has them too);
 - `head`: skull, face, eyes, lids, lips, ears and brows (peon_head.py), rigid on the head bone,
   with a shape key per face slider (peon_head.FACE_SLIDERS);
 - garments `top_*`, `bottom_*`, `shoes` (peon_body.GARMENTS): copies of the body's region faces
@@ -42,7 +44,8 @@ import bpy
 from mathutils import Euler, Matrix, Quaternion, Vector
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from peon_body import BODY_SLIDERS, Hems, add_body_keys, cut_regions, make_body, make_clothes, weight_body  # noqa: E402
+from peon_body import BODY_SLIDERS, Hems, add_body_keys, cut_regions, make_body, make_clothes, transfer_keys, weight_body  # noqa: E402
+from peon_extremities import add_extremities, add_stubs, copy_weights, paint_body, paint_head, shoe_last, smooth_seams  # noqa: E402
 from peon_hair import FACIAL_HAIR, hair_meshes  # noqa: E402
 from peon_head import EXPRESSIONS, FACE_SLIDERS, Face, build_head  # noqa: E402
 
@@ -136,7 +139,7 @@ def arm_points(d, side):
     sh = Vector((side * d.shoulder_x, 0, d.shoulder_z))
     el = sh + dirv * d.arm_len * 0.5
     wr = sh + dirv * d.arm_len
-    tip = wr + dirv * d.H * 0.085
+    tip = wr + dirv * d.H * 0.095
     return sh, el, wr, tip
 
 
@@ -266,10 +269,14 @@ def make_head(d, stage):
     hh, c = head_frame(d)
     ch = CHILDISH[stage]
 
+    ears = set()
+
     def build(P):
         verts, faces, mats = [], [], []
-        for _, v, f, m in build_head(hh, c, P, ch):
+        for name, v, f, m in build_head(hh, c, P, ch):
             base = len(verts)
+            if name == "ear":
+                ears.update(range(base, base + len(v)))
             verts += v
             faces += [tuple(i + base for i in fc) for fc in f]
             mats += m
@@ -280,6 +287,7 @@ def make_head(d, stage):
     add_param_keys(obj, [(k, build({k: 1.0})[0]) for k in FACE_KEYS])
     g = obj.vertex_groups.new(name="head")
     g.add(list(range(len(verts))), 1.0, "REPLACE")
+    paint_head(obj, hh, c, ears)
     return obj
 
 
@@ -1012,7 +1020,26 @@ def preview(rig, body, clothes, hair, path):
     lo = link(bpy.data.objects.new("sun", ld))
     lo.rotation_euler = (math.radians(50), 0, math.radians(-30))
     H = rig.dimensions.z
-    zoom = os.environ.get("PEON_ZOOM") == "head"
+    zoom_on = os.environ.get("PEON_ZOOM", "")
+    zoom = zoom_on == "head"
+    if zoom_on in ("hand", "foot"):
+        # close-up of the left hand / foot: front, side, back and from below
+        sh, el, wr, tip = arm_points(Dims(STAGES[os.environ.get("PEON_STAGE", "adult")]), 1)
+        target = wr.lerp(tip, float(os.environ.get("PEON_ZOOM_AT", 0.5))) if zoom_on == "hand" else Vector((rig.data.bones["foot.L"].head_local.x, -0.05 * H, 0.04 * H))
+        for i, (yaw, pitch) in enumerate(((0, 0), (90, 0), (180, 0), (-90, 0), (30, 45))):
+            cd = bpy.data.cameras.new("c")
+            cd.type = "ORTHO"
+            cd.ortho_scale = H * float(os.environ.get("PEON_ZOOM_SCALE", 0.14 if zoom_on == "hand" else 0.17))
+            co = link(bpy.data.objects.new("c", cd))
+            a, b = math.radians(yaw), math.radians(pitch)
+            dirv = Vector((math.sin(a) * math.cos(b), -math.cos(a) * math.cos(b), math.sin(b)))
+            co.location = target + dirv * 3
+            co.rotation_euler = dirv.to_track_quat("Z", "Y").to_euler()
+            sc.camera = co
+            sc.render.resolution_x = sc.render.resolution_y = 500
+            sc.render.filepath = path.replace(".png", f"_{zoom_on}{i}.png")
+            bpy.ops.render.render(write_still=True)
+        return
     for yaw, label in ((0, "front"), (40, "side")):
         cd = bpy.data.cameras.new("c")
         cd.type = "ORTHO"
@@ -1032,11 +1059,18 @@ def build_stage(stage, params):
     d = Dims(params)
     rig = make_armature(d)
     hems = Hems(d, arm_points, leg_points)
-    body = make_body(d, arm_points, leg_points)
+    body = make_body(d, arm_points, leg_points, lambda m: add_stubs(m, d, arm_points, leg_points))
     cut_regions(body, rig, hems)
     weight_body(body, rig)
     add_body_keys(body, d)
-    clothes = make_clothes(body, rig, d, hems)
+    last = shoe_last(d, leg_points, hems)
+    copy_weights(last, body, rig)
+    transfer_keys(last, body)
+    clothes = make_clothes(body, rig, d, hems, sources={"shoes": last})
+    bpy.data.objects.remove(last)
+    spots = add_extremities(body, rig, d, hems, arm_points, leg_points)
+    paint_body(body, d, spots, arm_points, leg_points)
+    smooth_seams([body], spots.pop("seam_src"), d, arm_points, leg_points)
     # the head stays its own mesh: glTF stores morph targets densely, so face keys on the body
     # (or body keys on the head) would cost a delta for every vertex
     head = make_head(d, stage)
@@ -1068,6 +1102,9 @@ def build_stage(stage, params):
         export_texcoords=False,
         export_normals=True,
         export_materials="EXPORT",
+        export_vertex_color="ACTIVE",
+        export_all_vertex_colors=True,
+        export_active_vertex_color_when_no_material=True,
     )
     print(f"wrote {path}: body {len(body.data.vertices)} verts")
 

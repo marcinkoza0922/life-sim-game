@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use glam::{Mat4, Quat, Vec3};
 use hearth_render::model::{Model, Pose as JointPose};
-use hearth_render::{PALETTE_SLOTS, Renderer, SkinnedDraw, SkinnedMeshId};
+use hearth_render::{PALETTE_SLOTS, Renderer, SkinSurface, SkinnedDraw, SkinnedMeshId};
 use sim::components::{Appearance, Personality, Posture};
 use sim::Entity;
 use sim::data::{Hand, LifeStage, Pose};
@@ -212,6 +212,8 @@ pub enum Look {
 
 pub struct PeonArt {
     stages: Vec<StageArt>,
+    /// Skin shading (subsurface lighting, pore detail) for the skin slot of bodies and heads.
+    skin: SkinSurface,
 }
 
 impl PeonArt {
@@ -233,7 +235,9 @@ impl PeonArt {
             let rig = Rig::new(&model.skeleton, height);
             stages.push(StageArt { model, body, head, parts, height, head_joint, head_rest_y, grips, rig });
         }
-        Ok(PeonArt { stages })
+        // `skin` in materials.ron (pores); without its maps the skin still gets subsurface lighting
+        let skin = SkinSurface { slot: slot::SKIN, material: r.builtins.material("skin").unwrap_or_default() };
+        Ok(PeonArt { stages, skin })
     }
 
     /// Adds a posed body to a frame's `skinned` draws and `joints`. `t` is a per-peon clock in
@@ -282,7 +286,10 @@ impl PeonArt {
             d.roughness = roughness;
             d
         };
-        let mut draws = vec![draw(&art.body, 0.7), draw(&art.head, 0.6)];
+        let mut draws = vec![draw(&art.body, 0.62), draw(&art.head, 0.55)];
+        for d in &mut draws {
+            d.skin = Some(self.skin);
+        }
         draws[0].hide = hide;
         draws.extend(outfit.iter().filter_map(|g| art.parts.get(g.as_str())).map(|p| draw(p, 0.85)));
         for (prefix, id) in hairdo(stage, app) {
@@ -693,7 +700,7 @@ mod tests {
                 assert!(all().any(|v| v.slot & 0xff == s), "{name}: slot {s}");
             }
             for r in 1..=region::FOOT {
-                assert!(body.data.vertices.iter().any(|v| v.slot >> 8 == r), "{name}: skin region {r}");
+                assert!(body.data.vertices.iter().any(|v| (v.slot >> 8) & 255 == r), "{name}: skin region {r}");
             }
             for (id, _) in sim::genetics::HAIR_STYLES.iter().filter(|(id, _)| *id != "bald") {
                 assert!(m.mesh(&format!("hair.{id}")).is_some(), "{name}: hair.{id}");

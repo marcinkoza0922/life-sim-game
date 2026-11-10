@@ -275,6 +275,9 @@ impl Model {
                 let base = data.vertices.len() as u32;
                 let joints: Vec<[u16; 4]> = r.read_joints(0).map(|j| j.into_u16().collect()).unwrap_or_default();
                 let weights: Vec<[f32; 4]> = r.read_weights(0).map(|w| w.into_f32().collect()).unwrap_or_default();
+                // skin variation: COLOR_0 rgb multiplier; COLOR_1 red = thinness, green = pale mix
+                let tones: Vec<[f32; 4]> = r.read_colors(0).map(|c| c.into_rgba_f32().collect()).unwrap_or_default();
+                let detail: Vec<[f32; 4]> = r.read_colors(1).map(|c| c.into_rgba_f32().collect()).unwrap_or_default();
                 let targets: Vec<Vec<[f32; 3]>> =
                     r.read_morph_targets().take(MAX_MORPHS).map(|(p, _, _)| p.map(|p| p.collect()).unwrap_or_default()).collect();
                 for (i, (p, n)) in pos.zip(nrm).enumerate() {
@@ -294,7 +297,11 @@ impl Model {
                         joints: joints.get(i).copied().unwrap_or_default(),
                         weights: weights.get(i).copied().unwrap_or([1.0, 0.0, 0.0, 0.0]),
                         morph,
-                        slot,
+                        slot: slot | ((detail.get(i).map_or(0.0, |t| t[0].clamp(0.0, 1.0)) * 255.0).round() as u32) << 16,
+                        tone: match (tones.get(i), detail.get(i)) {
+                            (Some(t), d) => [t[0], t[1], t[2], d.map_or(0.0, |d| d[1])],
+                            _ => SkinnedVertex::NO_TONE,
+                        },
                     });
                 }
                 match r.read_indices() {
@@ -443,7 +450,7 @@ mod tests {
         assert!(body.morph("frame").is_some(), "{:?}", body.morph_names);
         let head = m.mesh("head").expect("head mesh");
         assert!(body.morph_names.len() <= crate::MAX_MORPHS);
-        assert!(body.data.vertices.iter().any(|v| v.slot == 1));
+        assert!(body.data.vertices.iter().any(|v| v.slot & 0xffff == 1));
         // sparse morphs: every vertex's range is in bounds, and the face keys move only the head
         let jaw = head.morph("jaw").unwrap() as f32;
         let moved = head.data.vertices.iter().filter(|v| (v.morph[0]..v.morph[0] + v.morph[1]).any(|i| head.data.morphs[i as usize][3] == jaw)).count();
