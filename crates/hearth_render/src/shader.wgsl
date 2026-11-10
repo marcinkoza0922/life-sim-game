@@ -1,3 +1,9 @@
+struct Occluder {
+    sphere: vec4<f32>,
+    world_to_box: mat4x4<f32>,
+    color: vec4<f32>,
+};
+
 struct PointLight {
     pos_radius: vec4<f32>,
     color_intensity: vec4<f32>,
@@ -14,6 +20,8 @@ struct Globals {
     fog: vec4<f32>,          // rgb colour, a: density
     counts: vec4<f32>,       // x: point light count, y: shadow texel size, z: exposure
     points: array<PointLight, 16>,
+    effects: vec4<f32>, // AO, diffuse bounce, sun shadows, soft filtering
+    occluders: array<Occluder, 128>,
 };
 
 @group(0) @binding(0) var<uniform> g: Globals;
@@ -162,12 +170,16 @@ fn vs_shadow_skinned(v: SkIn) -> @builtin(position) vec4<f32> {
 const PI: f32 = 3.14159265;
 
 fn shadow_factor(lc: vec4<f32>, ndotl: f32) -> f32 {
+    if (g.effects.z < 0.5) { return 1.0; }
     let p = lc.xyz / lc.w;
     let uv = vec2<f32>(p.x * 0.5 + 0.5, -p.y * 0.5 + 0.5);
-    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || p.z > 1.0) {
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || p.z < 0.0 || p.z > 1.0) {
         return 1.0;
     }
     let bias = max(0.0025 * (1.0 - ndotl), 0.0006);
+    if (g.effects.w < 0.5) {
+        return textureSampleCompareLevel(shadow_tex, shadow_samp, uv, p.z - bias);
+    }
     let t = g.counts.y;
     var sum = 0.0;
     for (var x = -1; x <= 1; x++) {
@@ -244,6 +256,64 @@ fn triplanar(p: vec3<f32>, n: vec3<f32>, layer: u32) -> Surface {
     return s;
 }
 
+// Short cosine-weighted hemisphere rays against oriented mesh bounds. These stable world-space
+// samples work off-screen too. Proxies deliberately trade geometric accuracy for bounded cost.
+fn indirect(world: vec3<f32>, n: vec3<f32>) -> vec4<f32> {
+    if (g.effects.x < 0.5 && g.effects.y < 0.5) { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }
+    let helper = select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), abs(n.y) > 0.9);
+    let tangent = normalize(cross(helper, n));
+    let bitangent = cross(n, tangent);
+    var visibility = 0.0;
+    var bounce = vec3<f32>(0.0);
+    let samples = select(4u, 8u, g.effects.y > 0.5);
+    for (var ray = 0u; ray < samples; ray++) {
+        let radius = sqrt((f32(ray) + 0.5) / f32(samples));
+        let angle = f32(ray) * 2.39996323;
+        let dir = tangent * (radius * cos(angle)) + bitangent * (radius * sin(angle)) + n * sqrt(1.0 - radius * radius);
+        let origin = world + n * 0.045;
+        var nearest = 3.0;
+        var hit = -1;
+        var hit_normal = n;
+        for (var k = 0; k < i32(g.counts.w); k++) {
+            let sphere = g.occluders[k].sphere;
+            let delta = sphere.xyz - origin;
+            let along = clamp(dot(delta, dir), 0.0, nearest);
+            if (dot(delta - dir * along, delta - dir * along) > sphere.w * sphere.w) { continue; }
+            let m = g.occluders[k].world_to_box;
+            let ro = (m * vec4<f32>(origin, 1.0)).xyz;
+            let rd = (m * vec4<f32>(dir, 0.0)).xyz;
+            // An origin inside a proxy is not an occlusion hit (also avoids self-shadowing).
+            if (all(abs(ro) < vec3<f32>(0.501))) { continue; }
+            let safe_rd = select(vec3<f32>(1e-6), rd, abs(rd) > vec3<f32>(1e-6));
+            let a = (-vec3<f32>(0.5) - ro) / safe_rd;
+            let b = (vec3<f32>(0.5) - ro) / safe_rd;
+            let entry = min(a, b);
+            let exit = max(a, b);
+            let near = max(entry.x, max(entry.y, entry.z));
+            let far = min(exit.x, min(exit.y, exit.z));
+            if (near > 0.015 && near < nearest && far >= near) {
+                nearest = near;
+                hit = k;
+                var axis = vec3<f32>(0.0, 0.0, -sign(rd.z));
+                if (entry.x >= entry.y && entry.x >= entry.z) { axis = vec3<f32>(-sign(rd.x), 0.0, 0.0); }
+                else if (entry.y >= entry.z) { axis = vec3<f32>(0.0, -sign(rd.y), 0.0); }
+                hit_normal = normalize(transpose(mat3x3<f32>(m[0].xyz, m[1].xyz, m[2].xyz)) * axis);
+            }
+        }
+        let weight = 1.0 - smoothstep(0.0, 3.0, nearest);
+        visibility += 1.0 - weight;
+        if (hit >= 0 && g.effects.y > 0.5) {
+            let p = origin + dir * nearest + hit_normal * 0.03;
+            let nl = max(dot(hit_normal, normalize(g.sun_dir.xyz)), 0.0);
+            let sun = g.sun_color.rgb * g.sun_dir.w * nl * shadow_factor(g.light_view_proj * vec4<f32>(p, 1.0), nl) / PI;
+            let sky = mix(g.ground_color.rgb, g.sky_color.rgb, hit_normal.y * 0.5 + 0.5);
+            let c = g.occluders[hit].color;
+            bounce += c.rgb * (sun + sky * 0.25 + vec3<f32>(c.a)) * weight;
+        }
+    }
+    return vec4<f32>(bounce / f32(samples), select(1.0, visibility / f32(samples), g.effects.x > 0.5));
+}
+
 @fragment
 fn fs_main(i: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let flags = u32(i.params.w + 0.5);
@@ -272,9 +342,11 @@ fn fs_main(i: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
         sh = shadow_factor(i.light_clip, ndotl);
     }
     var color = shade(n, v, l, albedo, rough, metal) * g.sun_color.rgb * g.sun_dir.w * sh;
+    let indirect_light = indirect(i.world, n);
     // hemispheric ambient
     let hemi = mix(g.ground_color.rgb, g.sky_color.rgb, n.y * 0.5 + 0.5);
-    color += hemi * albedo * (1.0 - metal * 0.6) * ao;
+    color += hemi * albedo * (1.0 - metal * 0.6) * ao * indirect_light.a;
+    color += indirect_light.rgb * albedo * (1.0 - metal) * ao;
     // point lights
     let count = i32(g.counts.x);
     for (var k = 0; k < count; k++) {
@@ -284,7 +356,7 @@ fn fs_main(i: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
         let r = pl.pos_radius.w;
         if (dist < r) {
             let att = pow(clamp(1.0 - dist / r, 0.0, 1.0), 2.0) / (1.0 + dist * dist);
-            color += shade(n, v, d / dist, albedo, rough, metal) * pl.color_intensity.rgb * pl.color_intensity.w * att * 4.0;
+            color += shade(n, v, d / max(dist, 0.0001), albedo, rough, metal) * pl.color_intensity.rgb * pl.color_intensity.w * att * 4.0;
         }
     }
     color += albedo * i.params.z;

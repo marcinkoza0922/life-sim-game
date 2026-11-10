@@ -125,6 +125,7 @@ pub struct Game {
     pub mute: bool,
     /// Sound volumes (☰ Game menu); saved to `settings.ron` when changed.
     pub volumes: crate::audio::Volumes,
+    pub graphics: crate::graphics::GraphicsSettings,
     /// One-shot sound effects requested this frame (ids in `sounds::IDS`), played by the app.
     pub sfx: Vec<&'static str>,
     /// The lot that was live last frame (see [`Game::check_lot_change`]).
@@ -176,6 +177,7 @@ impl Game {
             autosave_day: None,
             mute: false,
             volumes: Default::default(),
+            graphics: crate::graphics::GraphicsSettings::load(),
             sfx: Vec::new(),
             shown_lot,
             hud: Default::default(),

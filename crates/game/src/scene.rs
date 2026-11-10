@@ -210,6 +210,7 @@ pub fn build(sim: &Sim, r: &Builtins, peons: Option<&PeonArt>, anims: &mut Anima
     let clock = *world.res::<Clock>();
     let lot = world.res::<Lot>();
     let mut frame = Frame::new(camera);
+    frame.indirect_center = opts.focus;
     let mut labels = Vec::new();
     lighting(&mut frame, &clock);
     frame.shadow_center = Vec3::new(lot.width as f32 * 0.5, opts.active_level as f32 * LEVEL_HEIGHT, lot.depth as f32 * 0.5);

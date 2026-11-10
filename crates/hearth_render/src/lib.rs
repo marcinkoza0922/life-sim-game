@@ -21,6 +21,7 @@ pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 pub const SAMPLES: u32 = 4;
 pub const SHADOW_SIZE: u32 = 2048;
 pub const MAX_POINT_LIGHTS: usize = 16;
+const MAX_OCCLUDERS: usize = 128;
 /// Morph targets per skinned vertex.
 pub const MAX_MORPHS: usize = 2;
 /// Palette entries per skinned draw; vertex `slot` indexes it (slot 0 is conventionally white).
@@ -288,6 +289,9 @@ impl Camera {
 
 #[derive(Clone, Debug)]
 pub struct Frame {
+    pub lighting: LightingOptions,
+    /// Center of the region receiving detailed indirect lighting.
+    pub indirect_center: Vec3,
     pub camera: Camera,
     /// Direction *towards* the sun.
     pub sun_dir: Vec3,
@@ -309,9 +313,26 @@ pub struct Frame {
     pub joints: Vec<Mat4>,
 }
 
+/// Optional world-space lighting. Indirect light uses nearby box proxies rather than triangle rays.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LightingOptions {
+    pub ambient_occlusion: bool,
+    pub indirect_light: bool,
+    pub shadows: bool,
+    pub soft_shadows: bool,
+}
+
+impl Default for LightingOptions {
+    fn default() -> Self {
+        Self { ambient_occlusion: true, indirect_light: false, shadows: true, soft_shadows: true }
+    }
+}
+
 impl Frame {
     pub fn new(camera: Camera) -> Frame {
         Frame {
+            lighting: LightingOptions::default(),
+            indirect_center: Vec3::ZERO,
             camera,
             sun_dir: Vec3::new(0.4, 0.8, 0.3).normalize(),
             sun_color: Vec3::new(1.0, 0.95, 0.88),
@@ -372,6 +393,16 @@ struct Globals {
     fog: [f32; 4],
     counts: [f32; 4],
     points: [GpuPointLight; MAX_POINT_LIGHTS],
+    effects: [f32; 4],
+    occluders: [GpuOccluder; MAX_OCCLUDERS],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct GpuOccluder {
+    sphere: [f32; 4],
+    world_to_box: [[f32; 4]; 4],
+    color: [f32; 4],
 }
 
 #[repr(C)]
@@ -398,6 +429,7 @@ struct GpuMesh {
     vb: wgpu::Buffer,
     ib: wgpu::Buffer,
     count: u32,
+    bounds: (Vec3, Vec3),
 }
 
 /// Device + queue, shared with UI renderers.
@@ -771,7 +803,7 @@ impl Renderer {
             contents: bytemuck::cast_slice(&m.indices),
             usage: wgpu::BufferUsages::INDEX,
         });
-        self.meshes[id.0 as usize] = Some(GpuMesh { vb, ib, count: m.indices.len() as u32 });
+        self.meshes[id.0 as usize] = Some(GpuMesh { vb, ib, count: m.indices.len() as u32, bounds: mesh_bounds(m.vertices.iter().map(|v| Vec3::from(v.pos))) });
     }
 
     pub fn upload_skinned_mesh(&mut self, m: &SkinnedMeshData) -> SkinnedMeshId {
@@ -788,7 +820,7 @@ impl Renderer {
                 contents: bytemuck::cast_slice(&m.indices),
                 usage: wgpu::BufferUsages::INDEX,
             });
-            GpuMesh { vb, ib, count: m.indices.len() as u32 }
+            GpuMesh { vb, ib, count: m.indices.len() as u32, bounds: mesh_bounds(m.vertices.iter().map(|v| Vec3::from(v.pos))) }
         });
         self.sk_meshes.push(mesh);
         id
@@ -837,6 +869,31 @@ impl Renderer {
         for (i, l) in frame.lights.iter().take(MAX_POINT_LIGHTS).enumerate() {
             points[i] = GpuPointLight { pos_radius: l.pos.extend(l.radius).to_array(), color_intensity: l.color.extend(l.intensity).to_array() };
         }
+        let mut occluders = [GpuOccluder::zeroed(); MAX_OCCLUDERS];
+        let mut candidates = Vec::new();
+        if frame.lighting.ambient_occlusion || frame.lighting.indirect_light {
+            for d in &frame.draws {
+                if d.color[3] < 0.999 || d.flags & (flags::UNLIT | flags::NO_SHADOW_CAST) != 0 {
+                    continue;
+                }
+                let Some(mesh) = self.meshes.get(d.mesh.0 as usize).and_then(Option::as_ref) else { continue };
+                let (lo, hi) = mesh.bounds;
+                let size = hi - lo;
+                if size.min_element() < 0.001 || d.model.determinant().abs() < 1e-8 { continue; }
+                let model = d.model * Mat4::from_translation((lo + hi) * 0.5) * Mat4::from_scale(size);
+                let center = model.w_axis.truncate();
+                // Prefer geometry near the viewed area. Bounded cost independent of lot size.
+                let distance = (center - frame.indirect_center).length_squared();
+                candidates.push((distance, GpuOccluder {
+                    sphere: center.extend((model.x_axis.truncate().length() + model.y_axis.truncate().length() + model.z_axis.truncate().length()) * 0.5).to_array(),
+                    world_to_box: model.inverse().to_cols_array_2d(),
+                    color: srgb_to_linear(Vec3::from_slice(&d.color[..3])).extend(d.emissive).to_array(),
+                }));
+            }
+            candidates.sort_by(|a, b| a.0.total_cmp(&b.0));
+        }
+        let occluder_count = candidates.len().min(MAX_OCCLUDERS);
+        for (dst, (_, src)) in occluders.iter_mut().zip(candidates) { *dst = src; }
         let globals = Globals {
             view_proj: frame.camera.view_proj().to_cols_array_2d(),
             light_view_proj: Self::light_view_proj(frame).to_cols_array_2d(),
@@ -846,8 +903,11 @@ impl Renderer {
             sky: frame.sky.extend(1.0).to_array(),
             ground: frame.ground.extend(1.0).to_array(),
             fog: srgb_to_linear(frame.fog_color).extend(frame.fog_density).to_array(),
-            counts: Vec4::new(frame.lights.len().min(MAX_POINT_LIGHTS) as f32, 1.0 / SHADOW_SIZE as f32, frame.exposure, 0.0).to_array(),
+            counts: Vec4::new(frame.lights.len().min(MAX_POINT_LIGHTS) as f32, 1.0 / SHADOW_SIZE as f32, frame.exposure, occluder_count as f32).to_array(),
             points,
+            effects: [f32::from(frame.lighting.ambient_occlusion), f32::from(frame.lighting.indirect_light),
+                f32::from(frame.lighting.shadows), f32::from(frame.lighting.soft_shadows)],
+            occluders,
         };
         queue.write_buffer(&self.globals_buf, 0, bytemuck::bytes_of(&globals));
 
@@ -953,7 +1013,7 @@ impl Renderer {
         self.stats = RenderStats { draws: raw.len() + sk_raw.len(), batches: batches.len() + sk_batches.len(), meshes: self.meshes.len() + self.sk_meshes.len(), skinned: sk_raw.len() };
 
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
-        {
+        if frame.lighting.shadows {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("shadow pass"),
                 color_attachments: &[],
@@ -1123,6 +1183,11 @@ impl Renderer {
     }
 }
 
+fn mesh_bounds(vertices: impl Iterator<Item = Vec3>) -> (Vec3, Vec3) {
+    vertices.fold((Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
+        |(lo, hi), p| (lo.min(p), hi.max(p)))
+}
+
 fn vertex_buffer(device: &wgpu::Device, label: &str, size: u64) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor { label: Some(label), size, usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false })
 }
@@ -1240,6 +1305,41 @@ mod tests {
         let mut f = Frame::new(Camera::orbit(Vec3::ZERO, 0.6, 0.5, 4.0, 1.0));
         f.draws.push(Draw::new(r.builtins.cube, Mat4::from_scale(Vec3::new(2.0, 1.0, 2.0)), [1.0; 3]).material(mat));
         Some(r.capture(&f, 64, 64))
+    }
+
+    #[test]
+    fn indirect_lighting_darkens_contacts_and_bounces_color() {
+        let Ok(gpu) = Gpu::headless() else { eprintln!("Skipping lighting capture: no GPU"); return; };
+        let mut renderer = Renderer::new(gpu, wgpu::TextureFormat::Rgba8UnormSrgb);
+        let mut f = Frame::new(Camera::orbit(Vec3::new(0.0, 0.4, 0.0), 0.2, 0.65, 7.0, 1.0));
+        f.sun_intensity = 0.0;
+        f.sky = Vec3::splat(0.5);
+        f.ground = Vec3::splat(0.25);
+        f.fog_density = 0.0;
+        f.draws.push(Draw::new(renderer.builtins.cube, Mat4::from_scale_rotation_translation(
+            Vec3::new(6.0, 0.2, 6.0), glam::Quat::IDENTITY, Vec3::new(0.0, -0.15, 0.0)), [0.8; 3]));
+        f.draws.push(Draw::new(renderer.builtins.cube, Mat4::from_scale_rotation_translation(
+            Vec3::new(5.0, 2.5, 0.2), glam::Quat::IDENTITY, Vec3::new(0.0, 1.1, -1.0)), [0.9, 0.15, 0.1]));
+        f.lighting = LightingOptions { ambient_occlusion: false, indirect_light: false, shadows: false, soft_shadows: false };
+        let baseline = renderer.capture(&f, 128, 128);
+        f.lighting.ambient_occlusion = true;
+        let ao = renderer.capture(&f, 128, 128);
+        f.lighting.indirect_light = true;
+        let bounce = renderer.capture(&f, 128, 128);
+        let darker = baseline.as_chunks::<4>().0.iter().zip(ao.as_chunks::<4>().0)
+            .filter(|(a, b)| a[0] > b[0].saturating_add(5)).count();
+        let red_bounce = bounce.as_chunks::<4>().0.iter().zip(ao.as_chunks::<4>().0)
+            .filter(|(a, b)| a[0] > b[0].saturating_add(2) && a[0].saturating_sub(b[0]) > a[2].saturating_sub(b[2])).count();
+        assert!(darker > 100, "AO should darken contact pixels: {darker}");
+        assert!(red_bounce > 50, "red wall should bounce red light: {red_bounce}");
+        f.lighting.ambient_occlusion = false;
+        f.lighting.indirect_light = false;
+        assert_eq!(renderer.capture(&f, 128, 128), baseline, "effects must fully disable");
+        if let Ok(dir) = std::env::var("HEARTH_TEST_OUT") {
+            for (name, pixels) in [("baseline", baseline), ("ao", ao), ("bounce", bounce)] {
+                image::RgbaImage::from_raw(128, 128, pixels).unwrap().save(format!("{dir}/lighting_{name}.png")).unwrap();
+            }
+        }
     }
 
     /// 2×2 black/white checker per repeat, one repeat per meter.
