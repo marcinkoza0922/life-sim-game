@@ -18,7 +18,13 @@ The matrix builds once with the optimized `profiling` Cargo profile and runs ser
 It covers 4/16/64/128 residents, repeated autonomy decisions, navigation on
 16/32/64/128 square lots and the actual starter house, and save capture plus JSON serialization. Three seeds
 (default) provide both repeatability and workload variation. Preserve the JSONL;
-console output is the median of each seed's mean and p99, not a pooled percentile.
+On Linux, `--cpu N` pins only benchmark processes to one allowed logical CPU via
+`taskset` and records that CPU in metadata. Choose the same core for both reports;
+on hybrid CPUs use a performance core (inspect `lscpu -e=CPU,CORE,MAXMHZ`). This
+avoids mixing performance and efficiency cores, but does not isolate other load
+or fix CPU frequency. Builds remain unrestricted.
+
+Console output is the median of each seed's mean and p99, not a pooled percentile.
 Do not run competing builds or benchmarks while collecting comparison baselines.
 Record CPU, revision, Rust version, power settings, and background load with results.
 

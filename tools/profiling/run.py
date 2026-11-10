@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import platform
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 import statistics
@@ -14,9 +15,16 @@ p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--out', type=Path, default=ROOT / 'out/profiling.jsonl')
 p.add_argument('--repeats', type=int, default=3)
 p.add_argument('--iterations', type=int, default=1440)
+p.add_argument('--cpu', type=int, help='pin benchmark processes to this allowed Linux logical CPU')
 a = p.parse_args()
 if a.repeats < 1 or a.iterations < 1:
     p.error('repeats and iterations must be positive')
+if a.cpu is not None:
+    if not hasattr(os, 'sched_getaffinity') or a.cpu not in os.sched_getaffinity(0):
+        p.error('--cpu must be an allowed Linux logical CPU')
+    if shutil.which('taskset') is None:
+        p.error('--cpu requires taskset')
+benchmark_prefix = [] if a.cpu is None else ['taskset', '-c', str(a.cpu)]
 subprocess.run(['cargo', 'build', '-q', '--offline', '--profile', 'profiling', '-p', 'sim', '--example', 'profile', '--features', 'profiling'], cwd=ROOT, check=True)
 target = Path(os.environ.get('CARGO_TARGET_DIR', ROOT / 'target'))
 if not target.is_absolute():
@@ -29,7 +37,7 @@ metadata = {
     'rustc': subprocess.check_output(['rustc', '--version'], text=True).strip(),
     'platform': platform.platform(),
     'started_utc': datetime.now(timezone.utc).isoformat(),
-    'repeats': a.repeats, 'iterations': a.iterations,
+    'repeats': a.repeats, 'iterations': a.iterations, 'benchmark_cpu': a.cpu,
 }
 a.out.with_suffix('.meta.json').write_text(json.dumps(metadata, indent=2) + '\n')
 with a.out.open('w') as output:
@@ -38,7 +46,7 @@ with a.out.open('w') as output:
             rows = []
             for seed in range(1, a.repeats + 1):
                 iterations = a.iterations if mode == 'tick' else min(a.iterations, 200)
-                raw = subprocess.check_output([str(binary), mode, str(count), str(iterations), str(seed)], cwd=ROOT, text=True)
+                raw = subprocess.check_output(benchmark_prefix + [str(binary), mode, str(count), str(iterations), str(seed)], cwd=ROOT, text=True)
                 row = json.loads(raw)
                 rows.append(row)
                 output.write(json.dumps(row) + '\n')
