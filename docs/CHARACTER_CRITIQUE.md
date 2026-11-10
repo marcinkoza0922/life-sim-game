@@ -127,7 +127,11 @@ If we fix only a few things, these do the most for the "looks wrong" reaction, r
   blinks less, so the squint does the work (`peon_head.py`, `expression` in `peons.rs`).
   `simctl lineup` now settles the eased face before drawing, so renders show expressions at full
   strength.
-- Still open: looser clothes and drape, head and eye proportions, skin variation on darker
+- **Head and eye proportions (done):** heads are about 12% larger relative to height (adult and
+  elder 0.17 → 0.19, teen 0.185 → 0.205, child 0.225 → 0.24 in `make_peons.STAGES`), eyes are
+  about 10% larger (`eye_r` in `peon_head.py`), and the neck is slimmer (`peon_body.py`). The
+  bigger head takes its height from the torso, so the neck is shorter as well.
+- Still open: looser clothes and drape, male/female base shapes, skin variation on darker
   tones, idle life, hair and facial hair.
 
 Hair shells and facial hair come after these. They're noticeable, but players forgive stylised

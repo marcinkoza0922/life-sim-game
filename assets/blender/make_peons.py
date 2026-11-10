@@ -56,10 +56,10 @@ FPS = 30
 STAGES = {
     "infant": dict(H=0.55, head=0.36, legs=0.27, width=0.36, depth=0.25, limb=0.10, foot=0.13),
     "toddler": dict(H=0.85, head=0.30, legs=0.32, width=0.29, depth=0.18, limb=0.08, foot=0.13),
-    "child": dict(H=1.25, head=0.225, legs=0.46, width=0.235, depth=0.135, limb=0.064, foot=0.13),
-    "teen": dict(H=1.60, head=0.185, legs=0.49, width=0.225, depth=0.125, limb=0.058, foot=0.135),
-    "adult": dict(H=1.75, head=0.17, legs=0.5, width=0.23, depth=0.125, limb=0.058, foot=0.135),
-    "elder": dict(H=1.68, head=0.17, legs=0.48, width=0.235, depth=0.13, limb=0.058, foot=0.135, hunch=True),
+    "child": dict(H=1.25, head=0.24, legs=0.46, width=0.235, depth=0.135, limb=0.064, foot=0.13),
+    "teen": dict(H=1.60, head=0.205, legs=0.49, width=0.225, depth=0.125, limb=0.058, foot=0.135),
+    "adult": dict(H=1.75, head=0.19, legs=0.5, width=0.23, depth=0.125, limb=0.058, foot=0.135),
+    "elder": dict(H=1.68, head=0.19, legs=0.48, width=0.235, depth=0.13, limb=0.058, foot=0.135, hunch=True),
 }
 
 PALETTE = {

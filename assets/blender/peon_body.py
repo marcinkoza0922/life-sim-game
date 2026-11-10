@@ -167,7 +167,7 @@ def make_body(d, arm_points, leg_points, stubs=None):
     m.cap((-d.shoulder_x * 0.7, 0.012 * H, d.shoulder_z - T * 0.02), (d.shoulder_x * 0.7, 0.012 * H, d.shoulder_z - T * 0.02), dp * 0.3)  # shoulder girdle
     for sx in (1, -1):
         m.cap((0, 0.02 * H, d.neck_z - T * 0.02), (sx * d.shoulder_x * 0.75, 0.015 * H, d.shoulder_z - T * 0.01), d.limb * 0.5)  # traps
-    m.cap((0, 0.008 * H, d.neck_z - T * 0.05), (0, 0.002 * H, d.neck_z + d.head_h * 0.32), d.limb * 0.7)  # neck
+    m.cap((0, 0.008 * H, d.neck_z - T * 0.05), (0, 0.002 * H, d.neck_z + d.head_h * 0.32), d.limb * 0.6)  # neck
     ar, tr = d.arm_r, d.thigh_r
     for side in (1, -1):
         sh, el, wr, tip = arm_points(d, side)

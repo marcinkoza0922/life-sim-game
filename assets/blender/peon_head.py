@@ -69,7 +69,7 @@ class Face:
         # the lower face is shorter on children (big cranium, small face)
         self.face_len = (0.5 - 0.07 * c) * (1 + 0.07 * p(P, "face_length"))
         self.eye_x = (0.172 - 0.005 * c) * (1 + 0.08 * p(P, "eye_spacing"))
-        self.eye_r = (0.073 + 0.008 * c) * (1 + 0.12 * p(P, "eye_size"))
+        self.eye_r = (0.080 + 0.008 * c) * (1 + 0.12 * p(P, "eye_size"))
         self.eye_tilt = math.radians(5 * p(P, "eye_tilt"))
         self.nose_len = self.face_len * (0.32 + 0.05 * p(P, "nose_length")) - 0.02 * c
         self.mouth_z = -self.face_len * 0.56
