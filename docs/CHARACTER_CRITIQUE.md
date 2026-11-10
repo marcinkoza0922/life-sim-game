@@ -121,8 +121,14 @@ If we fix only a few things, these do the most for the "looks wrong" reaction, r
   give tank tops and dresses real straps and tees a crew-ish neck. Garment open edges are folded
   back into the body (`turn_hems`), so no gap shows along hems (`assets/blender/peon_body.py`,
   `crates/game/src/peons.rs`).
-- Still open: looser clothes and drape, head and eye proportions, eye-involving expressions,
-  skin variation on darker tones, idle life, hair and facial hair.
+- **Eye-involving smiles (done):** the `x_smile` key now squints like a real (Duchenne) smile:
+  the lower lid bows up into a crescent, the upper lid drops a little, and the cheeks bunch up
+  under the eyes. The resting hint of a smile doesn't squint. The laugh raises the brows less and
+  blinks less, so the squint does the work (`peon_head.py`, `expression` in `peons.rs`).
+  `simctl lineup` now settles the eased face before drawing, so renders show expressions at full
+  strength.
+- Still open: looser clothes and drape, head and eye proportions, skin variation on darker
+  tones, idle life, hair and facial hair.
 
 Hair shells and facial hair come after these. They're noticeable, but players forgive stylised
 hair much more readily than dead eyes or torn clothing.

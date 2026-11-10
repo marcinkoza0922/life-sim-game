@@ -160,6 +160,11 @@ def face_offset(f, q, jaw=True):
     cb = 0.025 + 0.015 * p(P, "cheeks")
     dy -= cb * gauss(ax - 0.22, 0.08, z + 0.09, 0.06)
     dx += cb * 0.6 * gauss(ax - 0.27, 0.06, z + 0.07, 0.07) * (1 if x > 0 else -1)
+    # a real smile bunches the cheeks up under the eyes (they rise and round out)
+    squint = max(0.0, p(P, "x_smile"))
+    apple = squint * gauss(ax - ex * 1.08, er * 1.7, zt + er * 1.75, er * 0.85)
+    dy -= 0.016 * apple
+    dz = 0.014 * apple
     cf = 0.012 + 0.02 * p(P, "cheek_fat") + 0.02 * f.c + 0.014 * f.smile
     dy -= cf * gauss(ax - 0.18, 0.08, z - f.mouth_z * 0.7, 0.08)
     dx += cf * 0.5 * gauss(ax - 0.22, 0.08, z - f.mouth_z * 0.7, 0.09) * (1 if x > 0 else -1)
@@ -194,7 +199,7 @@ def face_offset(f, q, jaw=True):
     dy += 0.012 * lipw * gauss(0, 1, z - mz, 0.004)
     dy += 0.004 * gauss(ax, 0.01, z - (mz + tip_z) * 0.5, 0.025)  # philtrum
     dy += 0.01 * gauss(ax, 0.06, z - (mz + f.chin_z) * 0.5 - 0.01, 0.015)  # mentolabial sulcus
-    return Vector((dx * front, dy * front, f.jaw_drop(ax, y, z) if jaw else 0.0))
+    return Vector((dx * front, dy * front, dz * front + (f.jaw_drop(ax, y, z) if jaw else 0.0)))
 
 
 def lip_region(f, q):
@@ -319,8 +324,11 @@ def lid_mesh(f, side, segs=20, rows=6):
     er = f.eye_r
     c = eye_centre(f, side)
     open_ = p(f.P, "eye_open")
-    up_line = math.radians(19 + 8 * open_ - 6 * f.c)  # relaxed: the lid covers the top of the iris  # upper lid edge covers the top of the iris
-    lo_line = math.radians(-30 - 4 * open_ + 7 * f.smile)  # a smile lifts the lower lid
+    # a real (Duchenne) smile squints: the cheeks push the lower lid up and the upper lid drops a
+    # little; only the expression does this, the resting hint of a smile keeps the eyes open
+    squint = max(0.0, p(f.P, "x_smile"))
+    up_line = math.radians(19 + 8 * open_ - 6 * f.c - 6 * squint)  # relaxed: the lid covers the top of the iris
+    lo_line = math.radians(-30 - 4 * open_ + 7 * f.smile + 7 * squint)  # a smile lifts the lower lid
     blink = p(f.P, "x_blink")
     up_line += (lo_line + math.radians(1) - up_line) * blink
     verts, faces, mats = [], [], []
@@ -334,6 +342,8 @@ def lid_mesh(f, side, segs=20, rows=6):
                 edge = line * (0.35 + 0.65 * math.sin(math.pi * (u * 0.92 + 0.04)) ** 0.7)
             else:
                 edge = line * (0.35 + 0.65 * math.sin(math.pi * (u * 0.92 + 0.08)) ** 1.0)
+                # smiling eyes: the cheek bows the lower lid up into a crescent
+                edge += math.radians(12) * squint * math.sin(math.pi * (u * 0.92 + 0.08)) ** 1.5
             edge += f.eye_tilt * (u - 0.5) * 2 * (1 if side > 0 else 1)
             for j in range(rows + 1):
                 t = (j / rows) ** 2  # rows bunch at the lid edge: the first one is the lash line

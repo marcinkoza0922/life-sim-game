@@ -365,7 +365,10 @@ fn lineup(ra: &RenderArgs) {
             frame.draws.push(hearth_render::Draw::new(r.builtins.cube, Mat4::from_scale_rotation_translation(Vec3::new(0.5, 0.45, 0.5), glam::Quat::IDENTITY, Vec3::new(x, 0.225, -0.05)), [0.55, 0.4, 0.3]));
         }
         let yaw = 0.0;
-        let drawn = art.draw((&mut frame.skinned, &mut frame.joints), Vec3::new(x, y, 0.0), yaw, *stage, &app, &posture, demeanor, &mut game::peons::AnimState::default(), ra.time, game::peons::Look::Normal);
+        // a first draw at the same time settles the eased face on its target (a repeat at dt 0 snaps)
+        let mut anim = game::peons::AnimState::default();
+        art.draw((&mut Vec::new(), &mut Vec::new()), Vec3::new(x, y, 0.0), yaw, *stage, &app, &posture, demeanor, &mut anim, ra.time, game::peons::Look::Normal);
+        let drawn = art.draw((&mut frame.skinned, &mut frame.joints), Vec3::new(x, y, 0.0), yaw, *stage, &app, &posture, demeanor, &mut anim, ra.time, game::peons::Look::Normal);
         if let Some(p) = prop
             && let Some(grip) = drawn.grip(p.hand)
         {

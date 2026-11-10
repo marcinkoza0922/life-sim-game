@@ -409,10 +409,10 @@ fn expression(clip: &str, posture: &Posture, demeanor: Demeanor, t: f32, stage: 
         "laugh" => {
             smile = 1.0;
             open = 0.35 + 0.35 * (t * 9.0).sin().abs();
-            brow_up = 0.4;
+            brow_up = 0.15;
             sad = 0.0;
             frown = 0.0;
-            blink = 0.3;
+            blink = 0.1;
         }
         "talk" | "phone_call" | "orate" | "selfie" => {
             open = chatter(t, 0.5);
