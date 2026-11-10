@@ -158,17 +158,18 @@ from the sideburn down to beside the mouth, the mouth opening is an ellipse, and
 moustache part shares the standalone moustache's tapered outline. Checked front and profile in
 the Blender head preview (`PEON_ZOOM=head`). Stubble is no longer a solid layer of hair colour:
 its draw tints it as skin shaded a fifth of the way toward the hair (`stubble_tint` in `peons.rs`)
-with the face's roughness, so dark stubble reads as a jaw shadow and fair stubble on fair skin
-nearly vanishes. Checked in `simctl lineup` on deep skin with black hair. Still open: a faint light
-line along the stubble edge, because the face gets the skin shader's sheen and the stubble draw
-doesn't (tapering the shell to zero only adds z-fighting; a real fix is a per-vertex fade or
-drawing stubble through the skin path); beards have no clump or strand breakup; scalp hair
-still reads as a smooth cap.
+and is drawn through the skin path (`SkinSurface` on its slot: same sheen, sky rim and pores as
+the face), so dark stubble reads as a jaw shadow and fair stubble on fair skin nearly vanishes.
+A faint light line along the stubble edge came from the shell's rim wall, not the shader: even
+1 mm tall, it bent the edge's smooth normals. Stubble's shell now has no wall (`wall=False` in
+`shell`); its edge sits about 1 mm off the skin. Checked in a `simctl lineup` close-up on deep
+skin with black hair. Still open: beards have no clump or strand breakup; scalp hair still
+reads as a smooth cap.
 
 ## Next priorities and acceptance checks
 
 1. **Facial hair and hair silhouette:** (moustache, beard and hairline outlines done, see above)
-   stubble as a translucent shadow, clumped beard/scalp-hair silhouettes; preserve an appealing
+   (stubble as a skin-shaded shadow done) clumped beard/scalp-hair silhouettes; preserve an appealing
    face in front, three-quarter and profile views.
 2. **Garment detail:** (boundaries and tube volume done, see above) necklines, cuffs, seams and
    waistbands; recheck slim builds and extreme slider combinations.

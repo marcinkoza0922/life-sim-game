@@ -69,11 +69,12 @@ def hairline(az, front=0.29, temple=0.2, ear=0.05, nape=-0.24):
     return ear + (nape - ear) * smoothstep(115, 160, az)
 
 
-def shell(verts, faces, nrm, keep, thick, lift=0.004, move=None, solid=False):
+def shell(verts, faces, nrm, keep, thick, lift=0.004, move=None, solid=False, wall=True):
     """Shell over the kept faces: the outer surface at `thick` (per-vertex function) and a wall
     down to the scalp along its open edges. `solid` adds the inner surface too (for hair that hangs
     away from the head, seen from below); otherwise the head fills the inside. `move` remaps base
-    points (long hair)."""
+    points (long hair). `wall=False` leaves the rim open (stubble: a wall only 1 mm tall still
+    bends the smooth normals at the edge into a bright line)."""
     used = sorted({i for fi, fc in enumerate(faces) if keep[fi] for i in fc})
     remap = {old: new for new, old in enumerate(used)}
     moved = [move(verts[old], nrm[old]) if move else (verts[old], nrm[old]) for old in used]
@@ -87,7 +88,7 @@ def shell(verts, faces, nrm, keep, thick, lift=0.004, move=None, solid=False):
         out_f.append(tuple(f2))
         for a, b in zip(f2, f2[1:] + f2[:1]):
             edge_count[(a, b)] = edge_count.get((a, b), 0) + 1
-    open_edges = [(a, b) for (a, b) in edge_count if (b, a) not in edge_count]
+    open_edges = [(a, b) for (a, b) in edge_count if (b, a) not in edge_count] if wall else []
     # inner copies: every vertex when solid, else just the rim
     inner = {}
     for i in range(len(used)) if solid else sorted({v for e in open_edges for v in e}):
@@ -272,12 +273,12 @@ def hair_meshes(f, ref=None):
     mw, mz = fr.mouth_w, fr.mouth_z
     nose_bot = 0.02 - fr.nose_len
 
-    def clipped(field, thick, ramp=0.025, lip=0.15, lift=-0.004):
+    def clipped(field, thick, ramp=0.025, lip=0.15, lift=-0.004, wall=True):
         """Facial hair bounded by a smooth field (>= 0 inside, roughly in head units from the edge):
         the skin is clipped along its zero line on the `ref` face and the shell tapers to a lip over
         `ramp`, so outlines are curves rather than staircases of whole faces."""
         cv, cn, cf = clip(hv, nrm, hf, [field(q) for q in rv])
-        return shell(cv, cf, cn, [True] * len(cf), lambda b, n: thick(b, n) * (lip + (1 - lip) * smoothstep(0.0, ramp, field(b))), lift=lift)
+        return shell(cv, cf, cn, [True] * len(cf), lambda b, n: thick(b, n) * (lip + (1 - lip) * smoothstep(0.0, ramp, field(b))), lift=lift, wall=wall)
 
     def mouth_gap(q, grow=1.0):
         """Outside an ellipse around the lips (positive), so beards leave the mouth bare."""
@@ -308,7 +309,7 @@ def hair_meshes(f, ref=None):
         return max(chin, moustache_field(q))
 
     full = lambda q: max(beard_field(q), moustache_field(q))
-    out["stubble"] = clipped(full, lambda b, n: 0.0035, ramp=0.03, lip=0.3, lift=-0.002)
+    out["stubble"] = clipped(full, lambda b, n: 0.0035, ramp=0.03, lip=0.3, wall=False)
     # The standalone moustache is a shallow shell over a broad hidden margin whose offset crosses
     # the skin along `moustache_edge` (on the neutral face, carried by the head's deformation).
     keep = [c.y < -0.15 and moustache_edge(c) > -4.0 for c in centres]

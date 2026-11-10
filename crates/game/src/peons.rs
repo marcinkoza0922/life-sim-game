@@ -330,7 +330,8 @@ impl PeonArt {
                 let mut d = draw(p, 0.55);
                 if id == "stubble" {
                     d.palette[slot::HAIR as usize] = rgb(stubble_tint(app.skin, app.hair));
-                    d.roughness = 0.55; // the face's finish, not hair's
+                    // shaded as skin (sheen, sky rim, pores) so its edge doesn't show a line
+                    d.skin = Some(SkinSurface { slot: slot::HAIR, ..self.skin });
                 }
                 draws.push(d);
             }
