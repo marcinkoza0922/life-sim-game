@@ -156,9 +156,14 @@ field on the neutral face (`beard_field`, `moustache_field`, `goatee_field`, `mo
 is clipped along its zero line, and the shell tapers to a lip at the edge. The cheek line sweeps
 from the sideburn down to beside the mouth, the mouth opening is an ellipse, and the beard's
 moustache part shares the standalone moustache's tapered outline. Checked front and profile in
-the Blender head preview (`PEON_ZOOM=head`). Still open: stubble renders as an opaque hair-coloured
-layer rather than a skin shadow, beards have no clump or strand breakup, and scalp hair still
-reads as a smooth cap.
+the Blender head preview (`PEON_ZOOM=head`). Stubble is no longer a solid layer of hair colour:
+its draw tints it as skin shaded a fifth of the way toward the hair (`stubble_tint` in `peons.rs`)
+with the face's roughness, so dark stubble reads as a jaw shadow and fair stubble on fair skin
+nearly vanishes. Checked in `simctl lineup` on deep skin with black hair. Still open: a faint light
+line along the stubble edge, because the face gets the skin shader's sheen and the stubble draw
+doesn't (tapering the shell to zero only adds z-fighting; a real fix is a per-vertex fade or
+drawing stubble through the skin path); beards have no clump or strand breakup; scalp hair
+still reads as a smooth cap.
 
 ## Next priorities and acceptance checks
 

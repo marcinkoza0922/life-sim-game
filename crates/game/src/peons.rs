@@ -75,6 +75,14 @@ pub fn lip_tint(skin: [f32; 3]) -> [f32; 3] {
     })
 }
 
+/// Stubble colour (sRGB): short hairs over skin read as a shadow, so the skin shaded part way
+/// toward the hair colour rather than a solid layer of it. Dark hair greys the jaw; fair hair on
+/// fair skin all but vanishes, as real stubble does.
+pub fn stubble_tint(skin: [f32; 3], hair: [f32; 3]) -> [f32; 3] {
+    const COVER: f32 = 0.2;
+    std::array::from_fn(|i| skin[i] * (1.0 - COVER) + hair[i] * COVER)
+}
+
 /// Palette slot of a material name, plus its skin region in bits 8.. (`skin.r3`: skin, region 3;
 /// `skin.lips`: the lip colour, always drawn).
 fn slot_of(material: &str) -> u32 {
@@ -319,7 +327,12 @@ impl PeonArt {
         draws.extend(outfit.iter().filter_map(|g| art.parts.get(g.as_str())).map(|p| draw(p, 0.85)));
         for (prefix, id) in hairdo(stage, app) {
             if let Some(p) = art.parts.get(&format!("{prefix}.{id}")) {
-                draws.push(draw(p, 0.55));
+                let mut d = draw(p, 0.55);
+                if id == "stubble" {
+                    d.palette[slot::HAIR as usize] = rgb(stubble_tint(app.skin, app.hair));
+                    d.roughness = 0.55; // the face's finish, not hair's
+                }
+                draws.push(d);
             }
         }
         for mut d in draws {
@@ -833,6 +846,16 @@ mod tests {
         app.facial_hair = 5;
         assert_eq!(hairdo(LifeStage::Teen, &app).len(), 1, "no beards before young adult");
         assert_eq!(hairdo(LifeStage::Adult, &app).len(), 2);
+    }
+
+    #[test]
+    fn stubble_shades_skin_toward_hair() {
+        let luma = |c: [f32; 3]| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+        let (fair, deep, dark_hair, blond) = ([0.9, 0.72, 0.6], [0.35, 0.22, 0.15], [0.12, 0.08, 0.06], [0.85, 0.7, 0.45]);
+        let shadow = stubble_tint(fair, dark_hair);
+        assert!(luma(shadow) < luma(fair) && luma(shadow) > luma(dark_hair) + 0.3, "a shadow, not solid hair: {shadow:?}");
+        assert!(luma(fair) - luma(stubble_tint(fair, blond)) < 0.1, "fair stubble on fair skin stays faint");
+        assert!(luma(stubble_tint(deep, dark_hair)) < luma(deep));
     }
 
     #[test]
