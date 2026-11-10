@@ -158,6 +158,15 @@ pub fn draw(ui: &mut egui::Ui, g: &mut Game, cx: &DebugCtx) {
             ui.checkbox(&mut s.trace_actions, "Trace actions to log");
             *g.sim.world.res_mut::<Settings>() = s;
             ui.separator();
+            ui.label("Lighting (GPU cost)");
+            let before = g.graphics;
+            ui.checkbox(&mut g.graphics.ambient_occlusion, "Ambient occlusion");
+            ui.checkbox(&mut g.graphics.indirect_light, "Indirect light / color bounce (costly)");
+            ui.checkbox(&mut g.graphics.shadows, "Sun shadows");
+            ui.add_enabled(g.graphics.shadows, egui::Checkbox::new(&mut g.graphics.soft_shadows, "Soft shadow filtering"));
+            ui.small("Indirect lighting uses nearby geometry bounds; complex models may show approximate occlusion.");
+            if before != g.graphics { g.graphics.save(); }
+            ui.separator();
             ui.label("Cheats");
             ui.horizontal(|ui| {
                 if ui.button("+$10,000").clicked() {

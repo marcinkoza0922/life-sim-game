@@ -651,4 +651,36 @@
         ],
         beauty: 2.0, servings: Some(8),
     ),
+    (
+        id: "sideboard", name: "Heirloom Pending Sideboard", category: Surfaces, price: 340, footprint: (2, 1),
+        parts: [(shape: Box, size: (1.94, 0.7, 0.72), at: (1.0, 0.49, 0.45), color: (0.48, 0.29, 0.18), material: "wood")],
+
+        beauty: 3.0,
+    ),
+    (
+        id: "coffee_table", name: "Just One More Chapter Table", category: Surfaces, price: 180, footprint: (2, 1),
+        parts: [(shape: Box, size: (1.94, 0.48, 0.9), at: (1.0, 0.24, 0.45), color: (0.48, 0.29, 0.18), material: "wood")],
+
+        beauty: 2.0,
+    ),
+    (
+        id: "shoe_bench", name: "Shoes Off, Opinions On Bench", category: Seating, price: 220, footprint: (2, 1),
+        parts: [(shape: Box, size: (1.94, 0.64, 0.72), at: (1.0, 0.32, 0.45), color: (0.48, 0.29, 0.18), material: "wood")],
+        slots: [(stand: (0.5, 1.5), use_at: (0.5, 0.64, 0.5), facing: 0.0), (stand: (1.5, 1.5), use_at: (1.5, 0.64, 0.5), facing: 0.0)],
+        interactions: [(id: "sit", name: "Rest Your Feet", rates: {Comfort: 45.0}, duration: Minutes(20), pose: Sit, tags: ["seating", "rest", "chair"], bubble: "ahh")],
+        beauty: 2.0,
+    ),
+    (
+        id: "coat_rack", name: "Hang In There Coat Rack", category: Decor, price: 85, footprint: (1, 1),
+        parts: [(shape: Box, size: (0.94, 1.82, 0.6), at: (0.5, 0.91, 0.45), color: (0.48, 0.29, 0.18), material: "wood")],
+
+        beauty: 1.0,
+    ),
+    (
+        id: "console_radio", name: "Yesterday FM Console Radio", category: Electronics, price: 260, footprint: (1, 1),
+        parts: [(shape: Box, size: (0.94, 0.88, 0.6), at: (0.5, 0.44, 0.45), color: (0.48, 0.29, 0.18), material: "wood")],
+        slots: [(stand: (0.5, 1.5), use_at: (0.5, 0.0, 0.9), facing: 180.0)],
+        interactions: [(id: "listen", name: "Listen to the Oldies", anim: "admire", rates: {Fun: 35.0}, duration: Minutes(30), tags: ["fun", "music"], bubble: "music")],
+        beauty: 2.0,
+    ),
 ]
