@@ -147,10 +147,24 @@ it, through a soft maximum so no crease forms where the peak switches. It fades 
 preview and `simctl lineup` standing and sitting. Fits are slightly looser overall. Still open:
 the square neckline, seam/cuff/waistband detail, and a faint elbow line on long sleeves.
 
+## Follow-up: beard and goatee outlines
+
+Stubble, goatee, short and full beards were still whole-face selections, so they had a flat
+horizontal cheek line, a rectangular hole around the mouth and a staircase down the goatee's
+sides. They now use the hairline's approach (`clipped` in `peon_hair.py`): each style is a smooth
+field on the neutral face (`beard_field`, `moustache_field`, `goatee_field`, `mouth_gap`), the skin
+is clipped along its zero line, and the shell tapers to a lip at the edge. The cheek line sweeps
+from the sideburn down to beside the mouth, the mouth opening is an ellipse, and the beard's
+moustache part shares the standalone moustache's tapered outline. Checked front and profile in
+the Blender head preview (`PEON_ZOOM=head`). Still open: stubble renders as an opaque hair-coloured
+layer rather than a skin shadow, beards have no clump or strand breakup, and scalp hair still
+reads as a smooth cap.
+
 ## Next priorities and acceptance checks
 
-1. **Facial hair and hair silhouette:** remove the rectangular disguise effect; preserve an
-   appealing face in front, three-quarter and profile views.
+1. **Facial hair and hair silhouette:** (moustache, beard and hairline outlines done, see above)
+   stubble as a translucent shadow, clumped beard/scalp-hair silhouettes; preserve an appealing
+   face in front, three-quarter and profile views.
 2. **Garment detail:** (boundaries and tube volume done, see above) necklines, cuffs, seams and
    waistbands; recheck slim builds and extreme slider combinations.
 3. **Skin finish and face integration:** softer highlights across tones, subtle colour zones,

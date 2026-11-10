@@ -272,40 +272,45 @@ def hair_meshes(f, ref=None):
     mw, mz = fr.mouth_w, fr.mouth_z
     nose_bot = 0.02 - fr.nose_len
 
-    def beard_area(c, lip_gap=1.0):
-        az = azimuth(c)
-        if az > 105:
-            return False
-        jawline = -0.02 - 0.12 * smoothstep(60, 20, az)  # cheeks stay bare above this
-        if c.z > jawline and az < 85:
-            return False
-        if az >= 85 and c.z > 0.03:
-            return False
-        mouth = abs(c.x) < mw * 1.05 and -0.045 * lip_gap < c.z - mz < 0.035
-        return not mouth and c.z > -fr.face_len - 0.25 and not (c.z > nose_bot - 0.01 and az < 85)
+    def clipped(field, thick, ramp=0.025, lip=0.15, lift=-0.004):
+        """Facial hair bounded by a smooth field (>= 0 inside, roughly in head units from the edge):
+        the skin is clipped along its zero line on the `ref` face and the shell tapers to a lip over
+        `ramp`, so outlines are curves rather than staircases of whole faces."""
+        cv, cn, cf = clip(hv, nrm, hf, [field(q) for q in rv])
+        return shell(cv, cf, cn, [True] * len(cf), lambda b, n: thick(b, n) * (lip + (1 - lip) * smoothstep(0.0, ramp, field(b))), lift=lift)
 
-    def moustache_area(c):
-        """Across the upper lip from corner to corner, drooping past the corners of the mouth."""
-        ax = abs(c.x)
-        if c.y > -0.15 or ax > mw * 1.3 or c.z > nose_bot - 0.004:
-            return False
-        bottom = mz + 0.02 - 0.05 * smoothstep(mw * 0.75, mw * 1.25, ax)
-        return c.z > bottom
+    def mouth_gap(q, grow=1.0):
+        """Outside an ellipse around the lips (positive), so beards leave the mouth bare."""
+        e = (q.x / (mw * 1.08 * grow)) ** 2 + ((q.z - mz + 0.004) / (0.042 * grow)) ** 2
+        return 0.04 * (math.sqrt(e) - 1.0) if q.y < -0.1 else 1.0
 
-    def goatee_area(c):
-        return abs(c.x) < 0.085 and c.z < mz - 0.035 and c.y < -0.15 and c.z > -fr.face_len - 0.1
+    def beard_field(q, cheek=0.0):
+        """Jaw, chin and cheeks below a line sweeping from the sideburn down to beside the mouth."""
+        az = azimuth(q)
+        # cheek line: high at the sideburn, curving down to just above the mouth corner
+        top = mz + 0.075 + cheek + (0.06 - mz - 0.075) * smoothstep(22, 82, az) ** 1.6
+        sideburn = (100 - az) * 0.004  # stops in front of the ear
+        neck = q.z + fr.face_len + 0.22 - 0.06 * smoothstep(0, 60, az)
+        return min(top - q.z, sideburn, neck, mouth_gap(q))
 
-    beard = [beard_area(c) or moustache_area(c) for c in centres]
-    out["stubble"] = shell(hv, hf, nrm, beard, lambda b, n: 0.0035, lift=0.0015)
-    # Define the outline on the neutral face, then carry it with the head's
-    # deformation. Whole-face selection alone makes a rectangular, stepped patch.
-    # A broad hidden margin lets the shallow shell cross the skin along a tapered
-    # curve instead; using reference coordinates keeps every morph's topology fixed.
     def moustache_edge(b):
+        """Upper-lip moustache outline (> 0 inside): an ellipse over the lip, its ends tapering
+        down past the corners of the mouth."""
         u = abs(b.x) / (mw * 1.12)
         centre = mz + 0.062 - 0.026 * min(u, 1.5) ** 1.5
         return 1.0 - u * u - ((b.z - centre) / 0.029) ** 2
 
+    def moustache_field(q):
+        return min(0.025 * moustache_edge(q), -0.15 - q.y, mouth_gap(q))
+
+    def goatee_field(q):
+        chin = min(mz - 0.01 - q.z, 0.09 - abs(q.x) * (1.0 + 0.8 * smoothstep(mz, -fr.face_len, q.z)), -0.15 - q.y, q.z + fr.face_len + 0.08, mouth_gap(q))
+        return max(chin, moustache_field(q))
+
+    full = lambda q: max(beard_field(q), moustache_field(q))
+    out["stubble"] = clipped(full, lambda b, n: 0.0035, ramp=0.03, lip=0.3, lift=-0.002)
+    # The standalone moustache is a shallow shell over a broad hidden margin whose offset crosses
+    # the skin along `moustache_edge` (on the neutral face, carried by the head's deformation).
     keep = [c.y < -0.15 and moustache_edge(c) > -4.0 for c in centres]
     offsets = {
         tuple(hv[i]): 0.010 * smoothstep(-0.25, 0.65, moustache_edge(rv[i]))
@@ -313,7 +318,8 @@ def hair_meshes(f, ref=None):
         for i in range(len(hv))
     }
     out["moustache"] = shell(hv, hf, nrm, keep, lambda b, n: offsets[tuple(b)], lift=-0.02)
-    out["goatee"] = shell(hv, hf, nrm, [goatee_area(c) or moustache_area(c) for c in centres], lambda b, n: 0.02 + strands(b, 0.002, 90))
-    out["short_beard"] = shell(hv, hf, nrm, beard, lambda b, n: 0.012 + 0.006 * smoothstep(-0.2, -0.45, b.z))
-    out["full_beard"] = shell(hv, hf, nrm, beard, lambda b, n: 0.022 + 0.05 * smoothstep(-0.15, -0.5, b.z) + strands(b, 0.004, 60))
+    out["goatee"] = clipped(goatee_field, lambda b, n: 0.018 + strands(b, 0.002, 90), ramp=0.02)
+    out["short_beard"] = clipped(full, lambda b, n: 0.012 + 0.006 * smoothstep(-0.2, -0.45, b.z), ramp=0.03)
+    full_big = lambda q: max(beard_field(q, cheek=0.02), moustache_field(q))
+    out["full_beard"] = clipped(full_big, lambda b, n: 0.022 + 0.05 * smoothstep(-0.15, -0.5, b.z) + strands(b, 0.004, 60), ramp=0.05)
     return out
