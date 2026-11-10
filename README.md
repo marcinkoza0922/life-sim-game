@@ -95,10 +95,16 @@ light, sun shadows, and soft shadow filtering. Preferences persist in `graphics.
 separately from audio and saved households. AO and soft sun shadows are enabled by
 default; indirect light is opt-in because it costs more GPU time.
 
-AO traces four short world-space hemisphere rays against up to 128 nearby oriented
-mesh bounds, adding contact shading beyond material texture AO. Indirect light uses
+AO quality is selectable in both lighting menus: **Low** uses two hemisphere rays,
+**Medium** (the default) uses four, and **High** uses eight. Low is faster but can
+show coarser contact shading. The AO toggle still turns it off entirely. Quality
+preferences persist in `graphics.ron`; older preferences default to Medium.
+A spatial grid prunes the search against up to 128 nearby oriented mesh bounds,
+adding contact shading beyond material texture AO. Indirect light uses
 eight rays and adds approximate one-bounce diffuse color from nearby surfaces,
-including sunlight visibility and emissive surfaces. These are box proxies rather
+including sunlight visibility and emissive surfaces. When indirect light is enabled,
+AO shares its eight-ray High quality trace regardless of the saved AO quality.
+These are box proxies rather
 than triangle-accurate GI: hollow/complex meshes can over-occlude, animated characters
 receive indirect light but do not contribute occlusion, and distant geometry outside
 the proxy budget is omitted. The detailed region follows the camera focus.
@@ -108,4 +114,20 @@ nine comparisons to one. Direct lighting, material AO, fog, and ACES remain acti
 
 Offscreen comparisons: `cargo run -p simctl -- render --no-ao --out out/baseline.png`
 and `cargo run -p simctl -- render --indirect-light --out out/indirect.png`.
-The renderer tool also accepts `--no-shadows` and `--hard-shadows`.
+The renderer tool also accepts `--no-shadows`, `--hard-shadows`, and
+`--ao-quality low|medium|high`.
+
+GPU pass profiling (requires adapter timestamp-query support):
+
+```sh
+cargo run --release -q -p simctl -- render --profile 100
+cargo run --release -q -p simctl -- render --profile 100 --no-ao
+```
+
+`--profile N` warms up 20 frames, then reports median and p95 GPU milliseconds
+for shadow, main, and their sum over N samples, plus adapter and draw statistics.
+It renders a fixed scene into a reused offscreen target without saving a PNG.
+Combine it with the render camera, lighting, and size flags for controlled comparisons.
+Readback synchronizes each sample; these are isolated pass costs, excluding CPU scene
+construction, uploads before the passes, UI, presentation, and image encoding. They
+are not end-to-end frame times or an FPS prediction.

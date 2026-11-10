@@ -9,7 +9,7 @@
 //!     peons don't idle forever, the household doesn't go bankrupt immediately.
 //! simctl render [--seed S] [--minutes M] [--hour H] [--level L] [--yaw D] [--pitch D] [--dist M]
 //!               [--target X,Z] [--mode cutaway|up|down] [--size WxH] [--rooms] [--greybox] [--out FILE]
-//!               [--no-ao] [--indirect-light] [--no-shadows] [--hard-shadows]
+//!               [--no-ao] [--indirect-light] [--no-shadows] [--hard-shadows] [--ao-quality low|medium|high] [--profile N]
 //!     Runs the starter household for M minutes and renders the lot offscreen to a PNG.
 //!     `--lot N` fills out the street first and renders lot N instead (playing the household
 //!     there, going out to it, or just looking at a vacant one).
@@ -48,6 +48,7 @@ struct Args {
 
 struct RenderArgs {
     lighting: hearth_render::LightingOptions,
+    profile: usize,
     minutes: u64,
     hour: Option<f32>,
     level: i32,
@@ -76,7 +77,7 @@ struct RenderArgs {
 
 fn parse() -> Args {
     let mut a = Args { cmd: "run".into(), days: 3, seed: 1, seeds: 8, echo: false, log: None, manual: false, trace: None,
-        render: RenderArgs { lighting: Default::default(), minutes: 60, hour: None, level: 0, yaw: 35.0, pitch: 45.0, dist: 30.0, target: None, mode: "cutaway".into(), size: (1600, 1000), rooms: false, greybox: false, out: "out/render.png".into(), pose: "stand".into(), time: 0.0, anim: None, prop: None, demeanor: "normal".into(), order: None, lot: None } };
+        render: RenderArgs { profile: 0, lighting: Default::default(), minutes: 60, hour: None, level: 0, yaw: 35.0, pitch: 45.0, dist: 30.0, target: None, mode: "cutaway".into(), size: (1600, 1000), rooms: false, greybox: false, out: "out/render.png".into(), pose: "stand".into(), time: 0.0, anim: None, prop: None, demeanor: "normal".into(), order: None, lot: None } };
     let mut it = std::env::args().skip(1);
     if let Some(c) = it.next() {
         a.cmd = c;
@@ -105,6 +106,13 @@ fn parse() -> Args {
                 let v: Vec<u32> = it.next().unwrap().split('x').map(|x| x.parse().unwrap()).collect();
                 a.render.size = (v[0], v[1]);
             }
+            "--profile" => a.render.profile = it.next().unwrap().parse::<usize>().expect("positive sample count").max(1),
+            "--ao-quality" => a.render.lighting.ao_quality = match it.next().as_deref() {
+                Some("low") => hearth_render::AoQuality::Low,
+                Some("medium") => hearth_render::AoQuality::Medium,
+                Some("high") => hearth_render::AoQuality::High,
+                _ => { eprintln!("--ao-quality requires low, medium, or high"); std::process::exit(2); }
+            },
             "--no-ao" => a.render.lighting.ambient_occlusion = false,
             "--indirect-light" => a.render.lighting.indirect_light = true,
             "--no-shadows" => a.render.lighting.shadows = false,
@@ -657,6 +665,23 @@ fn render(a: &Args) {
     let peons = if ra.greybox { None } else { Some(game::peons::PeonArt::load(&mut r).expect("peon models")) };
     let mut out = build(&sim, &r.builtins, peons.as_ref(), &mut game::peons::Animator::default(), camera, &opts);
     out.frame.lighting = ra.lighting;
+    if ra.profile > 0 {
+        println!("adapter: {:?}", r.gpu.adapter.get_info());
+        let tex = r.offscreen_texture(w, h);
+        let view = tex.create_view(&Default::default());
+        for _ in 0..20 { r.profile_frame(&out.frame, &view, w, h).expect("GPU profiling"); }
+        let mut samples = Vec::with_capacity(ra.profile);
+        for _ in 0..ra.profile {
+            samples.push(r.profile_frame(&out.frame, &view, w, h).expect("GPU profiling"));
+        }
+        for (index, name) in [(0, "shadow"), (1, "main"), (2, "total")] {
+            let mut values: Vec<f64> = samples.iter().map(|s| if index == 2 { s[0] + s[1] } else { s[index] }).collect();
+            values.sort_by(f64::total_cmp);
+            println!("{name}: median={:.3} p95={:.3} ms ({} samples)", values[values.len()/2], values[((values.len()-1) as f64 * 0.95).ceil() as usize], values.len());
+        }
+        println!("{}x{} draws={} batches={} skinned={}", w, h, r.stats.draws, r.stats.batches, r.stats.skinned);
+        return;
+    }
     if let Some(dir) = std::path::Path::new(&ra.out).parent() {
         std::fs::create_dir_all(dir).ok();
     }

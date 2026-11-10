@@ -13,4 +13,5 @@ log.workspace = true
 image.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
+serde.workspace = true
 gltf = { version = "1.4", default-features = false, features = ["utils", "names", "extras"] }

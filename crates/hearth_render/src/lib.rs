@@ -22,6 +22,11 @@ pub const SAMPLES: u32 = 4;
 pub const SHADOW_SIZE: u32 = 2048;
 pub const MAX_POINT_LIGHTS: usize = 16;
 const MAX_OCCLUDERS: usize = 128;
+// Four 32-bit masks per cell. Kept in the globals uniform (under the 64 KiB limit).
+const OCCLUDER_GRID: [usize; 3] = [16, 8, 16];
+const OCCLUDER_CELLS: usize = OCCLUDER_GRID[0] * OCCLUDER_GRID[1] * OCCLUDER_GRID[2];
+// Trace length (3 m) plus the normal offset (0.045 m), with rounding margin.
+const OCCLUDER_REACH: f32 = 3.05;
 /// Morph targets per skinned vertex.
 pub const MAX_MORPHS: usize = 2;
 /// Palette entries per skinned draw; vertex `slot` indexes it (slot 0 is conventionally white).
@@ -313,10 +318,32 @@ pub struct Frame {
     pub joints: Vec<Mat4>,
 }
 
+/// Hemisphere sample count for ambient occlusion. Bounce lighting always uses eight rays.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum AoQuality {
+    Low,
+    #[default]
+    Medium,
+    High,
+}
+
+impl AoQuality {
+    pub const ALL: [Self; 3] = [Self::Low, Self::Medium, Self::High];
+
+    pub fn label(self) -> &'static str {
+        match self { Self::Low => "Low", Self::Medium => "Medium", Self::High => "High" }
+    }
+
+    fn rays(self) -> f32 {
+        match self { Self::Low => 2.0, Self::Medium => 4.0, Self::High => 8.0 }
+    }
+}
+
 /// Optional world-space lighting. Indirect light uses nearby box proxies rather than triangle rays.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LightingOptions {
     pub ambient_occlusion: bool,
+    pub ao_quality: AoQuality,
     pub indirect_light: bool,
     pub shadows: bool,
     pub soft_shadows: bool,
@@ -324,7 +351,7 @@ pub struct LightingOptions {
 
 impl Default for LightingOptions {
     fn default() -> Self {
-        Self { ambient_occlusion: true, indirect_light: false, shadows: true, soft_shadows: true }
+        Self { ambient_occlusion: true, ao_quality: AoQuality::Medium, indirect_light: false, shadows: true, soft_shadows: true }
     }
 }
 
@@ -395,6 +422,10 @@ struct Globals {
     points: [GpuPointLight; MAX_POINT_LIGHTS],
     effects: [f32; 4],
     occluders: [GpuOccluder; MAX_OCCLUDERS],
+    // xyz: grid minimum/inverse cell size; w: AO rays/reserved.
+    grid_min: [f32; 4],
+    grid_inv_cell: [f32; 4],
+    occluder_cells: [[u32; 4]; OCCLUDER_CELLS],
 }
 
 #[repr(C)]
@@ -403,6 +434,47 @@ struct GpuOccluder {
     sphere: [f32; 4],
     world_to_box: [[f32; 4]; 4],
     color: [f32; 4],
+}
+
+/// Conservative point-query grid: every cell touched by a proxy's AABB expanded
+/// by the ray reach stores its bit. No per-cell capacity limit or dropped proxies.
+struct OccluderGrid {
+    min: Vec3,
+    inv_cell: Vec3,
+    cells: [[u32; 4]; OCCLUDER_CELLS],
+}
+
+impl OccluderGrid {
+    fn new(proxies: &[GpuOccluder]) -> Self {
+        let mut grid = Self { min: Vec3::ZERO, inv_cell: Vec3::ONE, cells: [[0; 4]; OCCLUDER_CELLS] };
+        if proxies.is_empty() { return grid; }
+        let bounds: Vec<_> = proxies.iter().map(|p| {
+            let model = Mat4::from_cols_array_2d(&p.world_to_box).inverse();
+            let center = model.w_axis.truncate();
+            // Absolute row sums give the world AABB, including rotated/nonuniform boxes.
+            let extent = (model.x_axis.truncate().abs() + model.y_axis.truncate().abs()
+                + model.z_axis.truncate().abs()) * 0.5 + Vec3::splat(OCCLUDER_REACH);
+            (center - extent, center + extent)
+        }).collect();
+        let (lo, hi) = bounds.iter().fold((Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
+            |(lo, hi), (a, b)| (lo.min(*a), hi.max(*b)));
+        grid.min = lo;
+        grid.inv_cell = Vec3::new(OCCLUDER_GRID[0] as f32, OCCLUDER_GRID[1] as f32, OCCLUDER_GRID[2] as f32)
+            / (hi - lo).max(Vec3::splat(0.001));
+        let [nx, ny, nz] = OCCLUDER_GRID.map(|v| v as u32);
+        for (i, (a, b)) in bounds.iter().enumerate() {
+            let start = ((*a - lo) * grid.inv_cell).floor().as_uvec3();
+            let end = ((*b - lo) * grid.inv_cell).floor().as_uvec3();
+            for z in start.z.min(nz - 1)..=end.z.min(nz - 1) {
+                for y in start.y.min(ny - 1)..=end.y.min(ny - 1) {
+                    for x in start.x.min(nx - 1)..=end.x.min(nx - 1) {
+                        grid.cells[(x + nx * (y + ny * z)) as usize][i / 32] |= 1 << (i % 32);
+                    }
+                }
+            }
+        }
+        grid
+    }
 }
 
 #[repr(C)]
@@ -457,7 +529,7 @@ impl Gpu {
         log::info!("GPU adapter: {:?}", adapter.get_info());
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("hearth device"),
-            required_features: wgpu::Features::empty(),
+            required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
             required_limits: wgpu::Limits::default(),
             ..Default::default()
         }))?;
@@ -502,6 +574,7 @@ pub struct Renderer {
     skin_bg: wgpu::BindGroup,
     targets: Option<Targets>,
     pub stats: RenderStats,
+    profile_queries: Option<wgpu::QuerySet>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -514,8 +587,14 @@ pub struct RenderStats {
 
 impl Renderer {
     pub fn new(gpu: Arc<Gpu>, format: wgpu::TextureFormat) -> Renderer {
+        Self::with_shader(gpu, format, include_str!("shader.wgsl"))
+    }
+
+    fn with_shader(gpu: Arc<Gpu>, format: wgpu::TextureFormat, source: &str) -> Renderer {
         let device = &gpu.device;
-        let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("hearth shader"), source: wgpu::ShaderSource::Wgsl(source.into()),
+        });
 
         let globals_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("globals"),
@@ -746,6 +825,7 @@ impl Renderer {
             skin_bg,
             targets: None,
             stats: RenderStats::default(),
+            profile_queries: None,
         };
         r.builtins = Builtins {
             cube: r.upload_mesh(&shapes::cube()),
@@ -894,6 +974,7 @@ impl Renderer {
         }
         let occluder_count = candidates.len().min(MAX_OCCLUDERS);
         for (dst, (_, src)) in occluders.iter_mut().zip(candidates) { *dst = src; }
+        let grid = OccluderGrid::new(&occluders[..occluder_count]);
         let globals = Globals {
             view_proj: frame.camera.view_proj().to_cols_array_2d(),
             light_view_proj: Self::light_view_proj(frame).to_cols_array_2d(),
@@ -908,6 +989,9 @@ impl Renderer {
             effects: [f32::from(frame.lighting.ambient_occlusion), f32::from(frame.lighting.indirect_light),
                 f32::from(frame.lighting.shadows), f32::from(frame.lighting.soft_shadows)],
             occluders,
+            grid_min: grid.min.extend(frame.lighting.ao_quality.rays()).to_array(),
+            grid_inv_cell: grid.inv_cell.extend(0.0).to_array(),
+            occluder_cells: grid.cells,
         };
         queue.write_buffer(&self.globals_buf, 0, bytemuck::bytes_of(&globals));
 
@@ -1022,7 +1106,9 @@ impl Renderer {
                     depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Store }),
                     stencil_ops: None,
                 }),
-                timestamp_writes: None,
+                timestamp_writes: self.profile_queries.as_ref().map(|q| wgpu::RenderPassTimestampWrites {
+                    query_set: q, beginning_of_pass_write_index: Some(0), end_of_pass_write_index: Some(1),
+                }),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
@@ -1071,7 +1157,9 @@ impl Renderer {
                     depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Discard }),
                     stencil_ops: None,
                 }),
-                timestamp_writes: None,
+                timestamp_writes: self.profile_queries.as_ref().map(|q| wgpu::RenderPassTimestampWrites {
+                    query_set: q, beginning_of_pass_write_index: Some(2), end_of_pass_write_index: Some(3),
+                }),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
@@ -1109,6 +1197,44 @@ impl Renderer {
             }
         }
         queue.submit([enc.finish()]);
+    }
+
+    /// Measures one frame with GPU pass timestamps. Synchronous, for offline profiling only.
+    /// Returns shadow and main pass milliseconds; excludes CPU work and image readback.
+    pub fn profile_frame(&mut self, frame: &Frame, target: &wgpu::TextureView, width: u32, height: u32) -> anyhow::Result<[f64; 2]> {
+        anyhow::ensure!(self.gpu.device.features().contains(wgpu::Features::TIMESTAMP_QUERY), "adapter does not support GPU timestamps");
+        self.profile_queries = Some(self.gpu.device.create_query_set(&wgpu::QuerySetDescriptor {
+            label: Some("profile timestamps"), ty: wgpu::QueryType::Timestamp, count: 4,
+        }));
+        self.render(frame, target, width, height);
+        let queries = self.profile_queries.take().unwrap();
+        let device = &self.gpu.device;
+        let resolve = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("profile resolve"), size: 32,
+            usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC, mapped_at_creation: false,
+        });
+        let read = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("profile readback"), size: 32,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false,
+        });
+        let mut enc = device.create_command_encoder(&Default::default());
+        let first = if frame.lighting.shadows { 0 } else { 2 };
+        enc.resolve_query_set(&queries, first..4, &resolve, 0);
+        enc.copy_buffer_to_buffer(&resolve, 0, &read, 0, 32);
+        self.gpu.queue.submit([enc.finish()]);
+        let (tx, rx) = std::sync::mpsc::channel();
+        read.slice(..).map_async(wgpu::MapMode::Read, move |result| { let _ = tx.send(result); });
+        device.poll(wgpu::PollType::wait_indefinitely())?;
+        rx.recv()??;
+        let data = read.slice(..).get_mapped_range()?;
+        let ticks: &[u64] = bytemuck::cast_slice(&data);
+        let scale = self.gpu.queue.get_timestamp_period() as f64 / 1_000_000.0;
+        let times = if frame.lighting.shadows {
+            [(ticks[1] - ticks[0]) as f64 * scale, (ticks[3] - ticks[2]) as f64 * scale]
+        } else { [0.0, (ticks[1] - ticks[0]) as f64 * scale] };
+        drop(data);
+        read.unmap();
+        Ok(times)
     }
 
     /// Creates a texture suitable for offscreen rendering + readback.
@@ -1292,6 +1418,72 @@ fn skin_bind_group(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, buf: &
 mod tests {
     use super::*;
 
+    #[test]
+    fn spatial_grid_conservatively_covers_transformed_proxies_and_dense_cells() {
+        assert!(std::mem::size_of::<Globals>() <= 65536);
+        let models = [
+            Mat4::from_scale_rotation_translation(Vec3::new(0.1, 8.0, 1.0), glam::Quat::from_rotation_y(0.7), Vec3::new(-12.0, 1.0, -7.0)),
+            Mat4::from_scale_rotation_translation(Vec3::new(-9.0, 0.2, 5.0), glam::Quat::from_rotation_z(0.4), Vec3::new(8.0, -4.0, 11.0)),
+        ];
+        let proxies: Vec<_> = (0..128).map(|i| GpuOccluder {
+            world_to_box: models[i % 2].inverse().to_cols_array_2d(), ..GpuOccluder::zeroed()
+        }).collect();
+        let grid = OccluderGrid::new(&proxies);
+        // Every point within ray reach of a transformed box must retain that proxy,
+        // including all mask words and the high bit of each word.
+        for (i, model) in models.iter().enumerate() {
+            for x in [-0.5, 0.0, 0.5] {
+                for y in [-0.5, 0.0, 0.5] {
+                    for z in [-0.5, 0.0, 0.5] {
+                        let surface = model.transform_point3(Vec3::new(x, y, z));
+                        for direction in [Vec3::X, Vec3::NEG_X, Vec3::Y, Vec3::NEG_Y, Vec3::Z, Vec3::NEG_Z] {
+                            let point = surface + direction * 3.045;
+                            let cell = ((point - grid.min) * grid.inv_cell).floor().as_uvec3();
+                            assert!(cell.x < 16 && cell.y < 8 && cell.z < 16);
+                            let bits = grid.cells[(cell.x + 16 * (cell.y + 8 * cell.z)) as usize];
+                            for index in (i..128).step_by(2) {
+                                assert_ne!(bits[index / 32] & (1 << (index % 32)), 0);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(OccluderGrid::new(&[]).cells.iter().all(|c| *c == [0; 4]));
+    }
+
+    #[test]
+    fn spatial_tracing_matches_full_proxy_scan() {
+        let Ok(gpu) = Gpu::headless() else { eprintln!("Skipping spatial capture: no GPU"); return; };
+        let source = include_str!("shader.wgsl");
+        let start = source.find("    // A point lookup").unwrap();
+        let end = source[start..].find("    let bounce_enabled").unwrap() + start;
+        let reference = format!("{}    let candidates = vec4<u32>(0xffffffffu);\n{}", &source[..start], &source[end..])
+            .replace("let k = i32(word * 32u + bit);", "let k = i32(word * 32u + bit); if (k >= i32(g.counts.w)) { continue; }");
+        let mut optimized = Renderer::new(gpu.clone(), wgpu::TextureFormat::Rgba8UnormSrgb);
+        let mut full_scan = Renderer::with_shader(gpu, wgpu::TextureFormat::Rgba8UnormSrgb, &reference);
+        let mut frame = Frame::new(Camera::orbit(Vec3::new(0.0, 0.4, 0.0), 0.4, 0.65, 9.0, 1.0));
+        frame.fog_density = 0.0;
+        frame.draws.push(Draw::new(optimized.builtins.cube,
+            Mat4::from_scale_rotation_translation(Vec3::new(12.0, 0.2, 12.0), glam::Quat::IDENTITY, Vec3::new(0.0, -0.2, 0.0)), [0.8; 3]));
+        for i in 0..127 {
+            let x = (i % 12) as f32 - 5.5;
+            let z = (i / 12) as f32 - 5.0;
+            frame.draws.push(Draw::new(optimized.builtins.cube,
+                Mat4::from_scale_rotation_translation(Vec3::new(0.3, 0.5 + (i % 3) as f32 * 0.3, 0.7),
+                    glam::Quat::from_rotation_y(i as f32 * 0.4), Vec3::new(x, 0.3, z)), [0.7, 0.2, 0.1]));
+        }
+        for bounce in [false, true] {
+            frame.lighting.indirect_light = bounce;
+            for quality in AoQuality::ALL {
+                frame.lighting.ao_quality = quality;
+                let actual = optimized.capture(&frame, 128, 128);
+                let expected = full_scan.capture(&frame, 128, 128);
+                assert!(actual == expected, "spatial pruning changed pixels: {quality:?}, bounce={bounce}");
+            }
+        }
+    }
+
     /// Renders one cube filling most of the view; returns the RGBA pixels. Skips (None) without a GPU.
     fn render_cube(material: Option<(&str, MaterialMaps)>) -> Option<Vec<u8>> {
         let gpu = Gpu::headless().ok()?;
@@ -1320,7 +1512,7 @@ mod tests {
             Vec3::new(6.0, 0.2, 6.0), glam::Quat::IDENTITY, Vec3::new(0.0, -0.15, 0.0)), [0.8; 3]));
         f.draws.push(Draw::new(renderer.builtins.cube, Mat4::from_scale_rotation_translation(
             Vec3::new(5.0, 2.5, 0.2), glam::Quat::IDENTITY, Vec3::new(0.0, 1.1, -1.0)), [0.9, 0.15, 0.1]));
-        f.lighting = LightingOptions { ambient_occlusion: false, indirect_light: false, shadows: false, soft_shadows: false };
+        f.lighting = LightingOptions { ambient_occlusion: false, indirect_light: false, shadows: false, soft_shadows: false, ..Default::default() };
         let baseline = renderer.capture(&f, 128, 128);
         f.lighting.ambient_occlusion = true;
         let ao = renderer.capture(&f, 128, 128);

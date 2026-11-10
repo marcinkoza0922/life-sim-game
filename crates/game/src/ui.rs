@@ -489,6 +489,17 @@ fn game_menu(ui: &mut Ui, g: &mut Game, anchor: Rect) {
         ] {
             if ui.chip(label, *enabled).clicked { *enabled = !*enabled; }
         }
+        tag(ui, "AO quality", CREAM, 13.0);
+        ui.row(0.0, |ui| {
+            for quality in hearth_render::AoQuality::ALL {
+                if ui.chip(quality.label(), graphics.ao_quality == quality).clicked {
+                    graphics.ao_quality = quality;
+                }
+            }
+        });
+        if graphics.indirect_light {
+            tag(ui, "Indirect light uses High", CREAM, 12.0);
+        }
         ui.dots();
         for (label, v) in [("Volume", &mut vol.master), ("Voices", &mut vol.voices), ("Effects", &mut vol.sfx), ("Music", &mut vol.music)] {
             ui.slider(label, v, 0.0, 1.0, 0.05, w - 20.0);
