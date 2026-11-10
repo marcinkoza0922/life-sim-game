@@ -103,6 +103,33 @@ def shell(verts, faces, nrm, keep, thick, lift=0.004, move=None, solid=False):
     return out_v, out_f
 
 
+def clip(verts, nrm, faces, field):
+    """The part of a mesh where `field` (per vertex) is >= 0, with faces cut along its zero line.
+    Returns (verts, normals, faces); cut points are shared between neighbouring faces."""
+    field = [v if v != 0 else 1e-7 for v in field]
+    vs, ns, cache, out = list(verts), list(nrm), {}, []
+
+    def cut(a, b):
+        key = (min(a, b), max(a, b))
+        if key not in cache:
+            t = field[a] / (field[a] - field[b])
+            vs.append(verts[a].lerp(verts[b], t))
+            ns.append(nrm[a].lerp(nrm[b], t).normalized())
+            cache[key] = len(vs) - 1
+        return cache[key]
+
+    for fc in faces:
+        poly = []
+        for a, b in zip(fc, fc[1:] + fc[:1]):
+            if field[a] > 0:
+                poly.append(a)
+            if (field[a] > 0) != (field[b] > 0):
+                poly.append(cut(a, b))
+        if len(poly) >= 3:
+            out.append(tuple(poly))
+    return vs, ns, out
+
+
 def ellipsoid(center, radii, segs=16, rings=10):
     verts, faces = [], []
     for r in range(1, rings):
@@ -164,23 +191,17 @@ def hair_meshes(f, ref=None):
     fr = ref or f
     out = {}
 
-    def above(**kw):
-        """A style kept above a hairline: faces a little past it are kept and the shell sinks
-        under the scalp across the line, so the visible edge is the smooth curve where it
-        crosses the skin instead of a staircase of whole faces."""
-        keep = [c.z > hairline(azimuth(c), **kw) - 0.06 for c in centres]
+    def shell_above(thick, field=None, **kw):
+        """A style bounded by a hairline: the scalp is clipped exactly along the curve (cut points
+        interpolated on the `ref` face, so every slider variant shares the topology), and the shell
+        thins to a narrow lip there instead of ending in a staircase of whole faces."""
+        g = field or (lambda q: q.z - hairline(azimuth(q), **kw))
+        cv, cn, cf = clip(hv, nrm, hf, [g(q) for q in rv])
 
-        def sink(thick):
-            def t(b, n):
-                s = smoothstep(-0.015, 0.012, b.z - hairline(azimuth(b), **kw))
-                return thick(b, n) * s - (1 - s) * 0.02
-            return t
+        def t(b, n):
+            return thick(b, n) * (0.15 + 0.85 * smoothstep(0.0, 0.035, g(b)))
 
-        return keep, sink
-
-    def shell_above(thick, lift=0.004, **kw):
-        keep, sink = above(**kw)
-        return shell(hv, hf, nrm, keep, sink(thick), lift=-0.02)
+        return shell(cv, cf, cn, [True] * len(cf), t, lift=-0.004)
 
     strands = lambda b, amp=0.004, freq=38: amp * math.sin(math.atan2(b.x, -b.y) * freq + b.z * 20)
 
@@ -242,8 +263,9 @@ def hair_meshes(f, ref=None):
     out["curly"] = shell_above(curly, front=0.27)
     out["undercut"] = shell_above(lambda b, n: 0.006 + 0.075 * math.exp(-((b.x / 0.13) ** 4)) * smoothstep(0.05, 0.25, b.z) + strands(b, 0.003) * smoothstep(0.05, 0.25, b.z))
     # receding: a horseshoe around the back and sides, the crown and forehead bare
-    rec = [c.z > hairline(azimuth(c), front=0.9, temple=0.9, ear=0.05) and c.z < 0.3 and azimuth(c) > 70 for c in centres]
-    out["receding"] = shell(hv, hf, nrm, rec, lambda b, n: 0.022 + strands(b, 0.003))
+    def receding(q):
+        return min(q.z - hairline(azimuth(q), front=0.9, temple=0.9, ear=0.05), 0.3 - q.z, (azimuth(q) - 70) * 0.006)
+    out["receding"] = shell_above(lambda b, n: 0.022 + strands(b, 0.003), field=receding)
     out["afro"] = shell_above(front=0.27, thick=lambda b, n: crown(b, 0.24, 0.14) * (1 - 0.25 * smoothstep(-0.1, -0.4, b.y)) + 0.01 * math.sin(b.x * 70) * math.sin(b.z * 70))
 
     # facial hair: regions of the lower face
