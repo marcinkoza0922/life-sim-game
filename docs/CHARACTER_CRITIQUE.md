@@ -166,10 +166,27 @@ A faint light line along the stubble edge came from the shell's rim wall, not th
 skin with black hair. Still open: beards have no clump or strand breakup; scalp hair still
 reads as a smooth cap.
 
+## Follow-up: clumped scalp hair and beards
+
+Scalp hair was a smooth cap with fine engraved sine ridges and a clean edge. Styles now take
+their relief from `locks` in `peon_hair.py`: clumps that radiate from a crown whorl, wave along
+their length and have a rounded top with a sharp groove, with a finer layer splitting them unevenly.
+Their amplitude is a sizeable part of the shell thickness, so the silhouette is lumpy and not just
+the shading. The same pattern also shifts the hairline field (`tips` in `shell_above`), so the edge
+ends in lock tips over the forehead and temples instead of a smooth line. Long and bob were still
+whole-face selections with a stepped fringe. They are now clipped along a smooth field as well
+(`long_hair`), and their cheek boundary starts only where the curtain hangs fully, which removes
+most of the shards that half-hung faces made at the front ends. Beards and goatees use locks
+flowing from the chin (`tufts`). Checked in Blender head previews (short, side part, long, bob,
+bun, undercut, receding, full beard) and in a `simctl lineup` close-up. Still open: a thin fin
+remains at the front ends of long hair, the curtain's lower edge is a straight cut, and curly
+and afro keep their old bump patterns.
+
 ## Next priorities and acceptance checks
 
 1. **Facial hair and hair silhouette:** (moustache, beard and hairline outlines done, see above)
-   (stubble as a skin-shaded shadow done) clumped beard/scalp-hair silhouettes; preserve an appealing
+   (stubble as a skin-shaded shadow done) (clumped locks and hairline tips done) curly/afro
+   breakup, long-hair ends; preserve an appealing
    face in front, three-quarter and profile views.
 2. **Garment detail:** (boundaries and tube volume done, see above) necklines, cuffs, seams and
    waistbands; recheck slim builds and extreme slider combinations.

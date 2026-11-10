@@ -172,6 +172,25 @@ def tube(points, radii, segs=12):
     return verts, faces
 
 
+WHORL = Vector((0.0, 0.45, 0.89)).normalized()  # the crown's whorl, up and to the back
+
+
+def locks(b, count=16, whorl=WHORL, wave=0.18, seed=0.0, fine=0.3):
+    """Clumped-hair pattern at a scalp point: 0 in the grooves between locks, 1 along their spines.
+    Locks radiate from the crown `whorl` and wave a little along their length; the profile is
+    rounded on top with a sharp groove (sqrt of |sin|), so they read as sculpted clumps, not ridges.
+    A second, finer layer (weight `fine`) splits the big locks unevenly."""
+    p = b.normalized()
+    e1 = whorl.cross(Vector((1.0, 0.0, 0.0))).normalized()
+    e2 = whorl.cross(e1)
+    s = math.acos(max(-1.0, min(1.0, p.dot(whorl))))
+    phi = math.atan2(p.dot(e2), p.dot(e1)) + wave * math.sin(s * 4.0 + seed)
+    big = math.sqrt(abs(math.sin(phi * count / 2)))
+    small = math.sqrt(abs(math.sin(phi * count * 0.85 + s * 3.0 + seed + 1.3)))
+    fade = smoothstep(0.08, 0.45, s)  # the whorl itself is smooth
+    return (1.0 - fade) * 0.7 + fade * ((1.0 - fine) * big + fine * small)
+
+
 def merge(*parts):
     verts, faces = [], []
     for v, f in parts:
@@ -192,11 +211,13 @@ def hair_meshes(f, ref=None):
     fr = ref or f
     out = {}
 
-    def shell_above(thick, field=None, **kw):
+    def shell_above(thick, field=None, tips=0.0, count=16, **kw):
         """A style bounded by a hairline: the scalp is clipped exactly along the curve (cut points
         interpolated on the `ref` face, so every slider variant shares the topology), and the shell
         thins to a narrow lip there instead of ending in a staircase of whole faces."""
-        g = field or (lambda q: q.z - hairline(azimuth(q), **kw))
+        g0 = field or (lambda q: q.z - hairline(azimuth(q), **kw))
+        # lock tips break up the hairline: the edge reaches further along each lock's spine
+        g = (lambda q: g0(q) + tips * (locks(q, count, fine=0.0) ** 3 - 0.4)) if tips else g0
         cv, cn, cf = clip(hv, nrm, hf, [g(q) for q in rv])
 
         def t(b, n):
@@ -204,26 +225,26 @@ def hair_meshes(f, ref=None):
 
         return shell(cv, cf, cn, [True] * len(cf), t, lift=-0.004)
 
-    strands = lambda b, amp=0.004, freq=38: amp * math.sin(math.atan2(b.x, -b.y) * freq + b.z * 20)
+    clumps = lambda b, amp=0.014, count=16: amp * (locks(b, count) - 0.5)
 
     def crown(b, top, sides):
         return sides + (top - sides) * smoothstep(-0.05, 0.35, b.z)
 
-    out["short"] = shell_above(lambda b, n: crown(b, 0.045, 0.022) + strands(b))
+    out["short"] = shell_above(lambda b, n: crown(b, 0.05, 0.026) + clumps(b, 0.032, 13), tips=0.035, count=13)
     out["buzz"] = shell_above(lambda b, n: 0.008, front=0.31)
     # side part: volume swept to one side, a groove along the parting
     def side_part(b, n):
         part_x = 0.11
         groove = 0.012 * math.exp(-(((b.x - part_x) / 0.012) ** 2)) * smoothstep(0.1, 0.35, b.z) * smoothstep(0.0, -0.2, b.y)
         sweep = 0.02 * smoothstep(0.2, -0.2, b.x)
-        return crown(b, 0.06, 0.025) + sweep - groove + strands(b, 0.003, 44)
-    out["side_part"] = shell_above(side_part, front=0.26)
+        return crown(b, 0.06, 0.025) + sweep - groove + clumps(b, 0.026, 12)
+    out["side_part"] = shell_above(side_part, front=0.26, tips=0.03, count=12)
     bun_v, bun_f = ellipsoid(Vector((0, 0.3, 0.42)), (0.15, 0.13, 0.13))
-    out["bun"] = merge(shell_above(lambda b, n: 0.022 + strands(b, 0.003)), (bun_v, bun_f))
+    out["bun"] = merge(shell_above(lambda b, n: 0.024 + clumps(b, 0.012, 22), tips=0.012, count=22), (bun_v, bun_f))
     tail_pts = [Vector((0, 0.43, 0.12)), Vector((0, 0.5, 0.02)), Vector((0, 0.52, -0.15)), Vector((0, 0.5, -0.35)), Vector((0, 0.46, -0.55))]
     tail = tube(tail_pts, [0.065, 0.075, 0.07, 0.055, 0.025])
     tie = tube([Vector((0, 0.43, 0.13)), Vector((0, 0.47, 0.08))], [0.07, 0.07])
-    out["ponytail"] = merge(shell_above(lambda b, n: 0.024 + strands(b, 0.003)), tail, tie)
+    out["ponytail"] = merge(shell_above(lambda b, n: 0.026 + clumps(b, 0.012, 22), tips=0.012, count=22), tail, tie)
 
     def curtain(length, flare, ear_z=0.0):
         """Below ear level, behind the cheeks: hang straight down to `length` below the ear line."""
@@ -244,29 +265,33 @@ def hair_meshes(f, ref=None):
 
         return move
 
-    def long_keep(fringe, cheek_az=62):
-        keep = []
-        for c in centres:
-            az = azimuth(c)
-            if c.z > hairline(az, front=fringe, temple=fringe - 0.06, ear=0.1, nape=-1):
-                keep.append(True)
-            else:
-                keep.append(az > cheek_az and c.z < 0.15)
-        return keep
+    def long_hair(fringe, cheek_az, thick, move, count=14):
+        """Long styles: the scalp above a fringe line plus everything behind the cheeks below
+        z 0.15, clipped along that smooth boundary (lock tips along the fringe) and hung by `move`."""
 
-    soft = lambda b, amp: amp * math.sin(math.atan2(b.x, -b.y) * 30) * smoothstep(-0.1, 0.1, b.z)
-    out["long"] = shell(hv, hf, nrm, long_keep(0.27), lambda b, n: 0.04 + soft(b, 0.004), move=curtain(0.95, 0.2), solid=True)
-    out["bob"] = shell(hv, hf, nrm, long_keep(0.17, 68), lambda b, n: 0.05 + soft(b, 0.004), move=curtain(0.42, 0.25), solid=True)
+        def g(q):
+            az = azimuth(q)
+            top = q.z - hairline(az, front=fringe, temple=fringe - 0.06, ear=0.1, nape=-1)
+            top += 0.03 * (locks(q, count, fine=0.0) ** 3 - 0.4) * smoothstep(60, 20, az)
+            # below the jaw, start where the curtain hangs fully (half-hung faces fold into shards)
+            edge = cheek_az + (72 - cheek_az + 4) * smoothstep(-0.1, -0.35, q.z)
+            return max(top, min((az - edge) * 0.006, 0.15 - q.z))
+
+        cv, cn, cf = clip(hv, nrm, hf, [g(q) for q in rv])
+        return shell(cv, cf, cn, [True] * len(cf), lambda b, n: thick(b) * (0.2 + 0.8 * smoothstep(0.0, 0.03, g(b))), move=move, solid=True)
+
+    out["long"] = long_hair(0.27, 62, lambda b: 0.042 + clumps(b, 0.02, 14) * smoothstep(-0.6, 0.1, b.z), curtain(0.95, 0.2))
+    out["bob"] = long_hair(0.17, 68, lambda b: 0.052 + clumps(b, 0.02, 14) * smoothstep(-0.6, 0.1, b.z), curtain(0.42, 0.25))
 
     def curly(b, n):
         bumps = 0.018 * (math.sin(b.x * 60) * math.sin(b.y * 57) * math.sin(b.z * 63))
         return crown(b, 0.11, 0.06) + bumps
     out["curly"] = shell_above(curly, front=0.27)
-    out["undercut"] = shell_above(lambda b, n: 0.006 + 0.075 * math.exp(-((b.x / 0.13) ** 4)) * smoothstep(0.05, 0.25, b.z) + strands(b, 0.003) * smoothstep(0.05, 0.25, b.z))
+    out["undercut"] = shell_above(lambda b, n: 0.006 + 0.075 * math.exp(-((b.x / 0.13) ** 4)) * smoothstep(0.05, 0.25, b.z) + clumps(b, 0.03, 12) * smoothstep(0.05, 0.25, b.z))
     # receding: a horseshoe around the back and sides, the crown and forehead bare
     def receding(q):
         return min(q.z - hairline(azimuth(q), front=0.9, temple=0.9, ear=0.05), 0.3 - q.z, (azimuth(q) - 70) * 0.006)
-    out["receding"] = shell_above(lambda b, n: 0.022 + strands(b, 0.003), field=receding)
+    out["receding"] = shell_above(lambda b, n: 0.024 + clumps(b, 0.014, 18), field=receding, tips=0.015, count=18)
     out["afro"] = shell_above(front=0.27, thick=lambda b, n: crown(b, 0.24, 0.14) * (1 - 0.25 * smoothstep(-0.1, -0.4, b.y)) + 0.01 * math.sin(b.x * 70) * math.sin(b.z * 70))
 
     # facial hair: regions of the lower face
@@ -319,8 +344,10 @@ def hair_meshes(f, ref=None):
         for i in range(len(hv))
     }
     out["moustache"] = shell(hv, hf, nrm, keep, lambda b, n: offsets[tuple(b)], lift=-0.02)
-    out["goatee"] = clipped(goatee_field, lambda b, n: 0.018 + strands(b, 0.002, 90), ramp=0.02)
-    out["short_beard"] = clipped(full, lambda b, n: 0.012 + 0.006 * smoothstep(-0.2, -0.45, b.z), ramp=0.03)
+    chin = Vector((0.0, -0.45, -0.89)).normalized()
+    tufts = lambda b, amp, count: amp * (locks(b, count, whorl=chin, wave=0.1) - 0.5)
+    out["goatee"] = clipped(goatee_field, lambda b, n: 0.018 + tufts(b, 0.008, 30), ramp=0.02)
+    out["short_beard"] = clipped(full, lambda b, n: 0.012 + 0.006 * smoothstep(-0.2, -0.45, b.z) + tufts(b, 0.006, 30), ramp=0.03)
     full_big = lambda q: max(beard_field(q, cheek=0.02), moustache_field(q))
-    out["full_beard"] = clipped(full_big, lambda b, n: 0.022 + 0.05 * smoothstep(-0.15, -0.5, b.z) + strands(b, 0.004, 60), ramp=0.05)
+    out["full_beard"] = clipped(full_big, lambda b, n: 0.022 + 0.05 * smoothstep(-0.15, -0.5, b.z) + tufts(b, 0.02, 26), ramp=0.05)
     return out
