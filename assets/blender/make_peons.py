@@ -8,7 +8,7 @@ Set PEON_PREVIEW=out.png (with PEON_SHOW=mesh,names, PEON_KEYS=key=value,... and
 dressed body front and three-quarter in Blender instead of exporting.
 
 Set PEON_BASE=mpfb to build the body and head from MPFB2 (MakeHuman) instead of the metaball body and
-parametric head (peon_mpfb.py; needs the extension and asset pack named there, and no --factory-startup).
+parametric head (peon_mpfb.py; install the pinned MPFB with `python3 assets/blender/install_mpfb.py`; no --factory-startup).
 
 Every stage file holds the same skeleton (bone names) and these skinned meshes:
 - `body`: a metaball body (peon_body.py) with detailed hands and feet welded on

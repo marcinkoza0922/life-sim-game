@@ -13,7 +13,7 @@ Iterating on the hand-built metaball body and parametric head kept hitting the s
 anatomy, faces and hands read as assembled soft segments, and every fix was a new piece of
 procedural geometry. Peons are now built on **MPFB2** (MakeHuman's Blender extension, CC0 base
 mesh and targets) when `make_peons.py` runs with `PEON_BASE=mpfb` (`assets/blender/peon_mpfb.py`;
-setup in its docstring). The checked-in `assets/models/peon_*.glb` are MPFB builds. What stays ours:
+install the pinned MPFB and asset pack with `python3 assets/blender/install_mpfb.py`). The checked-in `assets/models/peon_*.glb` are MPFB builds. What stays ours:
 the 16-bone skeleton (now placed at MPFB's measured joints), all clips, the garment system, the
 body slider keys and the hair/beard styles (built over the old head, then projected onto the MPFB
 scalp with `fit_hair`). What MPFB now provides: body and head anatomy, hands and feet, eyes and
@@ -63,10 +63,12 @@ Seen in `simctl lineup` (idle and walk) and Blender previews right after the swi
    portrait distance, and the infant sitting base.
 10. **Clips on the new proportions:** contact poses (sit, lie, laugh hands, object use) were authored
     on the old body; check for intersections and foot sliding.
-11. **Cost:** models are about 7.9 MB each (from 11.3 MB) with about 9.7k body vertices; profile a
-    full household, and consider MPFB's proxy meshes for crowds.
-12. **Reproducibility:** the build depends on the locally installed MPFB extension and asset pack;
-    pin their versions in `peon_mpfb.py`, or vendor the few files the build needs.
+11. **Cost:** models are about 12.4 MB each (from 11.3 MB; shape keys are exported dense) with about
+    9.7k body vertices; profile a full household, and consider MPFB's proxy meshes for crowds.
+12. **Reproducibility:** (pinned) `install_mpfb.py` installs MPFB 2.0.18 and the CC0 asset pack by
+    SHA-256, and `peon_mpfb.check_pins` refuses to build with anything else. Rebuilds still differ
+    by float noise (up to about 5 mm in one key's bounds); find the nondeterminism if exact rebuilds
+    matter.
 
 ## Review verdict before the follow-up changes
 

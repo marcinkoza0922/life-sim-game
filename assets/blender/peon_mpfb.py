@@ -1,9 +1,8 @@
 """MPFB2 (MakeHuman) base body and head for the peon generator (make_peons.py with PEON_BASE=mpfb).
 
-Needs the MPFB extension (`blender --online-mode -b -c extension install mpfb --enable`) and
-MakeHuman's CC0 system asset pack (makehuman_system_assets_cc0.zip from files.makehumancommunity.org)
-unzipped into MPFB's user data directory (~/.config/blender/<ver>/extensions/.user/blender_org/mpfb/data)
-for the eyes and eyebrows. The base mesh and targets are CC0.
+Needs the pinned MPFB extension and MakeHuman CC0 system asset pack: install both with
+`python3 assets/blender/install_mpfb.py` (pins and hashes live there; `check_pins` refuses to build
+with anything else, since the models would silently change). The base mesh, targets and assets are CC0.
 
 `build(stage, H, spread)` makes a human for the life stage, poses MPFB's game_engine rig into the
 peon A-pose (upper arms `spread` from vertical), scales it to height H and returns an `MpfbBase`:
@@ -130,7 +129,28 @@ def pose_a(rig, spread):
     bpy.context.view_layer.update()
 
 
+def check_pins():
+    """Fails unless the installed MPFB and asset pack are the ones install_mpfb.py pins."""
+    import json
+    import tomllib
+
+    import install_mpfb as pin
+
+    import bl_ext.blender_org.mpfb as mpfb_pkg
+
+    root = os.path.dirname(mpfb_pkg.__file__)
+    with open(os.path.join(root, "blender_manifest.toml"), "rb") as f:
+        version = tomllib.load(f)["version"]
+    stamp = os.path.join(LocationService.get_user_data(), pin.STAMP)
+    got = json.load(open(stamp)) if os.path.exists(stamp) else {}
+    want = {"mpfb": pin.MPFB_VERSION, "assets_sha256": pin.ASSETS_SHA256}
+    if version != pin.MPFB_VERSION or got != want:
+        raise SystemExit(f"MPFB {version} with asset stamp {got or 'missing'}, expected {want}: "
+                         "run python3 assets/blender/install_mpfb.py")
+
+
 def build(stage, H, spread):
+    check_pins()
     info = TargetService.get_default_macro_info_dict()
     info.update(STAGE_MACROS[stage])
     base = HumanService.create_human(macro_detail_dict=info)
