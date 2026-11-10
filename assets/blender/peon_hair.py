@@ -275,7 +275,22 @@ def hair_meshes(f, ref=None):
 
     beard = [beard_area(c) or moustache_area(c) for c in centres]
     out["stubble"] = shell(hv, hf, nrm, beard, lambda b, n: 0.0035, lift=0.0015)
-    out["moustache"] = shell(hv, hf, nrm, [moustache_area(c) for c in centres], lambda b, n: 0.014 + strands(b, 0.002, 90))
+    # Define the outline on the neutral face, then carry it with the head's
+    # deformation. Whole-face selection alone makes a rectangular, stepped patch.
+    # A broad hidden margin lets the shallow shell cross the skin along a tapered
+    # curve instead; using reference coordinates keeps every morph's topology fixed.
+    def moustache_edge(b):
+        u = abs(b.x) / (mw * 1.12)
+        centre = mz + 0.062 - 0.026 * min(u, 1.5) ** 1.5
+        return 1.0 - u * u - ((b.z - centre) / 0.029) ** 2
+
+    keep = [c.y < -0.15 and moustache_edge(c) > -4.0 for c in centres]
+    offsets = {
+        tuple(hv[i]): 0.010 * smoothstep(-0.25, 0.65, moustache_edge(rv[i]))
+        - 0.018 * (1.0 - smoothstep(-0.8, 0.0, moustache_edge(rv[i])))
+        for i in range(len(hv))
+    }
+    out["moustache"] = shell(hv, hf, nrm, keep, lambda b, n: offsets[tuple(b)], lift=-0.02)
     out["goatee"] = shell(hv, hf, nrm, [goatee_area(c) or moustache_area(c) for c in centres], lambda b, n: 0.02 + strands(b, 0.002, 90))
     out["short_beard"] = shell(hv, hf, nrm, beard, lambda b, n: 0.012 + 0.006 * smoothstep(-0.2, -0.45, b.z))
     out["full_beard"] = shell(hv, hf, nrm, beard, lambda b, n: 0.022 + 0.05 * smoothstep(-0.15, -0.5, b.z) + strands(b, 0.004, 60))

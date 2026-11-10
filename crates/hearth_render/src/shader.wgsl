@@ -261,15 +261,16 @@ fn shade(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, albedo: vec3<f32>, rough: f32
 // Skin: diffuse wrapped further per channel (red light scatters deepest under the skin, so the
 // terminator goes soft and warm), shadows bleeding red at their edges, and light shining through
 // thin flesh (ears, fingers) from behind. Specular stays the plain GGX lobe.
-// Darker skin shows a stronger, tighter sheen (as it does in life), which is what lets its forms
-// read when the diffuse light alone can't: 0 for pale skin, 1 for the deepest tones.
+// Preserve a little extra sheen on deep tones so forms remain readable, while
+// keeping the lobe broad enough to avoid hard, vinyl-like shoulder highlights.
+// Depth is 0 for pale skin, 1 for the deepest tones.
 fn skin_depth(albedo: vec3<f32>) -> f32 {
     return smoothstep(0.3, 0.03, dot(albedo, vec3<f32>(0.2126, 0.7152, 0.0722)));
 }
 
 fn shade_skin(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, albedo: vec3<f32>, rough_in: f32, sh: f32, thin: f32) -> vec3<f32> {
     let dark = skin_depth(albedo);
-    let rough = rough_in * (1.0 - 0.3 * dark);
+    let rough = max(rough_in * (1.0 - 0.08 * dark), 0.56);
     let h = normalize(v + l);
     let nl_raw = dot(n, l);
     let nl = max(nl_raw, 0.0);
@@ -281,7 +282,7 @@ fn shade_skin(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, albedo: vec3<f32>, rough
     let k = (rough + 1.0) * (rough + 1.0) / 8.0;
     let gv = nv / (nv * (1.0 - k) + k);
     let gl = nl / (nl * (1.0 - k) + k);
-    let spec = ggx(n, h, rough) * gv * gl * f / max(4.0 * nv * nl, 0.001) * nl * (1.0 + 1.2 * dark);
+    let spec = ggx(n, h, rough) * gv * gl * f / max(4.0 * nv * nl, 0.001) * nl * (1.0 + 0.45 * dark);
     let back = pow(clamp(dot(v, -normalize(l + n * 0.35)), 0.0, 1.0), 3.0);
     let trans = back * (0.06 + 0.6 * thin) * vec3<f32>(1.0, 0.32, 0.18) * sqrt(max(albedo, vec3<f32>(0.0)));
     return (albedo / PI * diff * (1.0 - f) + trans) * shc + spec * sh;
