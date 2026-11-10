@@ -9,6 +9,7 @@
 //!     peons don't idle forever, the household doesn't go bankrupt immediately.
 //! simctl render [--seed S] [--minutes M] [--hour H] [--level L] [--yaw D] [--pitch D] [--dist M]
 //!               [--target X,Z] [--mode cutaway|up|down] [--size WxH] [--rooms] [--greybox] [--out FILE]
+//!               [--no-ao] [--indirect-light] [--no-shadows] [--hard-shadows]
 //!     Runs the starter household for M minutes and renders the lot offscreen to a PNG.
 //!     `--lot N` fills out the street first and renders lot N instead (playing the household
 //!     there, going out to it, or just looking at a vacant one).
@@ -46,6 +47,7 @@ struct Args {
 }
 
 struct RenderArgs {
+    lighting: hearth_render::LightingOptions,
     minutes: u64,
     hour: Option<f32>,
     level: i32,
@@ -74,7 +76,7 @@ struct RenderArgs {
 
 fn parse() -> Args {
     let mut a = Args { cmd: "run".into(), days: 3, seed: 1, seeds: 8, echo: false, log: None, manual: false, trace: None,
-        render: RenderArgs { minutes: 60, hour: None, level: 0, yaw: 35.0, pitch: 45.0, dist: 30.0, target: None, mode: "cutaway".into(), size: (1600, 1000), rooms: false, greybox: false, out: "out/render.png".into(), pose: "stand".into(), time: 0.0, anim: None, prop: None, demeanor: "normal".into(), order: None, lot: None } };
+        render: RenderArgs { lighting: Default::default(), minutes: 60, hour: None, level: 0, yaw: 35.0, pitch: 45.0, dist: 30.0, target: None, mode: "cutaway".into(), size: (1600, 1000), rooms: false, greybox: false, out: "out/render.png".into(), pose: "stand".into(), time: 0.0, anim: None, prop: None, demeanor: "normal".into(), order: None, lot: None } };
     let mut it = std::env::args().skip(1);
     if let Some(c) = it.next() {
         a.cmd = c;
@@ -103,6 +105,10 @@ fn parse() -> Args {
                 let v: Vec<u32> = it.next().unwrap().split('x').map(|x| x.parse().unwrap()).collect();
                 a.render.size = (v[0], v[1]);
             }
+            "--no-ao" => a.render.lighting.ambient_occlusion = false,
+            "--indirect-light" => a.render.lighting.indirect_light = true,
+            "--no-shadows" => a.render.lighting.shadows = false,
+            "--hard-shadows" => a.render.lighting.soft_shadows = false,
             "--rooms" => a.render.rooms = true,
             "--greybox" => a.render.greybox = true,
             "--pose" => a.render.pose = it.next().unwrap(),
@@ -649,7 +655,8 @@ fn render(a: &Args) {
         ..Default::default()
     };
     let peons = if ra.greybox { None } else { Some(game::peons::PeonArt::load(&mut r).expect("peon models")) };
-    let out = build(&sim, &r.builtins, peons.as_ref(), &mut game::peons::Animator::default(), camera, &opts);
+    let mut out = build(&sim, &r.builtins, peons.as_ref(), &mut game::peons::Animator::default(), camera, &opts);
+    out.frame.lighting = ra.lighting;
     if let Some(dir) = std::path::Path::new(&ra.out).parent() {
         std::fs::create_dir_all(dir).ok();
     }

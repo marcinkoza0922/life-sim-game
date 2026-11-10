@@ -42,7 +42,7 @@ cargo run --release -p game --bin lifesim -- --load saves/quicksave.ron
 | F2 | Autonomy: the selected peon's scored options ("why did they do that?"), boredom list |
 | F3 | Overlays: room ids, object occupancy, walk paths; tile/room info under the cursor |
 | F4 | Profiler: frame time, per-system sim timings, draw/batch counts |
-| F8 | Sim settings & cheats: free will, lifespan scale, aging/bills/accidents, +money, max needs, age up, hot-reload `assets/data` |
+| F8 | Lighting, sim settings & cheats: free will, lifespan scale, aging/bills/accidents, +money, max needs, age up, hot-reload `assets/data` |
 
 ## Headless tooling (`simctl`)
 
@@ -87,3 +87,25 @@ cargo +nightly miri test -p hearth_ecs     # validate the ECS's unsafe storage c
 | `crates/simctl` | headless runner, invariant checker, offscreen renderer |
 | `assets/data` | RON content: objects, traits, quirks, socials, moodlets, careers, names |
 | `assets/models`, `assets/blender` | rigged peon bodies per life stage and the Blender script that generates them |
+
+### Lighting quality
+
+Open **☰ Game → Lighting settings** or **F8** to toggle ambient occlusion, indirect
+light, sun shadows, and soft shadow filtering. Preferences persist in `graphics.ron`
+separately from audio and saved households. AO and soft sun shadows are enabled by
+default; indirect light is opt-in because it costs more GPU time.
+
+AO traces four short world-space hemisphere rays against up to 128 nearby oriented
+mesh bounds, adding contact shading beyond material texture AO. Indirect light uses
+eight rays and adds approximate one-bounce diffuse color from nearby surfaces,
+including sunlight visibility and emissive surfaces. These are box proxies rather
+than triangle-accurate GI: hollow/complex meshes can over-occlude, animated characters
+receive indirect light but do not contribute occlusion, and distant geometry outside
+the proxy budget is omitted. The detailed region follows the camera focus.
+Disabling both effects skips proxy collection and tracing. Disabling sun shadows
+skips the shadow pass; disabling soft filtering reduces each shadow lookup from
+nine comparisons to one. Direct lighting, material AO, fog, and ACES remain active.
+
+Offscreen comparisons: `cargo run -p simctl -- render --no-ao --out out/baseline.png`
+and `cargo run -p simctl -- render --indirect-light --out out/indirect.png`.
+The renderer tool also accepts `--no-shadows` and `--hard-shadows`.

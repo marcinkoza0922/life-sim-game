@@ -457,6 +457,7 @@ fn game_menu(ui: &mut Ui, g: &mut Game, anchor: Rect) {
     let mut roofs = g.show_roofs;
     let mut mute = g.mute;
     let mut vol = g.volumes;
+    let mut graphics = g.graphics;
     let keep = popup_card(ui, "game-menu", pos, w, anchor, |ui| {
         for (key, label, color, enabled) in [
             ("save", "💾 Quick save", TEAL, true),
@@ -478,10 +479,25 @@ fn game_menu(ui: &mut Ui, g: &mut Game, anchor: Rect) {
                 mute = !mute;
             }
         });
+        ui.dots();
+        tag(ui, "Lighting settings", CREAM, 13.0);
+        for (label, enabled) in [
+            ("Ambient occlusion", &mut graphics.ambient_occlusion),
+            ("Indirect light (costly)", &mut graphics.indirect_light),
+            ("Sun shadows", &mut graphics.shadows),
+            ("Soft shadows", &mut graphics.soft_shadows),
+        ] {
+            if ui.chip(label, *enabled).clicked { *enabled = !*enabled; }
+        }
+        ui.dots();
         for (label, v) in [("Volume", &mut vol.master), ("Voices", &mut vol.voices), ("Effects", &mut vol.sfx), ("Music", &mut vol.music)] {
             ui.slider(label, v, 0.0, 1.0, 0.05, w - 20.0);
         }
     });
+    if graphics != g.graphics {
+        g.graphics = graphics;
+        graphics.save();
+    }
     g.volumes = vol;
     g.show_roofs = roofs;
     g.mute = mute;

@@ -6,6 +6,7 @@ pub mod camera;
 pub mod creator;
 pub mod debug_ui;
 pub mod icons;
+pub mod graphics;
 pub mod lotmesh;
 pub mod materials;
 pub mod object_models;

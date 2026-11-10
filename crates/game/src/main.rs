@@ -563,7 +563,8 @@ impl App {
             focus: self.game.cam.focus(self.game.level),
         };
         let Some(gfx) = self.gfx.as_mut() else { return };
-        let out = scene::build(&self.game.sim, &gfx.renderer.builtins, gfx.peons.as_ref(), &mut gfx.anims, cam, &opts);
+        let mut out = scene::build(&self.game.sim, &gfx.renderer.builtins, gfx.peons.as_ref(), &mut gfx.anims, cam, &opts);
+        out.frame.lighting = self.game.graphics.lighting();
 
         // UI
         let size_px = [gfx.config.width, gfx.config.height];
