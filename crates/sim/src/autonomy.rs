@@ -301,7 +301,11 @@ fn candidates_with_navigation(world: &World, e: Entity, data: &GameData) -> (Vec
     let commitments = crate::romance::Commitments::new(world);
     // Only score socials that have an eligible target; reuse initiator-only work
     // across subsequent targets without paying for unused options in small homes.
-    let mut social_scores = vec![None; data.socials.len()];
+    let mut social_scores: Vec<_> = data.socials.iter().map(|sd| {
+        let eligible = sd.autonomous && sd.initiator_ok(stage)
+            && sd.requires_trait.as_ref().is_none_or(|t| pers.has(t));
+        (eligible, None)
+    }).collect();
     // other peons
     for (te, _tage, ttf, tneeds, taq, tpeon) in world
         .query_filtered::<(Entity, &Age, &Transform, &Needs, &ActionQueue, &Peon), (hearth_ecs::Without<Dead>, hearth_ecs::Without<AtWork>, hearth_ecs::Without<Offlot>)>()
@@ -322,10 +326,11 @@ fn candidates_with_navigation(world: &World, e: Entity, data: &GameData) -> (Vec
         let asleep = taq.current.as_ref().is_some_and(|c| is_sleeping(world, data, c));
         let Some(dist) = adjacent_distance(&lot, &field, ttf) else { continue };
         for (si, sd) in data.socials.iter().enumerate() {
-            if !sd.autonomous || (asleep && !sd.care) || social_allowed_with(world, sd, e, te, Some(&commitments)).is_err() {
+            let (eligible, score) = &mut social_scores[si];
+            if !*eligible || (asleep && !sd.care) || social_allowed_with(world, sd, e, te, Some(&commitments)).is_err() {
                 continue;
             }
-            let (base, helps, multiplier) = social_scores[si].get_or_insert_with(|| {
+            let (base, helps, multiplier) = score.get_or_insert_with(|| {
                 let mut helps = Vec::new();
                 let base = if sd.care { 0.0 } else {
                     for (n, r) in &sd.rates {
