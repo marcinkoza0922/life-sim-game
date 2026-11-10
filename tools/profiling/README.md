@@ -1,6 +1,6 @@
 # CPU profiling and capacity tests
 
-See [measured findings and optimization priorities](FINDINGS.md) for the recorded baseline.
+See the [original baseline](FINDINGS.md) and [first optimization results](OPTIMIZATION.md).
 
 Run from the repository root. No new dependencies or graphics device are required. The matrix enables the
 `sim/profiling` feature for coarse thread-local counters; normal builds contain

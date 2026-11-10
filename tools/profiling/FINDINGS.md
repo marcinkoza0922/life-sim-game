@@ -1,5 +1,7 @@
 # Simulation CPU performance findings
 
+This is the original baseline. See [first optimization results](OPTIMIZATION.md) for the subsequent improvement.
+
 Measured 2026-11-09 (America/Chicago), on an Intel Core i7-12700K, Linux x86_64,
 Rust 1.99.1, optimized `profiling` build at `a12e5f6`. Three seeds (1–3),
 60 warmup minutes, 1,440 measured ticks per seed; microbenchmarks use 200
