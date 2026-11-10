@@ -99,6 +99,14 @@ fn main() {
         .collect();
     #[cfg(not(feature = "profiling"))]
     let spans = BTreeMap::<String, serde_json::Value>::new();
+    // FNV-1a is a reproducibility fingerprint, not a cryptographic digest.
+    let state_hash = sim
+        .save_to_string()
+        .unwrap()
+        .bytes()
+        .fold(0xcbf29ce484222325u64, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
+        });
     println!(
         "{}",
         serde_json::json!({
@@ -106,7 +114,7 @@ fn main() {
             "initial_population": initial_population, "final_population": sim.living_peons().len(),
             "mean_us": total / iterations as f64, "p50_us": percentile(0.5),
             "p95_us": percentile(0.95), "p99_us": percentile(0.99), "max_us": samples[iterations-1],
-            "wall_seconds": wall_seconds, "inclusive_spans": spans, "system_mean_us": system_mean_us, "checksum": checksum,
+            "wall_seconds": wall_seconds, "state_hash": format!("{state_hash:016x}"), "inclusive_spans": spans, "system_mean_us": system_mean_us, "checksum": checksum,
         })
     );
 }

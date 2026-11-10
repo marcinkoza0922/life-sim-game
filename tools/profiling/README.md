@@ -44,6 +44,9 @@ serialization, allocation and destruction of the resulting string; it excludes I
 
 JSON includes mean/p50/p95/p99/max operation latency, initial/final living population,
 seed, iterations, wall time and per-system arithmetic means for tick workloads.
+`state_hash` is a stable FNV-1a fingerprint of the final serialized simulation,
+computed after the measured window. Compare it across revisions to detect replay
+drift alongside the per-operation checksum; it is not a cryptographic digest.
 With the profiling feature, `inclusive_spans` reports call counts and total
 microseconds for navigation floods and autonomy scoring. These are inclusive:
 autonomy includes navigation, so never sum them. The matrix also writes a

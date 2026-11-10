@@ -31,6 +31,7 @@ pub struct NavField {
     dist: Vec<f32>,
     prev: Vec<u32>,
     pub start: NavNode,
+    complete: bool,
 }
 
 const NONE: u32 = u32::MAX;
@@ -85,6 +86,7 @@ impl NavField {
             dist: vec![f32::INFINITY; n],
             prev: vec![NONE; n],
             start,
+            complete: true,
         };
         let Some(si) = f.idx(start) else { return f };
         let mut traversal = traversal::Traversal::new(lot);
@@ -92,7 +94,9 @@ impl NavField {
         let mut heap = BinaryHeap::new();
         heap.push(Item(0.0, si as u32));
         while let Some(Item(d, i)) = heap.pop() {
-            if d > f.dist[i as usize] || d > max_dist {
+            if d > f.dist[i as usize] { continue; }
+            if d > max_dist {
+                f.complete = false;
                 continue;
             }
             let cur = f.node(i as usize);
@@ -130,6 +134,11 @@ impl NavField {
         }
         f
     }
+
+    /// Whether the distance budget left no reachable frontier unexplored. Only
+    /// complete fields can substitute for a larger budget on the same graph and
+    /// with the same avoidance set.
+    pub(crate) fn is_complete(&self) -> bool { self.complete }
 
     pub fn distance(&self, n: NavNode) -> Option<f32> {
         self.idx(n).map(|i| self.dist[i]).filter(|d| d.is_finite())
@@ -245,6 +254,7 @@ mod tests {
             dist: vec![f32::INFINITY; n],
             prev: vec![NONE; n],
             start,
+            complete: true,
         };
         let Some(si) = f.idx(start) else { return f };
         f.dist[si] = 0.0;
@@ -309,6 +319,20 @@ mod tests {
                 assert_eq!(actual.prev, expected.prev);
             }
         }
+    }
+
+    #[test]
+    fn only_exhausted_frontiers_are_reusable() {
+        let lot = Lot::new(32, 32);
+        let start = NavNode::new(0, IVec2::ZERO);
+        assert!(!NavField::flood(&lot, start, -1.0).is_complete());
+        assert!(!NavField::flood(&lot, start, 0.0).is_complete());
+        assert!(!NavField::flood(&lot, start, 6.0).is_complete());
+        let complete = NavField::flood(&lot, start, 200.0);
+        let larger = NavField::flood(&lot, start, 400.0);
+        assert!(complete.is_complete());
+        assert_eq!(complete.dist, larger.dist);
+        assert_eq!(complete.prev, larger.prev);
     }
 
 }
